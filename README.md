@@ -21,6 +21,7 @@ Now about the preparation of the files:
 
 force\_field\_settings.lmp : which defines the pair, bond, angle, dihedral, improper force field coefficients.  The OPLS-AA parameters are generated as described above, note that they are LJ-style. For NiO we used OPENKim Buckingham parameters; however, the geometric mixing rule for generating mixed pair coefficients requires a 3-parameter forcefield (LJ). Thus, we had to generate our own NiO LJ parameters by fitting to experimental data & DFT calculations (110 slab, 8 layers deep). So the mixed parameters were LJ while the NiO parameters were Buckingham. Modifications to the OPLS-AA parameters also needed to be further modified in our case, the default phosphanate groups are too adhesive towards one another.  
 
+### Header Preparation
 We add this header manually:
 \# Include the force field settings here
 
@@ -41,11 +42,13 @@ kspace\_modify   slab 3.0
 This is done because we need to manually modify the phosphanate groups anyways. 
 
 ## Description of  Files.
+
 topology\_output.lmp given the corrugated NiO.xyz file and the generated .lmp parameter file this is straightforward to generate. The masses list has to be modified afterwards since the surface atoms are not included, but they are included in the atoms list so it’s a small modification.
 
 lammps.in prepared via the typical manner described in the manual of the program.
 
 ##Libraries Used
+
 Atomic Simulation Environment (ASE) , along with its dependencies, and pandas.
 
 ##Conclusion
