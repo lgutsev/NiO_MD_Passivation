@@ -41,7 +41,7 @@ kspace\_modify   slab 3.0
 
 This is done because we need to manually modify the phosphanate groups anyways. 
 
-## Description of  Files.
+## Topology and input file. 
 
 topology\_output.lmp given the corrugated NiO.xyz file and the generated .lmp parameter file this is straightforward to generate. The masses list has to be modified afterwards since the surface atoms are not included, but they are included in the atoms list so it’s a small modification.
 
