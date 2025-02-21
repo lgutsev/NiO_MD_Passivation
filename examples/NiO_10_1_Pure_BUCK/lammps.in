@@ -1,0 +1,54 @@
+# LAMMPS Input Script for 4MePACZ on NiO Surface
+
+# Initialization
+echo both
+#dimension      3
+boundary       p p f
+#processors     * * *
+units          real
+atom_style     full
+
+# Reading the data files
+read_data topology_output.lmp
+
+# Include the necessary parameters from force_field_settings_lammps_with_header.lmp
+include force_field_settings_lammps_with_header.lmp
+
+
+# Neighbor list settings for safety
+neighbor 2.0 bin
+neigh_modify every 1 delay 0 check yes
+
+#debug
+info coeffs
+
+# Set how often thermodynamic information is printed (every 1 step in this case)
+thermo 1
+
+# Customize the thermodynamic output format to include step, temperature, potential energy, total energy, and pressure
+thermo_style custom step temp pe etotal press
+
+# Optimization section
+min_style cg
+#dump 1 all xyz 10 output_optimization.xyz
+#dump_modify 1 sort id
+minimize 1.0e-4 1.0e-6 500 5000
+
+# Temperature and pressure control
+#velocity all create 300.0 4928459 rot yes dist gaussian
+
+# Run the simulation
+timestep 0.25
+
+# Equilibration run
+fix 1 all nvt temp 0.1 300.0 100.0
+run 10000
+
+# Output settings
+thermo 100
+thermo_style custom step temp press vol density pe ke etotal enthalpy
+dump 2 all atom 1000 dump.lammpstrj
+
+# Production run
+fix             2    all      nvt temp 300.0 300.0 100.0
+run 200000

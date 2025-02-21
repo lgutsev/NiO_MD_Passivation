@@ -1,0 +1,99 @@
+# LAMMPS Input Script for 4MePACZ on NiO Surface
+
+# Initialization
+echo both
+#dimension      3
+boundary       p p f
+#processors     * * *
+units          real
+atom_style     full
+
+# Reading the data files
+read_data topology_output.lmp
+
+# Include the necessary parameters from force_field_settings_lammps_with_header.lmp
+include force_field_settings_lammps_with_header.lmp
+
+
+# Neighbor list settings for safety
+neighbor 2.0 bin
+neigh_modify every 1 delay 0 check yes
+#neigh_modify every 10 delay 0 check yes one 2000 page 100000
+
+#debug
+info            coeffs
+
+# Define variables
+variable pressure equal 1.0
+variable        pressureDamp equal 500.0
+
+# Set the timestep
+timestep 1.0
+
+# Output settings (define dump before run commands)
+thermo 100
+
+
+# Optimization step: Minimize energy using conjugate gradient (cg) method without changing box dimensions
+min_style cg
+minimize 1.0e-4 1.0e-6 1000 10000
+
+
+# Initialize velocities
+velocity all create 5.0 214587 mom yes rot yes dist gaussian
+
+# Define the variable for the descending wall position
+variable zstart equal 270.0
+variable zend equal 70.0
+variable zwall equal "v_zstart - (v_zstart - v_zend) * (step / 300000.0)"
+
+# Define the parameters for the Lennard-Jones 12-6 potential
+variable epsilon equal 1.0   # Adjust epsilon as needed
+variable sigma equal 1.0     # Adjust sigma as needed
+variable cutoff equal 2.5    # Adjust cutoff as needed
+
+# Apply a wall using the Lennard-Jones 12-6 potential
+fix wall all wall/lj126 zhi v_zwall ${epsilon} ${sigma} ${cutoff}
+
+# Apply a static wall using the Lennard-Jones 9-3 potential at x = -5
+fix walllo all wall/lj93 zlo -5.0 ${epsilon} ${sigma} ${cutoff} units box
+
+# Dump for equilibration run
+dump 1 all atom 1000 dump.equilibration.lammpstrj
+
+#Restart write 
+restart 100000 restart_eq.restart
+
+# Equilibration run: Gradually heat the system from 200 K to 300 K and equilibrate pressure in x and y
+fix 1 all npt temp 5.0 300.0 100.0 x ${pressure} ${pressure} ${pressureDamp} y ${pressure} ${pressure} ${pressureDamp} couple xy
+run 300000
+
+# Unfix equilibration fix and dump
+unfix 1
+undump 1
+unfix wall
+unfix walllo
+
+# Apply a static wall using the Lennard-Jones 9-3 potential at x = -5
+fix walllo all wall/lj93 zlo -5.0 ${epsilon} ${sigma} ${cutoff} units box
+
+# Apply a static wall using the Lennard-Jones 9-3 potential at x = 120
+fix wallhi all wall/lj93 zhi  120.0  ${epsilon} ${sigma} ${cutoff} units box
+
+# Change frequency to overwrite restart file every 500,000 timesteps after EQ stage
+restart 500000 restart_prod.restart
+
+# Dump for production run
+dump 2 all atom 10000 dump.production.lammpstrj
+
+# Ensure system is equilibrated at 300 K and 1 atm in x and y
+fix 2 all npt temp 300.0 300.0 100.0 x ${pressure} ${pressure} ${pressureDamp} y ${pressure} ${pressure} ${pressureDamp} couple xy
+run 10000000
+
+# Clean up
+unfix 2
+undump 2
+unfix walllo
+unfix wallhi
+
+

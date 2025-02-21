@@ -1,0 +1,9 @@
+pair_style      buck/coul/long  10.0 8.0 
+kspace_style    pppm 1.0e-4
+kspace_modify   slab 3.0
+
+#Buck Parameters
+pair_coeff 1 1 0.000000e+00 1.000000e+00 0.000000e+00  # Ni-Ni
+pair_coeff 1 2 17397.5 0.35 0.000000e+00  # Ni-O
+pair_coeff 2 2 524948.8 0.1490 643.23  # O-O
+
