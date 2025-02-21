@@ -47,11 +47,11 @@ topology\_output.lmp given the corrugated NiO.xyz file and the generated .lmp pa
 
 lammps.in prepared via the typical manner described in the manual of the program.
 
-##Libraries Used
+## Libraries Used
 
 Atomic Simulation Environment (ASE) , along with its dependencies, and pandas.
 
-##Conclusion
+## Conclusion
 
 If there’s any problems or errors please report them to me @ <lgutsev@outlook.com>
 
