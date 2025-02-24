@@ -1,5 +1,5 @@
 ## LAMMPS simulations of a  passivated NiO corrugated surface
-This code is present as-is with the goal of replicating the data presented in doi/10.1002/aenm.202405367.  It can be modified to change the surface or the passivants used to suit the user’s task. 
+This code is present as-is with the goal of replicating the data presented in [doi/10.1002/aenm.202405367](https://onlinelibrary.wiley.com/doi/10.1002/aenm.202405367).  It can be modified to change the surface or the passivants used to suit the user’s task. 
 
 
 For this project, the goal of the LAMMPs portion of the paper was to create a corrugated NiO-surface and passivate it with either just Me-4PACz or copassivate it with Me-4PACz and MPTMS-OH. After  applying the passivants to the surface via a moving wall potential we  ran it as a LAMMPS production run at 300K and 400K .  The features of the LAMMPs calculation are discussed more thoroughly in the draft. We will focus on file preparation here.
