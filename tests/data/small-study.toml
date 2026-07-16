@@ -1,0 +1,15 @@
+[study]
+name = "small regression"
+protocol = "cosam"
+
+[protocol]
+deposition_steps = 10
+temperature = 300.0
+wall_start = 70.0
+wall_end = 60.0
+lower_wall = -5.0
+
+[[molecules]]
+slug = "me-4pacz"
+count = 1
+region = "2.0 2.0 55.0 20.0 20.0 70.0"

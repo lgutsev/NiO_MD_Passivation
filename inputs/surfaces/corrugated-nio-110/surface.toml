@@ -1,0 +1,12 @@
+[surface]
+display_name = "Tested corrugated NiO(110)"
+data = "surface.lmp"
+geometry = "surface.xyz"
+source = "examples/NiO_10_1_Pure_BUCK/topology_output.lmp"
+ni_charge = 2.0
+o_charge = -2.0
+
+[buckingham]
+ni_ni = [0.0, 1.0, 0.0]
+ni_o = [17397.5, 0.35, 0.0]
+o_o = [524948.8, 0.1490, 643.23]

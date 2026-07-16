@@ -1,0 +1,16 @@
+# Generated molecular-dynamics builds and Packmol/LAMMPS runtime output
+builds/
+packed.xyz
+*.dump
+*.lammpstrj
+*.dcd
+restart*
+*.restart
+log.lammps
+.ipynb_checkpoints/
+.DS_Store
+._*
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/

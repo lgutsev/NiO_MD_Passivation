@@ -1,0 +1,10 @@
+# Validated phosphonate corrections transcribed from the corrected Me-4PACz file.
+# These explicit lines override LigParGen values after deterministic type remapping.
+# Atom types 32-37 are P/O/H in the preserved template. Values are verbatim
+# (to displayed precision) from the corrected single-Me-4PACz force field.
+pair_coeff 32 32 lj/cut/coul/long 0.200 3.742
+pair_coeff 33 33 lj/cut/coul/long 0.211 3.066
+pair_coeff 34 34 lj/cut/coul/long 0.211 3.066
+pair_coeff 35 35 lj/cut/coul/long 0.210 2.960
+pair_coeff 36 36 lj/cut/coul/long 0.046 0.400
+pair_coeff 37 37 lj/cut/coul/long 0.046 0.400

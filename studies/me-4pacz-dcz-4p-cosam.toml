@@ -1,0 +1,9 @@
+[study]
+name = "Me-4PACz + DCZ-4P CoSAM"
+protocol = "cosam"
+[[molecules]]
+slug = "me-4pacz"
+# count = REQUIRED_PRODUCTION_VALUE
+[[molecules]]
+slug = "dcz-4p"
+# count = REQUIRED_PRODUCTION_VALUE

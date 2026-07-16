@@ -1,0 +1,12 @@
+[molecule]
+display_name = "Me-4PACz"
+slug = "me-4pacz"
+role = "primary"
+expected_net_charge = -0.8189
+phosphonic_acid_anchors = 1
+anchor_atom_ids = []
+
+[files]
+ligpargen = "ligpargen.lmp"
+geometry = ""
+override = "overrides.lmp"

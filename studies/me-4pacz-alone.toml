@@ -1,0 +1,8 @@
+[study]
+name = "Me-4PACz alone"
+protocol = "cosam"
+[surface]
+data = "inputs/surfaces/corrugated-nio-110/surface.lmp"
+[[molecules]]
+slug = "me-4pacz"
+# count = REQUIRED_PRODUCTION_VALUE

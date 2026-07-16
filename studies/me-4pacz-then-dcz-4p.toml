@@ -1,0 +1,8 @@
+[study]
+name = "Me-4PACz followed by DCZ-4P"
+protocol = "sequential"
+primary_slug = "me-4pacz"
+secondary_slug = "dcz-4p"
+[[molecules]]
+slug = "dcz-4p"
+# count = REQUIRED_STAGE2_VALUE

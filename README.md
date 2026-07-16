@@ -57,5 +57,26 @@ If there’s any problems or errors please report them to me @ <lgutsev@outlook.
 
 Hope this code is helpful. 
 
+## Reproducible preparation package
+
+The notebook workflow is retained as a legacy reference. New builds use the offline, configuration-driven `nio-md-prep` package. Install it from this checkout with `python -m pip install -e .`. LigParGen and Codex are not expected to run on LONI; prepare and validate locally, then copy the completed build to LONI manually.
+
+### Add a new molecule
+
+1. Run LigParGen independently and download its LAMMPS `.lmp` output. This package does not contact LigParGen, invoke BOSS, or invent parameters.
+2. Run `nio-md-prep init-molecule NAME`.
+3. Put the downloaded file at the exact displayed path, named `ligpargen.lmp`.
+4. Review the generated `molecule.toml`, including expected charge, role, anchors, and any reviewed override.
+5. Run `nio-md-prep inspect-molecule NAME`.
+6. Reference the slug in a study TOML and supply every molecule count explicitly.
+7. Run `nio-md-prep build studies/your-study.toml --output builds/your-study`, then `nio-md-prep validate builds/your-study`.
+8. Copy the completed directory to LONI manually.
+
+The experimental 1:1 solution-mixing ratio does not by itself establish equal molecular counts in a simulation. The supplied study templates therefore contain no invented production counts. DCZ-4P is recorded as a two-phosphonic-acid-anchor molecule.
+
+For CoSAM, both species are packed together and undergo one moving-wall protocol. Sequential preparation is genuinely two-stage: first produce and equilibrate the primary build, then run `nio-md-prep prepare-sequential-stage2 STUDY_CONFIG --primary-final primary_final.data --output stage2_directory`. The equilibrated stage-1 data is used as the existing component; the two species are never approximated as a common initial packing.
+
+If Packmol is on `PATH`, a build runs it. Otherwise `packmol.inp` is retained and validation reports the exact offline command `packmol < packmol.inp`. The corrected examples are authoritative: hybrid LJ/Buckingham, geometric ligand/surface mixing, PPPM `1e-4`, slab correction `3.0`, `special_bonds amber`, `units real`, `atom_style full`, and `boundary p p f` are preserved.
+
 
 
