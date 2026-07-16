@@ -28,6 +28,7 @@ class DataFile:
     sections: dict[str, list[Record]] = field(default_factory=dict)
     bounds: dict[str, tuple[float, float]] = field(default_factory=dict)
     declared_types: dict[str, int] = field(default_factory=dict)
+    declared_counts: dict[str, int] = field(default_factory=dict)
 
     def count(self, section: str) -> int:
         return len(self.sections.get(section, []))
@@ -68,6 +69,10 @@ def parse(path: Path) -> DataFile:
         tm = re.match(r"^\s*(\d+)\s+(atom|bond|angle|dihedral|improper)\s+types\s*$", line)
         if tm:
             data.declared_types[tm.group(2)] = int(tm.group(1))
+            continue
+        cm = re.match(r"^\s*(\d+)\s+(atoms|bonds|angles|dihedrals|impropers)\s*$", line)
+        if cm:
+            data.declared_counts[cm.group(2).title()] = int(cm.group(1))
             continue
         if current and re.match(r"^\s*\d", line):
             payload, _, comment = line.partition("#")

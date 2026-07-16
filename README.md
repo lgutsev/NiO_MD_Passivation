@@ -78,5 +78,26 @@ For CoSAM, both species are packed together and undergo one moving-wall protocol
 
 If Packmol is on `PATH`, a build runs it. Otherwise `packmol.inp` is retained and validation reports the exact offline command `packmol < packmol.inp`. The corrected examples are authoritative: hybrid LJ/Buckingham, geometric ligand/surface mixing, PPPM `1e-4`, slab correction `3.0`, `special_bonds amber`, `units real`, `atom_style full`, and `boundary p p f` are preserved.
 
+## Why Excel is no longer required
+
+The historical spreadsheet step pasted Packmol coordinates into replicated LigParGen atom records, shifted atom, molecule, and topology IDs, appended the shifted NiO atoms, and manually corrected LAMMPS header counts and box bounds. That was a manual data join, not part of the scientific method.
+
+`nio-md-prep` now performs that join programmatically. Packmol supplies only coordinates and element labels; LigParGen supplies atom order, charges, types, masses, coefficients, and bonded topology; the packaged NiO file supplies the unchanged surface. The assembler checks the element sequence of every packed molecule, gives every physical ligand a unique positive molecule ID, remaps all topology and type namespaces from one authoritative mapping, assigns surface molecule ID 0, and calculates counts, bounds, and charge from the assembled records. Excel and manual pasting are no longer supported or required.
+
+The component order for a CoSAM is study-manifest species order, then copies in Packmol order, then NiO. Sequential stage 2 preserves the stage-1 records and appends only the secondary ligand; it does not repack the established primary layer.
+
+The user workflow is:
+
+1. Obtain each LigParGen `.lmp` file manually.
+2. Place it at `inputs/molecules/<molecule-name>/ligpargen.lmp`.
+3. Run `nio-md-prep inspect-molecule <molecule-name>`.
+4. Build the selected study.
+5. If Packmol was unavailable, run `packmol < packmol.inp`, then rerun the build with `--packed-xyz packed.xyz`.
+6. Run `nio-md-prep validate <build-directory>`.
+7. Transfer the completed calculation files to LONI manually.
+8. Run LAMMPS on LONI; neither Codex nor LigParGen is installed or run there.
+
+LigParGen remains a manual external step. The legacy notebooks, historical examples, and paper Figure S27 are retained only as scientific provenance.
+
 
 
