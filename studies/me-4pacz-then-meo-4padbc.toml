@@ -5,4 +5,11 @@ primary_slug = "me-4pacz"
 secondary_slug = "meo-4padbc"
 [[molecules]]
 slug = "meo-4padbc"
-# count = REQUIRED_STAGE2_VALUE
+count = 77
+
+[composition]
+basis = "equal_stock_volume"
+primary_count = 180
+stock_volume_assumption = "equal primary and secondary stock volumes; stage 1 contains primary only"
+rounding_rule = "nearest integer, half away from zero"
+stock_concentration_mg_ml = { primary = 0.5, secondary = 0.3 }

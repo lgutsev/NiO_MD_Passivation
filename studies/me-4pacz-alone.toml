@@ -5,4 +5,9 @@ protocol = "cosam"
 data = "inputs/surfaces/corrugated-nio-110/surface.lmp"
 [[molecules]]
 slug = "me-4pacz"
-# count = REQUIRED_PRODUCTION_VALUE
+count = 180
+
+[composition]
+basis = "primary_reference"
+stock_volume_assumption = "primary stock only"
+rounding_rule = "nearest integer, half away from zero"

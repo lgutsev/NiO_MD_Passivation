@@ -3,7 +3,13 @@ name = "Me-4PACz + DCZ-4P CoSAM"
 protocol = "cosam"
 [[molecules]]
 slug = "me-4pacz"
-# count = REQUIRED_PRODUCTION_VALUE
+count = 180
 [[molecules]]
 slug = "dcz-4p"
-# count = REQUIRED_PRODUCTION_VALUE
+count = 59
+
+[composition]
+basis = "equal_stock_volume"
+stock_volume_assumption = "equal primary and secondary stock volumes"
+rounding_rule = "nearest integer, half away from zero"
+stock_concentration_mg_ml = { primary = 0.5, secondary = 0.3 }
