@@ -23,6 +23,18 @@ def test_example_180_360_counts():
     d=parse(ROOT/"examples/Sigma_Big_NiO_110_Multi_Me4PACz_4x_180-360_swall/topology_output.lmp")
     assert [d.count(x) for x in ("Atoms","Bonds","Angles","Dihedrals","Impropers")]==[35640,14580,25020,35640,7740]
     assert [d.type_count(x) for x in ("atom","bond","angle","dihedral","improper")]==[65,64,111,159,35]
+    surface=[a for a in d.sections["Atoms"] if int(a.fields[1])==0]
+    assert len(surface)==21060
+    assert len(surface)+180*45+360*18==35640
+
+def test_extracted_surface_inventory_and_cell():
+    d=parse(ROOT/"inputs/surfaces/corrugated-nio-110/surface.lmp")
+    assert d.count("Atoms")==21060
+    assert d.bounds["x"]==(0.0,125.1) and d.bounds["y"]==(0.0,41.7)
+    assert sum(float(a.fields[3])>0 for a in d.sections["Atoms"])==10530
+    source=parse(ROOT/"examples/Sigma_Big_NiO_110_Multi_Me4PACz_4x_180-360_swall/topology_output.lmp")
+    original=[a for a in source.sections["Atoms"] if int(a.fields[1])==0]
+    assert [a.fields[3:7] for a in d.sections["Atoms"]]==[a.fields[3:7] for a in original]
 
 def test_historical_unique_molecule_ids():
     primary=parse(ROOT/"scripts/mnt/data/ligand_oplsaa.lmp")

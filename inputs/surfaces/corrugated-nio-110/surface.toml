@@ -2,7 +2,15 @@
 display_name = "Tested corrugated NiO(110)"
 data = "surface.lmp"
 geometry = "surface.xyz"
-source = "examples/NiO_10_1_Pure_BUCK/topology_output.lmp"
+source = "examples/Sigma_Big_NiO_110_Multi_Me4PACz_4x_180-360_swall/topology_output.lmp (molecule ID 0 atoms)"
+source_sha256 = "0af38c7efdeca76fcb17437ba347dd8352a6ed279f1002a5424371c71c135da3"
+surface_sha256 = "09be07e828f487ab3599f2cf533c969ce6fad31391044055f4572bf81caff556"
+atom_count = 21060
+ni_atoms = 10530
+o_atoms = 10530
+x_bounds = [0.0, 125.1]
+y_bounds = [0.0, 41.7]
+z_bounds = [-15.0, 270.0]
 ni_charge = 2.0
 o_charge = -2.0
 

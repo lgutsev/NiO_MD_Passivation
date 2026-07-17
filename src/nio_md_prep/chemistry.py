@@ -42,7 +42,32 @@ def phosphonate_roles(data: DataFile) -> dict[int,str]:
     if not roles: raise ValueError("no phosphonate group identified from element/connectivity")
     return roles
 
-def correction_lines(data: DataFile, atom_type_offset: int) -> tuple[list[str],int]:
+def corrected_dihedral_types(data: DataFile) -> set[int]:
+    """Map authoritative H-O-P-C and O-P-C-C CHARMM torsions by topology."""
+    roles=phosphonate_roles(data)
+    corrected=set()
+    atoms={int(a.fields[0]):a for a in data.sections["Atoms"]}
+    for row in data.sections.get("Dihedrals",[]):
+        ids=list(map(int,row.fields[2:6])); elements=[_element(data,i) for i in ids]
+        role_names=[roles.get(i) for i in ids]
+        hoc=(elements==["H","O","P","C"] and role_names[:3]==["P-O-H","P-OH","P"])
+        opc=(elements==["O","P","C","C"] and role_names[1]=="P" and role_names[0] in {"P=O","P-OH"})
+        rev_elements=list(reversed(elements)); rev_roles=list(reversed(role_names))
+        hoc= hoc or (rev_elements==["H","O","P","C"] and rev_roles[:3]==["P-O-H","P-OH","P"])
+        opc= opc or (rev_elements==["O","P","C","C"] and rev_roles[1]=="P" and rev_roles[0] in {"P=O","P-OH"})
+        if hoc or opc: corrected.add(int(row.fields[1]))
+    instances=sum(1 for row in data.sections.get("Dihedrals",[]) if int(row.fields[1]) in corrected)
+    anchors=sum(1 for role in roles.values() if role=="P")
+    if instances != 5*anchors:
+        raise ValueError(f"phosphonate CHARMM mapping found {instances} torsions; expected {5*anchors}")
+    # A type shared with unrelated chemistry would make a type-level correction unsafe.
+    for row in data.sections.get("Dihedrals",[]):
+        if int(row.fields[1]) in corrected:
+            ids=list(map(int,row.fields[2:6])); elements=[_element(data,i) for i in ids]
+            if "P" not in elements: raise ValueError(f"corrected dihedral type {row.fields[1]} is shared with unrelated topology")
+    return corrected
+
+def correction_lines(data: DataFile, atom_type_offset: int, dihedral_type_offset: int) -> tuple[list[str],int,set[int]]:
     roles=phosphonate_roles(data); by_type={}
     atoms={int(a.fields[0]):a for a in data.sections["Atoms"]}
     for atom_id,role in roles.items():
@@ -53,4 +78,7 @@ def correction_lines(data: DataFile, atom_type_offset: int) -> tuple[list[str],i
     for typ,role in sorted(by_type.items()):
         eps,sigma=CORRECTIONS[role]
         lines.append(f"pair_coeff {typ} {typ} lj/cut/coul/long {eps:.3f} {sigma:.3f} # Cao corrected {role}")
-    return lines, sum(1 for role in roles.values() if role=="P")
+    corrected={typ+dihedral_type_offset for typ in corrected_dihedral_types(data)}
+    for typ in sorted(corrected):
+        lines.append(f"dihedral_coeff {typ} charmm 0.5333 0 3 0.000 # Cao corrected phosphonate torsion")
+    return lines, sum(1 for role in roles.values() if role=="P"), corrected

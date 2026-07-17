@@ -3,7 +3,7 @@ from pathlib import Path
 import math
 from copy import deepcopy
 import hashlib, json, shutil, subprocess
-from .config import ROOT, load, molecule_manifest, missing_ligpargen
+from .config import ROOT, load, molecule_dir, molecule_manifest, missing_ligpargen
 from .geometry import read_xyz, write_xyz
 from .lammps import DataFile, Record, TOPOLOGY, charge, parse, replicate, write
 from .chemistry import molecular_weight, correction_lines
@@ -11,7 +11,7 @@ from .chemistry import molecular_weight, correction_lines
 HEADER = """# Validated NiO/passivant force-field styles
 bond_style      harmonic
 angle_style     harmonic
-dihedral_style  hybrid opls
+dihedral_style  hybrid opls charmm
 improper_style  cvff
 pair_style      hybrid lj/cut/coul/long 10.0 8.0 buck/coul/long 10.0 8.0
 pair_modify     pair lj/cut/coul/long mix geometric
@@ -79,6 +79,13 @@ def _packmol(config: dict, templates: list[dict], output: Path, supplied: Path|N
     for index,(actual,wanted) in enumerate(zip(symbols,expected_symbols),1):
         if actual!=wanted:
             raise ValueError(f"Packmol atom order mismatch at packed atom {index}: expected {wanted}, found {actual}; atoms must remain in LigParGen order")
+    cursor=0
+    for item in templates:
+        n=item["atoms"]*item["count"]; bounds=list(map(float,item["region"].split()))
+        for x,y,z in coords[cursor:cursor+n]:
+            if not(bounds[0]<=x<=bounds[3] and bounds[1]<=y<=bounds[4] and bounds[2]<=z<=bounds[5]):
+                raise ValueError(f"{item['slug']} packed coordinate lies outside its validated region")
+        cursor+=n
     return packed,coords,True
 
 def _surface(data: DataFile, offsets: dict[str,int], ids: dict[str,int], molecule: int) -> tuple[dict[str,list[Record]],dict[str,int]]:
@@ -96,6 +103,11 @@ def build(config_path: Path, output: Path, primary_final: Path|None=None, packed
     species=cfg.get("molecules",[])
     if not species or any("count" not in x for x in species): raise ValueError("every study molecule requires an explicit resolved count")
     templates=[]; manifests=[]
+    sequential_bounds=None; existing_max_z=None
+    if primary_final:
+        if not primary_final.exists(): raise FileNotFoundError(primary_final)
+        existing=parse(primary_final); sequential_bounds=existing.bounds.copy()
+        existing_max_z=max(float(a.fields[6]) for a in existing.sections["Atoms"])
     for spec in species:
         folder,manifest=molecule_manifest(spec["slug"]); lmp=folder/manifest.get("files",{}).get("ligpargen","ligpargen.lmp")
         if not lmp.exists(): raise missing_ligpargen(lmp,f"nio-md-prep build {config_path} --output {output}")
@@ -109,7 +121,13 @@ def build(config_path: Path, output: Path, primary_final: Path|None=None, packed
         xyz=folder/geometry_name if geometry_name else output/f"{spec['slug']}.xyz"
         if geometry_name: xyz=folder/geometry_name
         else: write_xyz(data,xyz,spec["slug"])
-        templates.append({"slug":spec["slug"],"data":data,"xyz":xyz,"count":int(spec["count"]),"atoms":data.count("Atoms"),"mw":molecular_weight(data),"region":spec.get("region","2.0 2.0 45.0 123.1 39.7 145.0"),"folder":folder,"manifest":manifest})
+        region=spec.get("region","2.0 2.0 45.0 123.1 39.7 145.0")
+        if primary_final:
+            xlo,xhi=sequential_bounds["x"]; ylo,yhi=sequential_bounds["y"]; _,zhi=sequential_bounds["z"]
+            zlo=existing_max_z+2.5
+            if zlo>=zhi-5.0: raise ValueError("stage-1 box has insufficient space above the film for stage-2 packing")
+            region=f"{xlo+2:.6f} {ylo+2:.6f} {zlo:.6f} {xhi-2:.6f} {yhi-2:.6f} {zhi-5:.6f}"
+        templates.append({"slug":spec["slug"],"data":data,"xyz":xyz,"count":int(spec["count"]),"atoms":data.count("Atoms"),"mw":molecular_weight(data),"region":region,"folder":folder,"manifest":manifest})
         manifests.append(manifest)
     packed,coords,packed_ok=_packmol(cfg,templates,output,packed_xyz)
     if coords is None:
@@ -118,7 +136,6 @@ def build(config_path: Path, output: Path, primary_final: Path|None=None, packed
         (output/"validation_report.txt").write_text("INCOMPLETE\nPackmol has not run; no scientifically usable topology was produced.\nRun: packmol < packmol.inp\n",encoding="utf-8")
         return output
     if primary_final:
-        if not primary_final.exists(): raise FileNotFoundError(primary_final)
         result=parse(primary_final)
         ids={"atom":max(int(r.fields[0]) for r in result.sections["Atoms"])}
         for sec in TOPOLOGY: ids[sec.lower()[:-1]]=max((int(r.fields[0]) for r in result.sections.get(sec,[])),default=0)
@@ -137,10 +154,11 @@ def build(config_path: Path, output: Path, primary_final: Path|None=None, packed
         maps={cat:{i:i+types[cat] for i in range(1,t["data"].type_count(cat)+1)} for cat in types}
         ranges={"component":t["slug"],"count":t["count"],"atoms_per_molecule":t["atoms"],"charge":charge(t["data"])*t["count"],"atom_ids":[ids["atom"]+1,ids["atom"]+inc["atom"]],"molecule_ids":[mol+1,mol+inc["molecule"]],"types":{cat:[types[cat]+1,types[cat]+t["data"].type_count(cat)] for cat in types if t["data"].type_count(cat)}}
         type_map["components"].append(ranges); type_map.setdefault("type_maps",{})[t["slug"]]=maps
-        chemical_lines, anchors=correction_lines(t["data"],types["atom"])
+        chemical_lines, anchors, corrected_dihedrals=correction_lines(t["data"],types["atom"],types["dihedral"])
         expected_anchors=int(t["manifest"].get("molecule",{}).get("phosphonic_acid_anchors",0))
         if anchors != expected_anchors: raise ValueError(f"{t['slug']}: found {anchors} phosphonate anchors; manifest expects {expected_anchors}")
         overrides += chemical_lines
+        ranges["corrected_charmm_dihedral_types"]=sorted(corrected_dihedrals)
         for k in ids: ids[k]+=inc.get(k,0); types[k]+=t["data"].type_count(k)
         mol+=inc["molecule"]
     surface_path=ROOT/cfg.get("surface",{}).get("data","inputs/surfaces/corrugated-nio-110/surface.lmp")
@@ -152,7 +170,10 @@ def build(config_path: Path, output: Path, primary_final: Path|None=None, packed
         new_types=sorted({int(r.fields[2]) for r in result.sections["Atoms"] if abs(abs(float(r.fields[3]))-2.0)<1e-8})
     all_xyz=[(float(r.fields[4]),float(r.fields[5]),float(r.fields[6])) for r in result.sections["Atoms"]]
     margin=cfg.get("box",{}).get("margin",5.0)
-    result.bounds={axis:(min(p[i] for p in all_xyz)-margin,max(p[i] for p in all_xyz)+margin) for i,axis in enumerate("xyz")}
+    if primary_final: result.bounds=sequential_bounds
+    else:
+        # Preserve the authoritative surface x/y periodic cell; only z contains vacuum.
+        result.bounds={"x":surface.bounds["x"],"y":surface.bounds["y"],"z":surface.bounds["z"]}
     topology_data=deepcopy(result)
     for section in ("Pair Coeffs","Bond Coeffs","Angle Coeffs","Dihedral Coeffs","Improper Coeffs"):
         topology_data.sections.pop(section,None)
@@ -184,9 +205,11 @@ def build(config_path: Path, output: Path, primary_final: Path|None=None, packed
     (output/"force_field_settings_lammps_with_header.lmp").write_text(ff,encoding="utf-8")
     _write_input(output,cfg,result)
     ratio=cfg.get("composition",{})
-    report={"basis":ratio.get("basis","explicit"),"stock_concentration_mg_ml":ratio.get("stock_concentration_mg_ml",{}),"stock_volume_assumption":ratio.get("stock_volume_assumption","n/a"),"rounding_rule":ratio.get("rounding_rule","explicit counts"),"molecules":[{"slug":t["slug"],"molecular_weight_g_mol":round(t["mw"],6),"count":t["count"]} for t in templates]}
-    if len(templates)==2:
-        report["exact_secondary_to_primary_ratio"]=(templates[1]["count"]/templates[0]["count"])
+    report={"basis":ratio.get("basis","explicit"),"provisional":ratio.get("basis")=="equal_stock_volume","stock_concentration_mg_ml":ratio.get("stock_concentration_mg_ml",{}),"stock_volume_assumption":ratio.get("stock_volume_assumption","n/a"),"rounding_rule":ratio.get("rounding_rule","explicit counts"),"molecules":[{"slug":t["slug"],"molecular_weight_g_mol":round(t["mw"],6),"count":t["count"]} for t in templates]}
+    if ratio.get("basis") in {"equal_stock_volume","molar_1_to_1"}:
+        secondary=templates[-1]; primary_count=int(ratio.get("primary_count",templates[0]["count"])); _,pm=molecule_manifest("me-4pacz"); pd=parse(molecule_dir("me-4pacz")/pm["files"]["ligpargen"]); pmw=molecular_weight(pd)
+        exact=1.0 if ratio.get("basis")=="molar_1_to_1" else (0.3/secondary["mw"])/(0.5/pmw)
+        report.update({"unrounded_concentration_mw_ratio":exact,"rounded_count_ratio":secondary["count"]/primary_count,"primary_reference_count":primary_count})
     (output/"ratio_report.json").write_text(json.dumps(report,indent=2)+"\n",encoding="utf-8")
     (output/"resolved_config.toml").write_text(config_path.read_text(encoding="utf-8"),encoding="utf-8")
     (output/"type_map.json").write_text(json.dumps(type_map,indent=2)+"\n",encoding="utf-8")
@@ -207,15 +230,26 @@ def _write_input(output: Path,cfg:dict,data:DataFile)->None:
     p=cfg.get("protocol",{}); steps=int(p.get("deposition_steps",300000)); temp=float(p.get("temperature",300.0)); lower=float(p.get("lower_wall",-5))
     surface_top=max(float(a.fields[6]) for a in data.sections["Atoms"] if abs(abs(float(a.fields[3]))-2.0)<1e-8)
     zend=surface_top+float(p.get("wall_clearance",30.0)); zstart=max(zend+100.0,data.bounds["z"][1]-5.0)
-    text=f"""# Generated from corrected successful examples
-boundary p p f
+    init=lambda source: f"""boundary p p f
 units real
 atom_style full
-read_data topology_output.lmp
+read_data {source}
 include force_field_settings_lammps_with_header.lmp
+neighbor 2.0 bin
+neigh_modify every 1 delay 0 check yes
 timestep 1.0
+thermo 1000
+thermo_style custom step temp pe ke etotal press pxx pyy lx ly lz
 variable pressure equal 1.0
 variable pressureDamp equal 500.0
+variable epsilon equal 1.0
+variable sigma equal 1.0
+variable cutoff equal 2.5
+"""
+    text=f"""# Cao deposition; safely rerun only when deposited.data is absent
+{init('topology_output.lmp')}min_style cg
+minimize 1.0e-4 1.0e-6 1000 10000
+velocity all create 5.0 214587 mom yes rot yes dist gaussian
 variable zstart equal {zstart}
 variable zend equal {zend}
 variable zwall equal \"v_zstart - (v_zstart-v_zend)*(step/{steps}.0)\"
@@ -225,17 +259,24 @@ variable cutoff equal 2.5
 fix wall all wall/lj126 zhi v_zwall ${{epsilon}} ${{sigma}} ${{cutoff}}
 fix walllo all wall/lj93 zlo {lower} ${{epsilon}} ${{sigma}} ${{cutoff}} units box
 fix deposit all npt temp 5.0 {temp} 100.0 x ${{pressure}} ${{pressure}} ${{pressureDamp}} y ${{pressure}} ${{pressure}} ${{pressureDamp}} couple xy
+dump trajectory all custom 1000 deposition.lammpstrj id mol type q x y z
+dump_modify trajectory sort id
+restart 100000 deposition.restart.1 deposition.restart.2
 run {steps}
 unfix deposit
 unfix wall
 unfix walllo
+undump trajectory
 write_data deposited.data
+write_restart deposited.restart
 """
     (output/"deposition.in").write_text(text,encoding="utf-8")
     (output/"lammps.in").write_text(text,encoding="utf-8")
-    common="""boundary p p f\nunits real\natom_style full\ninclude force_field_settings_lammps_with_header.lmp\ntimestep 1.0\nvariable pressure equal 1.0\nvariable pressureDamp equal 500.0\nvariable epsilon equal 1.0\nvariable sigma equal 1.0\nvariable cutoff equal 2.5\n"""
-    eq=f"# Cao 300 K equilibration: 5 ns\nread_data deposited.data\n{common}fix lo all wall/lj93 zlo {lower} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix hi all wall/lj93 zhi {zend} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix ensemble all npt temp {temp} {temp} 100.0 x ${{pressure}} ${{pressure}} ${{pressureDamp}} y ${{pressure}} ${{pressure}} ${{pressureDamp}} couple xy\nrun 5000000\nwrite_data equilibrated-300K.data\nwrite_restart equilibrated-300K.restart\n"
-    anneal=f"# Cao 400 K anneal: 3 ns\nread_data equilibrated-300K.data\n{common}fix lo all wall/lj93 zlo {lower} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix hi all wall/lj93 zhi {zend} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix ensemble all npt temp 400.0 400.0 100.0 x ${{pressure}} ${{pressure}} ${{pressureDamp}} y ${{pressure}} ${{pressure}} ${{pressureDamp}} couple xy\nrun 3000000\nwrite_data annealed-400K.data\nwrite_restart annealed-400K.restart\n"
+    eq=f"# Cao 300 K continuation: run only after deposition.in\n{init('deposited.data')}fix lo all wall/lj93 zlo {lower} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix hi all wall/lj93 zhi {zend} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix ensemble all npt temp {temp} {temp} 100.0 x ${{pressure}} ${{pressure}} ${{pressureDamp}} y ${{pressure}} ${{pressure}} ${{pressureDamp}} couple xy\ndump trajectory all custom 10000 equilibration-300K.lammpstrj id mol type q x y z\ndump_modify trajectory sort id\nrestart 500000 equilibration-300K.restart.1 equilibration-300K.restart.2\nrun 5000000\nwrite_data equilibrated-300K.data\nwrite_restart equilibrated-300K.restart\n"
+    anneal=f"# Cao 400 K continuation: run only after equilibrate-300K.in\n{init('equilibrated-300K.data')}fix lo all wall/lj93 zlo {lower} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix hi all wall/lj93 zhi {zend} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix ensemble all npt temp 400.0 400.0 100.0 x ${{pressure}} ${{pressure}} ${{pressureDamp}} y ${{pressure}} ${{pressure}} ${{pressureDamp}} couple xy\ndump trajectory all custom 10000 anneal-400K.lammpstrj id mol type q x y z\ndump_modify trajectory sort id\nrestart 500000 anneal-400K.restart.1 anneal-400K.restart.2\nrun 3000000\nwrite_data annealed-400K.data\nwrite_restart annealed-400K.restart\n"
     (output/"equilibrate-300K.in").write_text(eq,encoding="utf-8")
     (output/"anneal-400K.in").write_text(anneal,encoding="utf-8")
+    for name in ("deposition","equilibrate-300K","anneal-400K"):
+        check=f"# Non-advancing coefficient/topology check for {name}.in\n{init('topology_output.lmp')}run 0\n"
+        (output/f"validate-{name}.in").write_text(check,encoding="utf-8")
     (output/"protocol_notes.txt").write_text("Cao2025 target: p p f, real/full, hybrid LJ/Buckingham, PPPM 1e-4, 1 fs, temperature damping 100 fs, moving wall, 5 ns at 300 K and 3 ns at 400 K. Established corrected executable decks use pressure damping 500 fs (retained here), despite the 1000 fs prose value. Legacy decks also contain 10 ns single-temperature production runs; the paper-target 5 ns + 3 ns split is generated here.\n",encoding="utf-8")

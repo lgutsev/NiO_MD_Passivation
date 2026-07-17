@@ -1,10 +1,26 @@
 from __future__ import annotations
 from pathlib import Path
-import json, math, re, shutil
+import hashlib, json, math, re, shutil, subprocess, tempfile
 from .lammps import TOPOLOGY, charge, parse
 
 def _records(data, section):
     return [r.fields for r in data.sections.get(section,[])]
+
+def _minimum_cross_separation(old_atoms,new_atoms,cutoff=2.0):
+    cells={}
+    for row in old_atoms:
+        xyz=tuple(float(x) for x in row.fields[4:7]); key=tuple(math.floor(x/cutoff) for x in xyz); cells.setdefault(key,[]).append(xyz)
+    minimum=float("inf")
+    for row in new_atoms:
+        xyz=tuple(float(x) for x in row.fields[4:7]); key=tuple(math.floor(x/cutoff) for x in xyz)
+        for dx in (-1,0,1):
+            for dy in (-1,0,1):
+                for dz in (-1,0,1):
+                    for other in cells.get((key[0]+dx,key[1]+dy,key[2]+dz),[]):
+                        minimum=min(minimum,math.dist(xyz,other))
+    # No candidates in neighboring cutoff cells proves every cross distance is
+    # at least cutoff, without an O(N*M) all-pairs calculation.
+    return cutoff if math.isinf(minimum) else minimum
 
 def validate(folder: Path, packmol_ran: bool|None=None, primary_final: Path|None=None) -> bool:
     errors=[]; warnings=[]
@@ -46,6 +62,9 @@ def validate(folder: Path, packmol_ran: bool|None=None, primary_final: Path|None
         if any(not(lo<=float(r.fields[4+i])<=hi) for r in atoms): errors.append(f"coordinates outside {axis} bounds")
     nio=[r for r in atoms if abs(abs(float(r.fields[3]))-2.0)<1e-8]
     if not nio or abs(sum(float(r.fields[3]) for r in nio))>1e-8: errors.append("Ni/O fixed-charge population missing or unbalanced")
+    if len(nio)!=21060: errors.append(f"surface atom count is {len(nio)}; expected 21060")
+    surface_path=Path(__file__).resolve().parents[2]/"inputs/surfaces/corrugated-nio-110/surface.lmp"
+    if hashlib.sha256(surface_path.read_bytes()).hexdigest()!="09be07e828f487ab3599f2cf533c969ce6fad31391044055f4572bf81caff556": errors.append("authoritative surface SHA256 mismatch")
     nio_types=sorted({int(r.fields[2]) for r in nio})
     ligand_types=sorted(used-set(nio_types))
     if len(nio_types)!=2: errors.append("expected exactly two Ni/O atom types")
@@ -64,11 +83,31 @@ def validate(folder: Path, packmol_ran: bool|None=None, primary_final: Path|None
     if abs(charge(data)-float(manifest["total_charge"]))>1e-6: errors.append("final charge disagrees with component/assembly manifest")
     if primary_final:
         old=parse(primary_final)
+        if old.bounds!=data.bounds: errors.append("sequential stage changed stage-1 box bounds")
         for sec in ("Masses","Atoms","Bonds","Angles","Dihedrals","Impropers"):
             before=_records(old,sec); after=_records(data,sec)[:len(before)]
             if before!=after: errors.append(f"sequential stage-1 {sec} changed")
+        separation=_minimum_cross_separation(old.sections["Atoms"],data.sections["Atoms"][old.count("Atoms"):])
+        if separation<2.0: errors.append(f"stage-1/stage-2 minimum separation {separation:.6f} is below 2.0 A")
+        manifest["stage1_stage2_minimum_separation_lower_bound_angstrom"]=separation
+        (folder/"assembly_manifest.json").write_text(json.dumps(manifest,indent=2)+"\n",encoding="utf-8")
+    required_order=("boundary p p f","units real","atom_style full","read_data ","include ")
+    for input_name in ("deposition.in","equilibrate-300K.in","anneal-400K.in"):
+        text=(folder/input_name).read_text(); positions=[text.find(token) for token in required_order]
+        if any(x<0 for x in positions) or positions!=sorted(positions): errors.append(f"{input_name}: invalid initialization command order")
+        for directive in ("thermo_style","dump trajectory","restart ","write_data","write_restart"):
+            if directive not in text: errors.append(f"{input_name}: missing {directive.strip()} directive")
     if packmol_ran is False: errors.append("Packmol packing was not completed")
-    if not (shutil.which("lmp") or shutil.which("lammps")): warnings.append("LAMMPS executable not found; zero-step dry run skipped")
+    executable=shutil.which("lmp") or shutil.which("lammps")
+    if not executable: warnings.append("LAMMPS executable not found; zero-step checks skipped")
+    else:
+        with tempfile.TemporaryDirectory(prefix="nio-md-validate-") as temp:
+            target=Path(temp); shutil.copy2(topology,target/topology.name); shutil.copy2(folder/"force_field_settings_lammps_with_header.lmp",target/"force_field_settings_lammps_with_header.lmp")
+            for name in ("deposition","equilibrate-300K","anneal-400K"):
+                source=folder/f"validate-{name}.in"; shutil.copy2(source,target/source.name)
+                run=subprocess.run([executable,"-in",source.name],cwd=target,capture_output=True,text=True)
+                if run.returncode: errors.append(f"LAMMPS zero-step {name} failed: {(run.stderr or run.stdout)[-500:]}")
+                else: warnings.append(f"LAMMPS zero-step {name}: passed")
     report=["VALID" if not errors else "INVALID",f"atoms: {len(atoms)}",f"molecules: {max(int(r.fields[1]) for r in atoms)}",f"total charge: {charge(data):.8f}"]
     if not errors: report.append("Spreadsheet assembly: not required; topology and coordinates were merged programmatically.")
     report += [f"ERROR: {x}" for x in errors]+[f"WARNING: {x}" for x in warnings]
