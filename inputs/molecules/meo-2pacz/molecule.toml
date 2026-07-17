@@ -2,7 +2,7 @@
 display_name = "MeO-2PACz"
 slug = "meo-2pacz"
 role = "secondary"
-expected_net_charge = "REQUIRED_FROM_LIGPARGEN"
+expected_net_charge = 0.0001
 phosphonic_acid_anchors = 1
 anchor_atom_ids = []
 [files]

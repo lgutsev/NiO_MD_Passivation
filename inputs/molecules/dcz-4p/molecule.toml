@@ -2,7 +2,7 @@
 display_name = "DCZ-4P"
 slug = "dcz-4p"
 role = "secondary"
-expected_net_charge = "REQUIRED_FROM_LIGPARGEN"
+expected_net_charge = -0.0003
 phosphonic_acid_anchors = 2
 anchor_atom_ids = []
 [files]

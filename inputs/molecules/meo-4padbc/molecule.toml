@@ -2,7 +2,7 @@
 display_name = "MeO-4PADBC"
 slug = "meo-4padbc"
 role = "secondary"
-expected_net_charge = "REQUIRED_FROM_LIGPARGEN"
+expected_net_charge = -0.0002
 phosphonic_acid_anchors = 1
 anchor_atom_ids = []
 [files]

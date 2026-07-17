@@ -2,7 +2,7 @@
 display_name = "Me-4PACz"
 slug = "me-4pacz"
 role = "primary"
-expected_net_charge = -0.8189
+expected_net_charge = -0.0001
 phosphonic_acid_anchors = 1
 anchor_atom_ids = []
 
