@@ -3,6 +3,12 @@ name = "Me-4PACz followed by MeO-2PACz"
 protocol = "sequential"
 primary_slug = "me-4pacz"
 secondary_slug = "meo-2pacz"
+[protocol]
+wall_clearance = 30.0
+deposition_lower_wall = -5.0
+production_lower_wall_300 = -5.0
+production_lower_wall_400 = -10.0
+production_upper_wall = 120.0
 [[molecules]]
 slug = "meo-2pacz"
 count = 107

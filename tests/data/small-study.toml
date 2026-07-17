@@ -8,6 +8,10 @@ temperature = 300.0
 wall_start = 70.0
 wall_end = 60.0
 lower_wall = -5.0
+deposition_lower_wall = -5.0
+production_lower_wall_300 = -5.0
+production_lower_wall_400 = -10.0
+production_upper_wall = 120.0
 
 [[molecules]]
 slug = "me-4pacz"

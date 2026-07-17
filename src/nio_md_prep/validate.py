@@ -97,12 +97,20 @@ def validate(folder: Path, packmol_ran: bool|None=None, primary_final: Path|None
         if any(x<0 for x in positions) or positions!=sorted(positions): errors.append(f"{input_name}: invalid initialization command order")
         for directive in ("thermo_style","dump trajectory","restart ","write_data","write_restart"):
             if directive not in text: errors.append(f"{input_name}: missing {directive.strip()} directive")
+        for line in re.findall(r"(?m)^write_data\s+.*$",text):
+            if not line.endswith(" nocoeff"): errors.append(f"{input_name}: write_data is not coefficient-free")
+    deposition=(folder/"deposition.in").read_text(); eq=(folder/"equilibrate-300K.in").read_text(); anneal=(folder/"anneal-400K.in").read_text()
+    if not re.search(r"variable zend equal 69\.615(?:0+)?",deposition): errors.append("deposition wall endpoint is not 69.615 A")
+    for name,text in (("equilibrate-300K.in",eq),("anneal-400K.in",anneal)):
+        if not re.search(r"fix hi all wall/lj93 zhi 120\.0",text): errors.append(f"{name}: production upper wall is not 120 A")
     if packmol_ran is False: errors.append("Packmol packing was not completed")
     executable=shutil.which("lmp") or shutil.which("lammps")
     if not executable: warnings.append("LAMMPS executable not found; zero-step checks skipped")
     else:
         with tempfile.TemporaryDirectory(prefix="nio-md-validate-") as temp:
-            target=Path(temp); shutil.copy2(topology,target/topology.name); shutil.copy2(folder/"force_field_settings_lammps_with_header.lmp",target/"force_field_settings_lammps_with_header.lmp")
+            target=Path(temp); shutil.copy2(topology,target/topology.name)
+            shutil.copy2(topology,target/"deposited.data"); shutil.copy2(topology,target/"equilibrated-300K.data")
+            shutil.copy2(folder/"force_field_settings_lammps_with_header.lmp",target/"force_field_settings_lammps_with_header.lmp")
             for name in ("deposition","equilibrate-300K","anneal-400K"):
                 source=folder/f"validate-{name}.in"; shutil.copy2(source,target/source.name)
                 run=subprocess.run([executable,"-in",source.name],cwd=target,capture_output=True,text=True)

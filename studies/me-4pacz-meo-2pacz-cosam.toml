@@ -1,6 +1,12 @@
 [study]
 name = "Me-4PACz + MeO-2PACz CoSAM"
 protocol = "cosam"
+[protocol]
+wall_clearance = 30.0
+deposition_lower_wall = -5.0
+production_lower_wall_300 = -5.0
+production_lower_wall_400 = -10.0
+production_upper_wall = 120.0
 [[molecules]]
 slug = "me-4pacz"
 count = 180

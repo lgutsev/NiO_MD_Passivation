@@ -69,3 +69,12 @@ def test_generated_stage_inputs_are_ordered_and_restartable(tmp_path):
         positions=[text.index(x) for x in ("boundary p p f","units real","atom_style full","read_data ","include ")]
         assert positions==sorted(positions)
         assert "dump trajectory" in text and "restart " in text and "write_restart" in text
+        assert all(line.endswith(" nocoeff") for line in text.splitlines() if line.startswith("write_data "))
+    deposition=(out/"deposition.in").read_text(); eq=(out/"equilibrate-300K.in").read_text(); anneal=(out/"anneal-400K.in").read_text()
+    assert "variable zend equal 69.615" in deposition
+    assert "fix hi all wall/lj93 zhi 120.0" in eq and "fix lo all wall/lj93 zlo -5.0" in eq
+    assert "fix hi all wall/lj93 zhi 120.0" in anneal and "fix lo all wall/lj93 zlo -10.0" in anneal
+    assert "fix hi all wall/lj93 zhi 69.615" not in eq+anneal
+    for name,source in (("deposition","topology_output.lmp"),("equilibrate-300K","deposited.data"),("anneal-400K","equilibrated-300K.data")):
+        smoke=(out/f"validate-{name}.in").read_text()
+        assert f"read_data {source}" in smoke and "run 0" in smoke

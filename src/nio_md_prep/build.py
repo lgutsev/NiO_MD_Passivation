@@ -2,7 +2,7 @@ from __future__ import annotations
 from pathlib import Path
 import math
 from copy import deepcopy
-import hashlib, json, shutil, subprocess
+import hashlib, json, re, shutil, subprocess
 from .config import ROOT, load, molecule_dir, molecule_manifest, missing_ligpargen
 from .geometry import read_xyz, write_xyz
 from .lammps import DataFile, Record, TOPOLOGY, charge, parse, replicate, write
@@ -227,7 +227,10 @@ def build(config_path: Path, output: Path, primary_final: Path|None=None, packed
     return output
 
 def _write_input(output: Path,cfg:dict,data:DataFile)->None:
-    p=cfg.get("protocol",{}); steps=int(p.get("deposition_steps",300000)); temp=float(p.get("temperature",300.0)); lower=float(p.get("lower_wall",-5))
+    p=cfg.get("protocol",{}); steps=int(p.get("deposition_steps",300000)); temp=float(p.get("temperature",300.0))
+    deposition_lower=float(p.get("deposition_lower_wall",p.get("lower_wall",-5.0)))
+    lower_300=float(p.get("production_lower_wall_300",-5.0)); lower_400=float(p.get("production_lower_wall_400",-10.0))
+    production_upper=float(p.get("production_upper_wall",120.0))
     surface_top=max(float(a.fields[6]) for a in data.sections["Atoms"] if abs(abs(float(a.fields[3]))-2.0)<1e-8)
     zend=surface_top+float(p.get("wall_clearance",30.0)); zstart=max(zend+100.0,data.bounds["z"][1]-5.0)
     init=lambda source: f"""boundary p p f
@@ -257,7 +260,7 @@ variable epsilon equal 1.0
 variable sigma equal 1.0
 variable cutoff equal 2.5
 fix wall all wall/lj126 zhi v_zwall ${{epsilon}} ${{sigma}} ${{cutoff}}
-fix walllo all wall/lj93 zlo {lower} ${{epsilon}} ${{sigma}} ${{cutoff}} units box
+fix walllo all wall/lj93 zlo {deposition_lower} ${{epsilon}} ${{sigma}} ${{cutoff}} units box
 fix deposit all npt temp 5.0 {temp} 100.0 x ${{pressure}} ${{pressure}} ${{pressureDamp}} y ${{pressure}} ${{pressure}} ${{pressureDamp}} couple xy
 dump trajectory all custom 1000 deposition.lammpstrj id mol type q x y z
 dump_modify trajectory sort id
@@ -267,16 +270,17 @@ unfix deposit
 unfix wall
 unfix walllo
 undump trajectory
-write_data deposited.data
+write_data deposited.data nocoeff
 write_restart deposited.restart
 """
     (output/"deposition.in").write_text(text,encoding="utf-8")
     (output/"lammps.in").write_text(text,encoding="utf-8")
-    eq=f"# Cao 300 K continuation: run only after deposition.in\n{init('deposited.data')}fix lo all wall/lj93 zlo {lower} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix hi all wall/lj93 zhi {zend} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix ensemble all npt temp {temp} {temp} 100.0 x ${{pressure}} ${{pressure}} ${{pressureDamp}} y ${{pressure}} ${{pressure}} ${{pressureDamp}} couple xy\ndump trajectory all custom 10000 equilibration-300K.lammpstrj id mol type q x y z\ndump_modify trajectory sort id\nrestart 500000 equilibration-300K.restart.1 equilibration-300K.restart.2\nrun 5000000\nwrite_data equilibrated-300K.data\nwrite_restart equilibrated-300K.restart\n"
-    anneal=f"# Cao 400 K continuation: run only after equilibrate-300K.in\n{init('equilibrated-300K.data')}fix lo all wall/lj93 zlo {lower} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix hi all wall/lj93 zhi {zend} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix ensemble all npt temp 400.0 400.0 100.0 x ${{pressure}} ${{pressure}} ${{pressureDamp}} y ${{pressure}} ${{pressure}} ${{pressureDamp}} couple xy\ndump trajectory all custom 10000 anneal-400K.lammpstrj id mol type q x y z\ndump_modify trajectory sort id\nrestart 500000 anneal-400K.restart.1 anneal-400K.restart.2\nrun 3000000\nwrite_data annealed-400K.data\nwrite_restart annealed-400K.restart\n"
+    eq=f"# Cao 300 K continuation: run only after deposition.in\n{init('deposited.data')}fix lo all wall/lj93 zlo {lower_300} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix hi all wall/lj93 zhi {production_upper} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix ensemble all npt temp {temp} {temp} 100.0 x ${{pressure}} ${{pressure}} ${{pressureDamp}} y ${{pressure}} ${{pressure}} ${{pressureDamp}} couple xy\ndump trajectory all custom 10000 equilibration-300K.lammpstrj id mol type q x y z\ndump_modify trajectory sort id\nrestart 500000 equilibration-300K.restart.1 equilibration-300K.restart.2\nrun 5000000\nwrite_data equilibrated-300K.data nocoeff\nwrite_restart equilibrated-300K.restart\n"
+    anneal=f"# Cao 400 K continuation: run only after equilibrate-300K.in\n{init('equilibrated-300K.data')}fix lo all wall/lj93 zlo {lower_400} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix hi all wall/lj93 zhi {production_upper} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix ensemble all npt temp 400.0 400.0 100.0 x ${{pressure}} ${{pressure}} ${{pressureDamp}} y ${{pressure}} ${{pressure}} ${{pressureDamp}} couple xy\ndump trajectory all custom 10000 anneal-400K.lammpstrj id mol type q x y z\ndump_modify trajectory sort id\nrestart 500000 anneal-400K.restart.1 anneal-400K.restart.2\nrun 3000000\nwrite_data annealed-400K.data nocoeff\nwrite_restart annealed-400K.restart\n"
     (output/"equilibrate-300K.in").write_text(eq,encoding="utf-8")
     (output/"anneal-400K.in").write_text(anneal,encoding="utf-8")
-    for name in ("deposition","equilibrate-300K","anneal-400K"):
-        check=f"# Non-advancing coefficient/topology check for {name}.in\n{init('topology_output.lmp')}run 0\n"
-        (output/f"validate-{name}.in").write_text(check,encoding="utf-8")
-    (output/"protocol_notes.txt").write_text("Cao2025 target: p p f, real/full, hybrid LJ/Buckingham, PPPM 1e-4, 1 fs, temperature damping 100 fs, moving wall, 5 ns at 300 K and 3 ns at 400 K. Established corrected executable decks use pressure damping 500 fs (retained here), despite the 1000 fs prose value. Legacy decks also contain 10 ns single-temperature production runs; the paper-target 5 ns + 3 ns split is generated here.\n",encoding="utf-8")
+    for name,source in (("deposition",text),("equilibrate-300K",eq),("anneal-400K",anneal)):
+        check=re.sub(r"(?m)^run\s+\d+\s*$","run 0",source)
+        check=re.sub(r"(?m)^minimize\s+.*$","# minimize omitted from non-advancing smoke validation",check)
+        (output/f"validate-{name}.in").write_text("# Temporary-directory smoke form of the real stage\n"+check,encoding="utf-8")
+    (output/"protocol_notes.txt").write_text(f"Cao2025 target: moving deposition wall ends at {zend:.3f} A; the 300 K production recoil walls are zlo={lower_300:g} A and zhi={production_upper:g} A. The authoritative 400 K deck intentionally uses the lower zlo={lower_400:g} A recoil wall while retaining zhi={production_upper:g} A. Established corrected executable decks use pressure damping 500 fs (retained here), despite the 1000 fs prose value.\n",encoding="utf-8")

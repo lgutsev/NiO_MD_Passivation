@@ -82,6 +82,8 @@ With the authoritative 21,060-atom corrugated NiO surface, final assembled atom 
 
 Complete builds write `deposition.in`, `equilibrate-300K.in`, and `anneal-400K.in`, corresponding to `deposited.data`, `equilibrated-300K.data`, and `annealed-400K.data`. They preserve the corrected hybrid LJ/Buckingham styles, geometric pseudo-LJ mixing, PPPM 1e-4 slab treatment, 1 fs timestep, moving wall, and 5 ns at 300 K plus 3 ns at 400 K. `protocol_notes.txt` documents that the established executable decks use 500 fs pressure damping although the prose value is 1000 fs.
 
+The deposition wall ends 30 Å above the surface (`69.615 Å` for this surface). Continuation stages use the authoritative `120 Å` upper production wall, with lower recoil walls of `-5 Å` at 300 K and the intentionally different `-10 Å` from the authoritative 400 K deck. Generated text data outputs use `write_data ... nocoeff`; force-field coefficients remain exclusively in the separately included force-field file.
+
 If Packmol is on `PATH`, a build runs it. Otherwise `packmol.inp` is retained and validation reports the exact offline command `packmol < packmol.inp`. The corrected examples are authoritative: hybrid LJ/Buckingham, geometric ligand/surface mixing, PPPM `1e-4`, slab correction `3.0`, `special_bonds amber`, `units real`, `atom_style full`, and `boundary p p f` are preserved.
 
 ## Why Excel is no longer required
