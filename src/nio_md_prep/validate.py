@@ -32,10 +32,11 @@ def validate(folder: Path, packmol_ran: bool|None=None, primary_final: Path|None
             if 0 in memberships: errors.append(f"surface atom appears in bonded {sec} term")
     mass_types={int(r.fields[0]) for r in data.sections["Masses"]}; used={int(r.fields[2]) for r in atoms}
     if used-mass_types: errors.append(f"used atom types lack masses: {sorted(used-mass_types)}")
-    coefficient_sections={"Bonds":"Bond Coeffs","Angles":"Angle Coeffs","Dihedrals":"Dihedral Coeffs","Impropers":"Improper Coeffs"}
-    for topology_section,coefficient_section in coefficient_sections.items():
+    coefficient_commands={"Bonds":"bond_coeff","Angles":"angle_coeff","Dihedrals":"dihedral_coeff","Impropers":"improper_coeff"}
+    ff=(folder/"force_field_settings_lammps_with_header.lmp").read_text()
+    for topology_section,command in coefficient_commands.items():
         used_bonded={int(r.fields[1]) for r in data.sections.get(topology_section,[])}
-        defined={int(r.fields[0]) for r in data.sections.get(coefficient_section,[])}
+        defined={int(match.group(1)) for match in re.finditer(rf"^{command}\s+(\d+)\s+",ff,re.M)}
         if used_bonded-defined: errors.append(f"used {topology_section} types lack coefficients: {sorted(used_bonded-defined)}")
     for r in atoms:
         values=[float(x) for x in r.fields[3:7]]
@@ -45,7 +46,6 @@ def validate(folder: Path, packmol_ran: bool|None=None, primary_final: Path|None
         if any(not(lo<=float(r.fields[4+i])<=hi) for r in atoms): errors.append(f"coordinates outside {axis} bounds")
     nio=[r for r in atoms if abs(abs(float(r.fields[3]))-2.0)<1e-8]
     if not nio or abs(sum(float(r.fields[3]) for r in nio))>1e-8: errors.append("Ni/O fixed-charge population missing or unbalanced")
-    ff=(folder/"force_field_settings_lammps_with_header.lmp").read_text()
     nio_types=sorted({int(r.fields[2]) for r in nio})
     ligand_types=sorted(used-set(nio_types))
     if len(nio_types)!=2: errors.append("expected exactly two Ni/O atom types")
@@ -64,7 +64,7 @@ def validate(folder: Path, packmol_ran: bool|None=None, primary_final: Path|None
     if abs(charge(data)-float(manifest["total_charge"]))>1e-6: errors.append("final charge disagrees with component/assembly manifest")
     if primary_final:
         old=parse(primary_final)
-        for sec in ("Masses","Pair Coeffs","Bond Coeffs","Angle Coeffs","Dihedral Coeffs","Improper Coeffs","Atoms","Bonds","Angles","Dihedrals","Impropers"):
+        for sec in ("Masses","Atoms","Bonds","Angles","Dihedrals","Impropers"):
             before=_records(old,sec); after=_records(data,sec)[:len(before)]
             if before!=after: errors.append(f"sequential stage-1 {sec} changed")
     if packmol_ran is False: errors.append("Packmol packing was not completed")

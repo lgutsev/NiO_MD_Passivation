@@ -1,6 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 import math
+from copy import deepcopy
 import hashlib, json, shutil, subprocess
 from .config import ROOT, load, molecule_manifest, missing_ligpargen
 from .geometry import read_xyz, write_xyz
@@ -9,7 +10,7 @@ from .lammps import DataFile, Record, TOPOLOGY, charge, parse, replicate, write
 HEADER = """# Validated NiO/passivant force-field styles
 bond_style      harmonic
 angle_style     harmonic
-dihedral_style  hybrid opls charmm
+dihedral_style  hybrid opls
 improper_style  cvff
 pair_style      hybrid lj/cut/coul/long 10.0 8.0 buck/coul/long 10.0 8.0
 pair_modify     pair lj/cut/coul/long mix geometric
@@ -42,7 +43,8 @@ def _coeff_lines(data: DataFile) -> list[str]:
     for sec, command in names.items():
         for r in data.sections.get(sec, []):
             payload=r.fields.copy()
-            if sec=="Dihedral Coeffs": payload.insert(1,"opls")
+            if sec=="Pair Coeffs": payload=[payload[0],payload[0],"lj/cut/coul/long",*payload[1:]]
+            elif sec=="Dihedral Coeffs": payload.insert(1,"opls")
             out.append(f"{command} {' '.join(payload)}" + (f" # {r.comment}" if r.comment else ""))
     return out
 
@@ -148,8 +150,18 @@ def build(config_path: Path, output: Path, primary_final: Path|None=None, packed
     all_xyz=[(float(r.fields[4]),float(r.fields[5]),float(r.fields[6])) for r in result.sections["Atoms"]]
     margin=cfg.get("box",{}).get("margin",5.0)
     result.bounds={axis:(min(p[i] for p in all_xyz)-margin,max(p[i] for p in all_xyz)+margin) for i,axis in enumerate("xyz")}
-    write(result,output/"topology_output.lmp")
-    ff=HEADER+"\n"+"\n".join(_coeff_lines(result)+overrides)+"\n"
+    topology_data=deepcopy(result)
+    for section in ("Pair Coeffs","Bond Coeffs","Angle Coeffs","Dihedral Coeffs","Improper Coeffs"):
+        topology_data.sections.pop(section,None)
+    write(topology_data,output/"topology_output.lmp")
+    previous_coeffs=[]
+    if primary_final:
+        previous_force_field=primary_final.parent/"force_field_settings.lmp"
+        if not previous_force_field.exists():
+            previous_force_field=primary_final.parent/"force_field_settings_lammps_with_header.lmp"
+        if previous_force_field.exists():
+            previous_coeffs=[line for line in previous_force_field.read_text(encoding="utf-8").splitlines() if line.strip().startswith(("pair_coeff","bond_coeff","angle_coeff","dihedral_coeff","improper_coeff"))]
+    ff=HEADER+"\n"+"\n".join(previous_coeffs+_coeff_lines(result)+overrides)+"\n"
     ni,o=new_types[-2:]
     ff += f"pair_coeff {ni} {ni} buck/coul/long 0.000000e+00 1.000000e+00 0.000000e+00\n"
     ff += f"pair_coeff {ni} {o} buck/coul/long 17397.5 0.35 0.000000e+00\n"

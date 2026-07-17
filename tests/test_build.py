@@ -24,7 +24,10 @@ def test_small_offline_build(tmp_path):
     assert data.count("Atoms")==12960+45
     assert (out/"type_map.json").exists()
     assert (out/"validation_report.txt").read_text().startswith("VALID")
-    assert "special_bonds   amber" in (out/"force_field_settings_lammps_with_header.lmp").read_text()
+    force_field=(out/"force_field_settings_lammps_with_header.lmp").read_text()
+    assert "special_bonds   amber" in force_field
+    assert "dihedral_style  hybrid opls" in force_field
+    assert "pair_coeff 1 1 lj/cut/coul/long 0.070 3.5500000" in force_field
     first=data.sections["Atoms"][0]
     assert float(first.fields[4])==float(template.sections["Atoms"][0].fields[4])+100
     assert first.fields[3]==template.sections["Atoms"][0].fields[3]
