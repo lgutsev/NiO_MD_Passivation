@@ -1,4 +1,5 @@
 from pathlib import Path
+import hashlib, json, shutil, subprocess
 import pytest
 from nio_md_prep.build import build
 from nio_md_prep.geometry import elements
@@ -25,7 +26,7 @@ def test_small_offline_build(tmp_path):
     data=parse(out/"topology_output.lmp")
     assert data.count("Atoms")==21060+45
     assert (out/"type_map.json").exists()
-    assert (out/"validation_report.txt").read_text().startswith("DEFERRED")
+    assert (out/"validation_report.txt").read_text().startswith("VALID_WITH_DEFERRED_STAGES")
     force_field=(out/"force_field_settings_lammps_with_header.lmp").read_text()
     assert "special_bonds   amber" in force_field
     assert "dihedral_style  hybrid opls charmm" in force_field
@@ -84,6 +85,18 @@ def test_generated_stage_inputs_are_ordered_and_restartable(tmp_path):
         smoke=(out/f"validate-{name}.in").read_text()
         assert f"read_data {source}" in smoke and "run 0" in smoke
 
+def test_rebuild_reuses_own_packed_xyz_and_refreshes_hashes(tmp_path):
+    packed,_=packed_fixture(tmp_path/"fixture")
+    out=build(ROOT/"tests/data/small-study.toml",tmp_path/"reuse",packed_xyz=packed)
+    topology_hash=hashlib.sha256((out/"topology_output.lmp").read_bytes()).hexdigest()
+    build(ROOT/"tests/data/small-study.toml",out,packed_xyz=out/"packed.xyz")
+    assert hashlib.sha256((out/"topology_output.lmp").read_bytes()).hexdigest()==topology_hash
+    from nio_md_prep.validate import validate
+    validate(out)
+    manifest=json.loads((out/"assembly_manifest.json").read_text())
+    actual={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in out.iterdir() if p.is_file() and p.name!="assembly_manifest.json"}
+    assert manifest["output_hashes"]==actual
+
 def test_geometry_aware_wall_resolution_and_manual_override(tmp_path):
     data=parse(ROOT/"inputs/surfaces/corrugated-nio-110/surface.lmp")
     data.sections["Atoms"][0].fields[6]="265.0"; source=tmp_path/"deposited.data"; write(data,source)
@@ -94,3 +107,31 @@ def test_geometry_aware_wall_resolution_and_manual_override(tmp_path):
     manual={**auto,"manual_override":True,"manual_value":320.0}
     forced=_wall_result(source,manual)
     assert forced["resolved_wall"]==320.0 and forced["final_zhi"]==325.0 and forced["mode"]=="manual"
+
+@pytest.mark.parametrize("manual,wall,zhi",[(None,300.0,305.0),(320.0,320.0,325.0)])
+def test_lammps_real_predecessor_wall_resolution(tmp_path,manual,wall,zhi):
+    executable=shutil.which("lmp") or shutil.which("lammps")
+    if not executable: pytest.skip("LAMMPS executable unavailable")
+    packed,_=packed_fixture(tmp_path/"fixture")
+    config=ROOT/"tests/data/small-study.toml"
+    if manual is not None:
+        text=config.read_text().replace('production_upper_wall_mode = "auto"',f'production_upper_wall_mode = "auto"\nproduction_upper_wall = {manual}')
+        config=tmp_path/"manual.toml"; config.write_text(text)
+    out=build(config,tmp_path/"build",packed_xyz=packed)
+    predecessor=parse(out/"topology_output.lmp")
+    ligand=[a for a in predecessor.sections["Atoms"] if int(a.fields[1])>0]
+    shift=265.0-max(float(a.fields[6]) for a in ligand)
+    for atom in ligand: atom.fields[6]=f"{float(atom.fields[6])+shift:.8f}"
+    predecessor.bounds["z"]=(predecessor.bounds["z"][0],270.0); write(predecessor,out/"deposited.data")
+    smoke=tmp_path/"smoke"; smoke.mkdir()
+    for name in ("deposited.data","force_field_settings_lammps_with_header.lmp","validate-equilibrate-300K.in"):
+        shutil.copy2(out/name,smoke/name)
+    before=parse(smoke/"deposited.data"); before_xyz={int(a.fields[0]):tuple(map(float,a.fields[4:7])) for a in before.sections["Atoms"]}
+    run=subprocess.run([executable,"-in","validate-equilibrate-300K.in"],cwd=smoke,capture_output=True,text=True)
+    assert run.returncode==0,run.stderr+run.stdout[-2000:]
+    assert f"Resolved production wall: {int(wall)}" in run.stdout
+    result=parse(smoke/"equilibrated-300K.data")
+    assert result.bounds["z"]==(before.bounds["z"][0],zhi)
+    after_xyz={int(a.fields[0]):tuple(map(float,a.fields[4:7])) for a in result.sections["Atoms"]}
+    assert after_xyz.keys()==before_xyz.keys()
+    for atom_id,after in after_xyz.items(): assert after==pytest.approx(before_xyz[atom_id])

@@ -65,7 +65,8 @@ def _packmol(config: dict, templates: list[dict], output: Path, supplied: Path|N
     inp=output/"packmol.inp"; inp.write_text("\n".join(lines),encoding="utf-8")
     exe=shutil.which("packmol") if supplied is None else None
     if supplied is not None:
-        shutil.copy2(supplied,output/"packed.xyz")
+        destination=output/"packed.xyz"
+        if supplied.resolve()!=destination.resolve(): shutil.copy2(supplied,destination)
     elif exe:
         with inp.open("rb") as source:
             run=subprocess.run([exe],cwd=output,stdin=source,capture_output=True,text=False)
@@ -223,8 +224,7 @@ def build(config_path: Path, output: Path, primary_final: Path|None=None, packed
     provenance_surface=primary_final if primary_final else surface_path
     hashes[str(provenance_surface.relative_to(ROOT)) if provenance_surface.is_relative_to(ROOT) else str(provenance_surface)]=hashlib.sha256(provenance_surface.read_bytes()).hexdigest()
     (output/"input_hashes.json").write_text(json.dumps(hashes,indent=2)+"\n",encoding="utf-8")
-    outputs={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in output.iterdir() if p.is_file() and p.name!="assembly_manifest.json"}
-    type_map.update({"status":"assembled","source_hashes":hashes,"output_hashes":outputs,"total_charge":charge(result),"molecule_count":max(int(r.fields[1]) for r in result.sections["Atoms"]),"counts":{sec.lower():result.count(sec) for sec in ("Atoms","Bonds","Angles","Dihedrals","Impropers")},"box":result.bounds})
+    type_map.update({"status":"assembled","source_hashes":hashes,"output_hashes":{},"total_charge":charge(result),"molecule_count":max(int(r.fields[1]) for r in result.sections["Atoms"]),"counts":{sec.lower():result.count(sec) for sec in ("Atoms","Bonds","Angles","Dihedrals","Impropers")},"box":result.bounds})
     (output/"assembly_manifest.json").write_text(json.dumps(type_map,indent=2)+"\n",encoding="utf-8")
     from .validate import validate
     validate(output, packmol_ran=packed_ok, primary_final=primary_final)
@@ -260,13 +260,15 @@ variable cutoff equal 2.5
             frozen=f"""compute stage_zmax all reduce max z
 run 0 post no
 variable measured_max_z equal c_stage_zmax
-variable wall_candidate equal max({wall_min},v_measured_max_z+{wall_clearance})
+variable wall_candidate equal 0.5*({wall_min}+v_measured_max_z+{wall_clearance}+abs({wall_min}-(v_measured_max_z+{wall_clearance})))
 variable rounded_wall equal ceil(v_wall_candidate/{wall_rounding})*{wall_rounding}
 variable resolved_wall_hi equal ${{rounded_wall}}
 """
         return frozen+f"""variable required_box_zhi equal v_resolved_wall_hi+{box_margin}
 variable frozen_box_zhi equal ${{required_box_zhi}}
 if "$(zhi) < ${{frozen_box_zhi}}" then "change_box all z final $(zlo) ${{frozen_box_zhi}} units box"
+print "Resolved production wall: ${{resolved_wall_hi}}"
+print "Final box zhi: $(zhi)"
 """
     text=f"""# Cao deposition; safely rerun only when deposited.data is absent
 {init('topology_output.lmp')}min_style cg

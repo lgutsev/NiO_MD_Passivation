@@ -8,7 +8,7 @@ import re
 SECTIONS = (
     "Masses", "Pair Coeffs", "Bond Coeffs", "Angle Coeffs",
     "Dihedral Coeffs", "Improper Coeffs", "Atoms", "Bonds", "Angles",
-    "Dihedrals", "Impropers",
+    "Dihedrals", "Impropers", "Velocities",
 )
 TOPOLOGY = {"Bonds": 2, "Angles": 3, "Dihedrals": 4, "Impropers": 4}
 COUNT_NAMES = {"Atoms": "atoms", "Bonds": "bonds", "Angles": "angles", "Dihedrals": "dihedrals", "Impropers": "impropers"}

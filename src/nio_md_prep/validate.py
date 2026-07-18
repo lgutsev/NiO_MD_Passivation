@@ -44,6 +44,11 @@ def _record_wall_results(folder: Path, results: dict[str,dict]) -> None:
     for stage,result in results.items(): lines.append(f"{stage}: "+", ".join(f"{k}={v}" for k,v in result.items()))
     (folder/"protocol_notes.txt").write_text("\n".join(lines)+"\n",encoding="utf-8")
 
+def _refresh_output_hashes(folder: Path) -> None:
+    path=folder/"assembly_manifest.json"; manifest=json.loads(path.read_text())
+    manifest["output_hashes"]={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(folder.iterdir()) if p.is_file() and p.name!="assembly_manifest.json"}
+    path.write_text(json.dumps(manifest,indent=2)+"\n",encoding="utf-8")
+
 def validate(folder: Path, packmol_ran: bool|None=None, primary_final: Path|None=None) -> bool:
     errors=[]; warnings=[]; deferred=[]; wall_results={}
     topology=folder/"topology_output.lmp"
@@ -151,11 +156,12 @@ def validate(folder: Path, packmol_ran: bool|None=None, primary_final: Path|None
                 run=subprocess.run([executable,"-in",source.name],cwd=target,capture_output=True,text=True)
                 if run.returncode: errors.append(f"LAMMPS zero-step {name} failed: {(run.stderr or run.stdout)[-500:]}")
                 else: warnings.append(f"LAMMPS zero-step {name}: passed")
-    status="INVALID" if errors else ("DEFERRED" if deferred else "VALID")
+    status="INVALID" if errors else ("VALID_WITH_DEFERRED_STAGES" if deferred else "VALID")
     report=[status,f"atoms: {len(atoms)}",f"molecules: {max(int(r.fields[1]) for r in atoms)}",f"total charge: {charge(data):.8f}"]
     if not errors: report.append("Spreadsheet assembly: not required; topology and coordinates were merged programmatically.")
     for stage,result in wall_results.items(): report.append(f"WALL {stage}: "+", ".join(f"{k}={v}" for k,v in result.items()))
     report += [f"DEFERRED: {x}" for x in deferred]+[f"ERROR: {x}" for x in errors]+[f"WARNING: {x}" for x in warnings]
     (folder/"validation_report.txt").write_text("\n".join(report)+"\n",encoding="utf-8")
+    _refresh_output_hashes(folder)
     if errors: raise ValueError("; ".join(dict.fromkeys(errors)))
     return True
