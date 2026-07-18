@@ -8,7 +8,11 @@ wall_clearance = 30.0
 deposition_lower_wall = -5.0
 production_lower_wall_300 = -5.0
 production_lower_wall_400 = -10.0
-production_upper_wall = 120.0
+production_upper_wall_mode = "auto"
+production_upper_wall_min = 120.0
+production_wall_clearance = 30.0
+production_wall_rounding = 10.0
+production_box_margin = 5.0
 [[molecules]]
 slug = "meo-2pacz"
 count = 107

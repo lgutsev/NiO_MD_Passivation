@@ -1,6 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
-import hashlib, json, math, re, shutil, subprocess, tempfile
+import hashlib, json, math, re, shutil, subprocess, tempfile, tomllib
 from .lammps import TOPOLOGY, charge, parse
 
 def _records(data, section):
@@ -22,8 +22,30 @@ def _minimum_cross_separation(old_atoms,new_atoms,cutoff=2.0):
     # at least cutoff, without an O(N*M) all-pairs calculation.
     return cutoff if math.isinf(minimum) else minimum
 
+def _wall_result(source: Path, policy: dict) -> dict:
+    data=parse(source); max_z=max(float(a.fields[6]) for a in data.sections["Atoms"])
+    manual=bool(policy.get("manual_override",False))
+    if manual: wall=float(policy["manual_value"])
+    else:
+        candidate=max(float(policy["minimum"]),max_z+float(policy["clearance"]))
+        quantum=float(policy["rounding"]); wall=math.ceil((candidate-1e-12)/quantum)*quantum
+    final_zhi=max(data.bounds["z"][1],wall+float(policy["box_margin"]))
+    return {"status":"RESOLVED","source":source.name,"measured_max_atom_z":max_z,"minimum_wall":float(policy["minimum"]),"clearance":float(policy["clearance"]),"rounding":float(policy["rounding"]),"box_margin":float(policy["box_margin"]),"resolved_wall":wall,"final_zlo":data.bounds["z"][0],"final_zhi":final_zhi,"mode":"manual" if manual else "auto"}
+
+def _record_wall_results(folder: Path, results: dict[str,dict]) -> None:
+    path=folder/"resolved_config.toml"; text=path.read_text()
+    for stage,result in results.items():
+        body="\n".join(f'{key} = "{value}"' if isinstance(value,str) else f"{key} = {str(value).lower() if isinstance(value,bool) else value}" for key,value in result.items())
+        pattern=rf"(?ms)^\[resolved_wall_results\.{stage}\]\n.*?(?=^\[|\Z)"
+        text=re.sub(pattern,f"[resolved_wall_results.{stage}]\n{body}\n\n",text)
+    path.write_text(text,encoding="utf-8")
+    base=(folder/"protocol_notes.txt").read_text().split("\nWALL RESOLUTION RESULTS\n",1)[0]
+    lines=[base.rstrip(),"","WALL RESOLUTION RESULTS"]
+    for stage,result in results.items(): lines.append(f"{stage}: "+", ".join(f"{k}={v}" for k,v in result.items()))
+    (folder/"protocol_notes.txt").write_text("\n".join(lines)+"\n",encoding="utf-8")
+
 def validate(folder: Path, packmol_ran: bool|None=None, primary_final: Path|None=None) -> bool:
-    errors=[]; warnings=[]
+    errors=[]; warnings=[]; deferred=[]; wall_results={}
     topology=folder/"topology_output.lmp"
     if not topology.exists():
         raise ValueError("packing is incomplete; topology_output.lmp was not produced. Run: packmol < packmol.inp")
@@ -101,24 +123,39 @@ def validate(folder: Path, packmol_ran: bool|None=None, primary_final: Path|None
             if not line.endswith(" nocoeff"): errors.append(f"{input_name}: write_data is not coefficient-free")
     deposition=(folder/"deposition.in").read_text(); eq=(folder/"equilibrate-300K.in").read_text(); anneal=(folder/"anneal-400K.in").read_text()
     if not re.search(r"variable zend equal 69\.615(?:0+)?",deposition): errors.append("deposition wall endpoint is not 69.615 A")
-    for name,text in (("equilibrate-300K.in",eq),("anneal-400K.in",anneal)):
-        if not re.search(r"fix hi all wall/lj93 zhi 120\.0",text): errors.append(f"{name}: production upper wall is not 120 A")
+    if "read_data deposited.data" not in eq or "read_data equilibrated-300K.data" not in anneal: errors.append("continuation stage-local source selection is invalid")
+    resolved=tomllib.loads((folder/"resolved_config.toml").read_text()); policy=resolved["resolved_wall_policy"]
+    for stage,source_name in (("equilibrate_300K","deposited.data"),("anneal_400K","equilibrated-300K.data")):
+        source=folder/source_name
+        if not source.exists():
+            result={"status":"DEFERRED","source":source_name,"measured_max_atom_z":"DEFERRED","minimum_wall":float(policy["minimum"]),"clearance":float(policy["clearance"]),"rounding":float(policy["rounding"]),"box_margin":float(policy["box_margin"]),"resolved_wall":"DEFERRED","final_zlo":"DEFERRED","final_zhi":"DEFERRED","mode":"manual" if policy.get("manual_override") else "auto"}; deferred.append(f"{stage}: waiting for real {source_name}")
+        else:
+            result=_wall_result(source,policy)
+            if not result["measured_max_atom_z"] < result["resolved_wall"]: errors.append(f"{stage}: atom is not strictly below resolved wall")
+            if result["final_zhi"] < result["resolved_wall"]+float(policy["box_margin"]): errors.append(f"{stage}: resolved wall lacks box margin")
+            if not result["measured_max_atom_z"] < result["final_zhi"]: errors.append(f"{stage}: atom is not strictly below final box zhi")
+        wall_results[stage]=result
+    _record_wall_results(folder,wall_results)
     if packmol_ran is False: errors.append("Packmol packing was not completed")
     executable=shutil.which("lmp") or shutil.which("lammps")
     if not executable: warnings.append("LAMMPS executable not found; zero-step checks skipped")
     else:
         with tempfile.TemporaryDirectory(prefix="nio-md-validate-") as temp:
             target=Path(temp); shutil.copy2(topology,target/topology.name)
-            shutil.copy2(topology,target/"deposited.data"); shutil.copy2(topology,target/"equilibrated-300K.data")
             shutil.copy2(folder/"force_field_settings_lammps_with_header.lmp",target/"force_field_settings_lammps_with_header.lmp")
-            for name in ("deposition","equilibrate-300K","anneal-400K"):
+            smoke_stages=[("deposition",None),("equilibrate-300K","deposited.data"),("anneal-400K","equilibrated-300K.data")]
+            for name,predecessor in smoke_stages:
+                if predecessor and not (folder/predecessor).exists(): continue
+                if predecessor: shutil.copy2(folder/predecessor,target/predecessor)
                 source=folder/f"validate-{name}.in"; shutil.copy2(source,target/source.name)
                 run=subprocess.run([executable,"-in",source.name],cwd=target,capture_output=True,text=True)
                 if run.returncode: errors.append(f"LAMMPS zero-step {name} failed: {(run.stderr or run.stdout)[-500:]}")
                 else: warnings.append(f"LAMMPS zero-step {name}: passed")
-    report=["VALID" if not errors else "INVALID",f"atoms: {len(atoms)}",f"molecules: {max(int(r.fields[1]) for r in atoms)}",f"total charge: {charge(data):.8f}"]
+    status="INVALID" if errors else ("DEFERRED" if deferred else "VALID")
+    report=[status,f"atoms: {len(atoms)}",f"molecules: {max(int(r.fields[1]) for r in atoms)}",f"total charge: {charge(data):.8f}"]
     if not errors: report.append("Spreadsheet assembly: not required; topology and coordinates were merged programmatically.")
-    report += [f"ERROR: {x}" for x in errors]+[f"WARNING: {x}" for x in warnings]
+    for stage,result in wall_results.items(): report.append(f"WALL {stage}: "+", ".join(f"{k}={v}" for k,v in result.items()))
+    report += [f"DEFERRED: {x}" for x in deferred]+[f"ERROR: {x}" for x in errors]+[f"WARNING: {x}" for x in warnings]
     (folder/"validation_report.txt").write_text("\n".join(report)+"\n",encoding="utf-8")
     if errors: raise ValueError("; ".join(dict.fromkeys(errors)))
     return True

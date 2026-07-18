@@ -2,7 +2,8 @@ from pathlib import Path
 import pytest
 from nio_md_prep.build import build
 from nio_md_prep.geometry import elements
-from nio_md_prep.lammps import parse
+from nio_md_prep.lammps import parse, write
+from nio_md_prep.validate import _wall_result
 
 ROOT=Path(__file__).parents[1]
 
@@ -24,7 +25,7 @@ def test_small_offline_build(tmp_path):
     data=parse(out/"topology_output.lmp")
     assert data.count("Atoms")==21060+45
     assert (out/"type_map.json").exists()
-    assert (out/"validation_report.txt").read_text().startswith("VALID")
+    assert (out/"validation_report.txt").read_text().startswith("DEFERRED")
     force_field=(out/"force_field_settings_lammps_with_header.lmp").read_text()
     assert "special_bonds   amber" in force_field
     assert "dihedral_style  hybrid opls charmm" in force_field
@@ -72,9 +73,24 @@ def test_generated_stage_inputs_are_ordered_and_restartable(tmp_path):
         assert all(line.endswith(" nocoeff") for line in text.splitlines() if line.startswith("write_data "))
     deposition=(out/"deposition.in").read_text(); eq=(out/"equilibrate-300K.in").read_text(); anneal=(out/"anneal-400K.in").read_text()
     assert "variable zend equal 69.615" in deposition
-    assert "fix hi all wall/lj93 zhi 120.0" in eq and "fix lo all wall/lj93 zlo -5.0" in eq
-    assert "fix hi all wall/lj93 zhi 120.0" in anneal and "fix lo all wall/lj93 zlo -10.0" in anneal
-    assert "fix hi all wall/lj93 zhi 69.615" not in eq+anneal
+    assert "read_data deposited.data" in eq and "fix lo all wall/lj93 zlo -5.0" in eq
+    assert "read_data equilibrated-300K.data" in anneal and "fix lo all wall/lj93 zlo -10.0" in anneal
+    for text in (eq,anneal):
+        assert "compute stage_zmax all reduce max z" in text
+        assert "variable resolved_wall_hi equal ${rounded_wall}" in text
+        assert "change_box all z final" in text
+        assert "fix hi all wall/lj93 zhi ${resolved_wall_hi}" in text
     for name,source in (("deposition","topology_output.lmp"),("equilibrate-300K","deposited.data"),("anneal-400K","equilibrated-300K.data")):
         smoke=(out/f"validate-{name}.in").read_text()
         assert f"read_data {source}" in smoke and "run 0" in smoke
+
+def test_geometry_aware_wall_resolution_and_manual_override(tmp_path):
+    data=parse(ROOT/"inputs/surfaces/corrugated-nio-110/surface.lmp")
+    data.sections["Atoms"][0].fields[6]="265.0"; source=tmp_path/"deposited.data"; write(data,source)
+    auto={"minimum":120.0,"clearance":30.0,"rounding":10.0,"box_margin":5.0,"manual_override":False}
+    first=_wall_result(source,auto); second=_wall_result(source,auto)
+    assert first==second and first["resolved_wall"]==300.0
+    assert first["final_zhi"]==305.0 and first["measured_max_atom_z"]==265.0
+    manual={**auto,"manual_override":True,"manual_value":320.0}
+    forced=_wall_result(source,manual)
+    assert forced["resolved_wall"]==320.0 and forced["final_zhi"]==325.0 and forced["mode"]=="manual"

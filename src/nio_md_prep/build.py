@@ -211,7 +211,11 @@ def build(config_path: Path, output: Path, primary_final: Path|None=None, packed
         exact=1.0 if ratio.get("basis")=="molar_1_to_1" else (0.3/secondary["mw"])/(0.5/pmw)
         report.update({"unrounded_concentration_mw_ratio":exact,"rounded_count_ratio":secondary["count"]/primary_count,"primary_reference_count":primary_count})
     (output/"ratio_report.json").write_text(json.dumps(report,indent=2)+"\n",encoding="utf-8")
-    (output/"resolved_config.toml").write_text(config_path.read_text(encoding="utf-8"),encoding="utf-8")
+    p=cfg.get("protocol",{}); manual=p.get("production_upper_wall")
+    policy=f'''\n[resolved_wall_policy]\nmode = "{"manual" if manual is not None else p.get("production_upper_wall_mode","auto")}"\nminimum = {float(p.get("production_upper_wall_min",120.0))}\nclearance = {float(p.get("production_wall_clearance",30.0))}\nrounding = {float(p.get("production_wall_rounding",10.0))}\nbox_margin = {float(p.get("production_box_margin",5.0))}\nmanual_override = {"true" if manual is not None else "false"}\n'''
+    if manual is not None: policy+=f"manual_value = {float(manual)}\n"
+    policy+='''\n[resolved_wall_results.equilibrate_300K]\nstatus = "DEFERRED"\nsource = "deposited.data"\n\n[resolved_wall_results.anneal_400K]\nstatus = "DEFERRED"\nsource = "equilibrated-300K.data"\n'''
+    (output/"resolved_config.toml").write_text(config_path.read_text(encoding="utf-8")+policy,encoding="utf-8")
     (output/"type_map.json").write_text(json.dumps(type_map,indent=2)+"\n",encoding="utf-8")
     hashes={}
     for t in templates:
@@ -230,7 +234,7 @@ def _write_input(output: Path,cfg:dict,data:DataFile)->None:
     p=cfg.get("protocol",{}); steps=int(p.get("deposition_steps",300000)); temp=float(p.get("temperature",300.0))
     deposition_lower=float(p.get("deposition_lower_wall",p.get("lower_wall",-5.0)))
     lower_300=float(p.get("production_lower_wall_300",-5.0)); lower_400=float(p.get("production_lower_wall_400",-10.0))
-    production_upper=float(p.get("production_upper_wall",120.0))
+    manual_upper=p.get("production_upper_wall"); wall_min=float(p.get("production_upper_wall_min",120.0)); wall_clearance=float(p.get("production_wall_clearance",30.0)); wall_rounding=float(p.get("production_wall_rounding",10.0)); box_margin=float(p.get("production_box_margin",5.0))
     surface_top=max(float(a.fields[6]) for a in data.sections["Atoms"] if abs(abs(float(a.fields[3]))-2.0)<1e-8)
     zend=surface_top+float(p.get("wall_clearance",30.0)); zstart=max(zend+100.0,data.bounds["z"][1]-5.0)
     init=lambda source: f"""boundary p p f
@@ -248,6 +252,21 @@ variable pressureDamp equal 500.0
 variable epsilon equal 1.0
 variable sigma equal 1.0
 variable cutoff equal 2.5
+"""
+    def resolution(source:str)->str:
+        if manual_upper is not None:
+            frozen=f"variable resolved_wall_hi equal {float(manual_upper)}\n"
+        else:
+            frozen=f"""compute stage_zmax all reduce max z
+run 0 post no
+variable measured_max_z equal c_stage_zmax
+variable wall_candidate equal max({wall_min},v_measured_max_z+{wall_clearance})
+variable rounded_wall equal ceil(v_wall_candidate/{wall_rounding})*{wall_rounding}
+variable resolved_wall_hi equal ${{rounded_wall}}
+"""
+        return frozen+f"""variable required_box_zhi equal v_resolved_wall_hi+{box_margin}
+variable frozen_box_zhi equal ${{required_box_zhi}}
+if "$(zhi) < ${{frozen_box_zhi}}" then "change_box all z final $(zlo) ${{frozen_box_zhi}} units box"
 """
     text=f"""# Cao deposition; safely rerun only when deposited.data is absent
 {init('topology_output.lmp')}min_style cg
@@ -275,12 +294,13 @@ write_restart deposited.restart
 """
     (output/"deposition.in").write_text(text,encoding="utf-8")
     (output/"lammps.in").write_text(text,encoding="utf-8")
-    eq=f"# Cao 300 K continuation: run only after deposition.in\n{init('deposited.data')}fix lo all wall/lj93 zlo {lower_300} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix hi all wall/lj93 zhi {production_upper} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix ensemble all npt temp {temp} {temp} 100.0 x ${{pressure}} ${{pressure}} ${{pressureDamp}} y ${{pressure}} ${{pressure}} ${{pressureDamp}} couple xy\ndump trajectory all custom 10000 equilibration-300K.lammpstrj id mol type q x y z\ndump_modify trajectory sort id\nrestart 500000 equilibration-300K.restart.1 equilibration-300K.restart.2\nrun 5000000\nwrite_data equilibrated-300K.data nocoeff\nwrite_restart equilibrated-300K.restart\n"
-    anneal=f"# Cao 400 K continuation: run only after equilibrate-300K.in\n{init('equilibrated-300K.data')}fix lo all wall/lj93 zlo {lower_400} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix hi all wall/lj93 zhi {production_upper} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix ensemble all npt temp 400.0 400.0 100.0 x ${{pressure}} ${{pressure}} ${{pressureDamp}} y ${{pressure}} ${{pressure}} ${{pressureDamp}} couple xy\ndump trajectory all custom 10000 anneal-400K.lammpstrj id mol type q x y z\ndump_modify trajectory sort id\nrestart 500000 anneal-400K.restart.1 anneal-400K.restart.2\nrun 3000000\nwrite_data annealed-400K.data nocoeff\nwrite_restart annealed-400K.restart\n"
+    eq=f"# Cao 300 K continuation: run only after deposition.in\n{init('deposited.data')}{resolution('deposited.data')}fix lo all wall/lj93 zlo {lower_300} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix hi all wall/lj93 zhi ${{resolved_wall_hi}} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix ensemble all npt temp {temp} {temp} 100.0 x ${{pressure}} ${{pressure}} ${{pressureDamp}} y ${{pressure}} ${{pressure}} ${{pressureDamp}} couple xy\ndump trajectory all custom 10000 equilibration-300K.lammpstrj id mol type q x y z\ndump_modify trajectory sort id\nrestart 500000 equilibration-300K.restart.1 equilibration-300K.restart.2\nrun 5000000\nwrite_data equilibrated-300K.data nocoeff\nwrite_restart equilibrated-300K.restart\n"
+    anneal=f"# Cao 400 K continuation: run only after equilibrate-300K.in\n{init('equilibrated-300K.data')}{resolution('equilibrated-300K.data')}fix lo all wall/lj93 zlo {lower_400} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix hi all wall/lj93 zhi ${{resolved_wall_hi}} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix ensemble all npt temp 400.0 400.0 100.0 x ${{pressure}} ${{pressure}} ${{pressureDamp}} y ${{pressure}} ${{pressure}} ${{pressureDamp}} couple xy\ndump trajectory all custom 10000 anneal-400K.lammpstrj id mol type q x y z\ndump_modify trajectory sort id\nrestart 500000 anneal-400K.restart.1 anneal-400K.restart.2\nrun 3000000\nwrite_data annealed-400K.data nocoeff\nwrite_restart annealed-400K.restart\n"
     (output/"equilibrate-300K.in").write_text(eq,encoding="utf-8")
     (output/"anneal-400K.in").write_text(anneal,encoding="utf-8")
     for name,source in (("deposition",text),("equilibrate-300K",eq),("anneal-400K",anneal)):
         check=re.sub(r"(?m)^run\s+\d+\s*$","run 0",source)
         check=re.sub(r"(?m)^minimize\s+.*$","# minimize omitted from non-advancing smoke validation",check)
         (output/f"validate-{name}.in").write_text("# Temporary-directory smoke form of the real stage\n"+check,encoding="utf-8")
-    (output/"protocol_notes.txt").write_text(f"Cao2025 target: moving deposition wall ends at {zend:.3f} A; the 300 K production recoil walls are zlo={lower_300:g} A and zhi={production_upper:g} A. The authoritative 400 K deck intentionally uses the lower zlo={lower_400:g} A recoil wall while retaining zhi={production_upper:g} A. Established corrected executable decks use pressure damping 500 fs (retained here), despite the 1000 fs prose value.\n",encoding="utf-8")
+    mode=f"manual override {float(manual_upper):g} A" if manual_upper is not None else f"automatic: ceil(max({wall_min:g}, max_atom_z+{wall_clearance:g})/{wall_rounding:g})*{wall_rounding:g} A"
+    (output/"protocol_notes.txt").write_text(f"Deposition endpoint: {zend:.3f} A. Production wall policy: {mode}; box margin {box_margin:g} A. 300 K source: deposited.data (DEFERRED until present), zlo={lower_300:g} A. 400 K source: equilibrated-300K.data (DEFERRED until present), zlo={lower_400:g} A. Each resolved wall is frozen before dynamics and zhi alone is expanded if required.\n",encoding="utf-8")
