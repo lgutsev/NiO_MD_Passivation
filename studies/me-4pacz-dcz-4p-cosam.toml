@@ -2,6 +2,8 @@
 name = "Me-4PACz + DCZ-4P CoSAM"
 protocol = "cosam"
 [protocol]
+deposition_steps = 600000
+deposition_timestep = 0.5
 wall_clearance = 30.0
 deposition_lower_wall = "EDGE"
 production_lower_wall_300 = "EDGE"

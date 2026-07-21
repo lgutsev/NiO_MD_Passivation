@@ -4,7 +4,7 @@ protocol = "cosam"
 
 [protocol]
 deposition_steps = 10
-deposition_slow_steps = 2
+deposition_timestep = 0.5
 temperature = 300.0
 wall_start = 70.0
 wall_end = 60.0
