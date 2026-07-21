@@ -113,6 +113,7 @@ def test_generated_stage_inputs_are_ordered_and_restartable(tmp_path):
     for name,source in (("deposition","topology_output.lmp"),("equilibrate-300K","deposited.data"),("anneal-400K","equilibrated-300K.data")):
         smoke=(out/f"validate-{name}.in").read_text()
         assert f"read_data {source}" in smoke and "run 0" in smoke
+    assert "run 0 post no # minimization replaced by force evaluation" in (out/"validate-deposition.in").read_text()
 
 def test_rebuild_reuses_own_packed_xyz_and_refreshes_hashes(tmp_path):
     packed,_=packed_fixture(tmp_path/"fixture")

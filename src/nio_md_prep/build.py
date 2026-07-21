@@ -372,7 +372,7 @@ write_restart deposited.restart
     (output/"anneal-400K.in").write_text(anneal,encoding="utf-8")
     for name,source in (("deposition",text),("equilibrate-300K",eq),("anneal-400K",anneal)):
         check=re.sub(r"(?m)^run\s+.*$","run 0",source)
-        check=re.sub(r"(?m)^minimize\s+.*$","# minimize omitted from non-advancing smoke validation",check)
+        check=re.sub(r"(?m)^minimize\s+.*$","run 0 post no # minimization replaced by force evaluation for smoke validation",check)
         (output/f"validate-{name}.in").write_text("# Temporary-directory smoke form of the real stage\n"+check,encoding="utf-8")
     mode=f"manual override {float(manual_upper):g} A" if manual_upper is not None else f"automatic: ceil(max({wall_min:g}, max_atom_z+{wall_clearance:g})/{wall_rounding:g})*{wall_rounding:g} A"
     (output/"protocol_notes.txt").write_text(f"Deposition endpoint: {zend:.3f} A. Deposition uses {slow_steps} steps at {slow_timestep:g} fs followed by {steps-slow_steps} steps at {regular_timestep:g} fs, with continuous step-based temperature and wall ramps. The minimized structure and force summary are written before deposition dynamics. Production wall policy: {mode}; box margin {box_margin:g} A. 300 K source: deposited.data (DEFERRED until present), zlo={lower_300}. 400 K source: equilibrated-300K.data (DEFERRED until present), zlo={lower_400}. Each resolved wall is frozen before dynamics and zhi alone is expanded if required.\n",encoding="utf-8")
