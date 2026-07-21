@@ -88,7 +88,11 @@ def test_generated_stage_inputs_are_ordered_and_restartable(tmp_path):
     deposition=(out/"deposition.in").read_text(); eq=(out/"equilibrate-300K.in").read_text(); anneal=(out/"anneal-400K.in").read_text()
     assert "variable zend equal 69.615" in deposition
     assert "processors * * 1" in deposition
-    assert "minimize 0.0 1.0 10000 100000" in deposition
+    assert deposition.index("fix walllo all wall/lj93") < deposition.index("minimize ")
+    assert deposition.count("fix walllo all wall/lj93")==1
+    assert "fix_modify walllo energy yes" in deposition
+    assert "min_style fire" in deposition
+    assert "minimize 0.0 1.0 20000 200000" in deposition
     assert "reset_timestep 0" in deposition
     assert "timestep 0.5\nrun 2 start 0 stop 10" in deposition
     assert "timestep 1.0\nrun 8 start 0 stop 10" in deposition

@@ -320,9 +320,12 @@ print "Resolved production wall: ${{resolved_wall_hi}}"
 print "Final box zhi: $(zhi)"
 """
     text=f"""# Cao deposition; safely rerun only when deposited.data is absent
-{init('topology_output.lmp')}min_style cg
-min_modify dmax 0.05 line quadratic
-minimize 0.0 1.0 10000 100000
+{init('topology_output.lmp')}fix walllo all wall/lj93 zlo {deposition_lower} ${{epsilon}} ${{sigma}} ${{cutoff}} units box
+fix_modify walllo energy yes
+timestep {slow_timestep}
+min_style fire
+min_modify dmax 0.05
+minimize 0.0 1.0 20000 200000
 reset_timestep 0
 velocity all create 5.0 214587 mom yes rot yes dist gaussian
 variable zstart equal {zstart}
@@ -332,7 +335,6 @@ variable epsilon equal 1.0
 variable sigma equal 1.0
 variable cutoff equal 2.5
 fix wall all wall/lj126 zhi v_zwall ${{epsilon}} ${{sigma}} ${{cutoff}}
-fix walllo all wall/lj93 zlo {deposition_lower} ${{epsilon}} ${{sigma}} ${{cutoff}} units box
 fix deposit all npt temp 5.0 {temp} 100.0 x ${{pressure}} ${{pressure}} ${{pressureDamp}} y ${{pressure}} ${{pressure}} ${{pressureDamp}} couple xy
 dump trajectory all custom 1000 deposition.lammpstrj id mol type q x y z
 dump_modify trajectory sort id

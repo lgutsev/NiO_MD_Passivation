@@ -80,7 +80,7 @@ The Cao2025 inventory uses 180 Me-4PACz molecules. Under the provisional equal-s
 
 With the authoritative 21,060-atom corrugated NiO surface, final assembled atom counts are 29,160 for Me-4PACz alone, 33,547 for Me-4PACz/MeO-2PACz, 33,703 for Me-4PACz/MeO-4PADBC, and 33,644 for Me-4PACz/DCZ-4P. CoSAM and corresponding completed sequential preparations have the same inventory totals.
 
-Complete builds write `deposition.in`, `equilibrate-300K.in`, and `anneal-400K.in`, corresponding to `deposited.data`, `equilibrated-300K.data`, and `annealed-400K.data`. They preserve the corrected hybrid LJ/Buckingham styles, geometric pseudo-LJ mixing, PPPM 1e-4 slab treatment, moving wall, and 5 ns at 300 K plus 3 ns at 400 K. Deposition uses force-converged minimization followed by 50,000 steps at 0.5 fs and 250,000 steps at 1 fs; the temperature and wall ramps remain continuous over all 300,000 steps. `protocol_notes.txt` documents that the established executable decks use 500 fs pressure damping although the prose value is 1000 fs.
+Complete builds write `deposition.in`, `equilibrate-300K.in`, and `anneal-400K.in`, corresponding to `deposited.data`, `equilibrated-300K.data`, and `annealed-400K.data`. They preserve the corrected hybrid LJ/Buckingham styles, geometric pseudo-LJ mixing, PPPM 1e-4 slab treatment, moving wall, and 5 ns at 300 K plus 3 ns at 400 K. Deposition keeps the lower recoil wall active during FIRE minimization, then uses 50,000 steps at 0.5 fs and 250,000 steps at 1 fs; the temperature and upper-wall ramps remain continuous over all 300,000 steps. `protocol_notes.txt` documents that the established executable decks use 500 fs pressure damping although the prose value is 1000 fs.
 
 The deposition wall ends 30 Å above the surface (`69.615 Å` for this surface). Each continuation stage reads its real predecessor, then freezes an automatic upper wall at the next 10 Å increment above `max(120 Å, max_atom_z + 30 Å)` and expands only the nonperiodic box ceiling to retain a 5 Å margin. A numeric `production_upper_wall` is a manual override. Missing predecessor states defer their stage validation. Lower recoil walls remain `-5 Å` at 300 K and the intentionally different `-10 Å` from the authoritative 400 K deck. Generated text data outputs use `write_data ... nocoeff`; force-field coefficients remain exclusively in the separately included force-field file.
 
@@ -108,5 +108,4 @@ The user workflow is:
 8. Run LAMMPS on LONI; neither Codex nor LigParGen is installed or run there.
 
 LigParGen remains a manual external step. The legacy notebooks, historical examples, and paper Figure S27 are retained only as scientific provenance.
-
 
