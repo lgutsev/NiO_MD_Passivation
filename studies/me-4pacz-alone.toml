@@ -3,9 +3,9 @@ name = "Me-4PACz alone"
 protocol = "cosam"
 [protocol]
 wall_clearance = 30.0
-deposition_lower_wall = -5.0
-production_lower_wall_300 = -5.0
-production_lower_wall_400 = -10.0
+deposition_lower_wall = "EDGE"
+production_lower_wall_300 = "EDGE"
+production_lower_wall_400 = "EDGE"
 production_upper_wall_mode = "auto"
 production_upper_wall_min = 120.0
 production_wall_clearance = 30.0

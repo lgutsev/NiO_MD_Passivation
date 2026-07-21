@@ -280,8 +280,13 @@ def _write_input(output: Path,cfg:dict,data:DataFile)->None:
     p=cfg.get("protocol",{}); steps=int(p.get("deposition_steps",300000)); temp=float(p.get("temperature",300.0))
     slow_steps=int(p.get("deposition_slow_steps",50000)); slow_timestep=float(p.get("deposition_slow_timestep",0.5)); regular_timestep=float(p.get("timestep",1.0))
     if not 0 <= slow_steps < steps: raise ValueError("deposition_slow_steps must be at least zero and smaller than deposition_steps")
-    deposition_lower=float(p.get("deposition_lower_wall",p.get("lower_wall",-5.0)))
-    lower_300=float(p.get("production_lower_wall_300",-5.0)); lower_400=float(p.get("production_lower_wall_400",-10.0))
+    def lower_wall(value: object) -> str:
+        if isinstance(value,str):
+            if value.upper()!="EDGE": raise ValueError("lower wall coordinate must be numeric or EDGE")
+            return "EDGE"
+        return str(float(value))
+    deposition_lower=lower_wall(p.get("deposition_lower_wall",p.get("lower_wall","EDGE")))
+    lower_300=lower_wall(p.get("production_lower_wall_300","EDGE")); lower_400=lower_wall(p.get("production_lower_wall_400","EDGE"))
     manual_upper=p.get("production_upper_wall"); wall_min=float(p.get("production_upper_wall_min",120.0)); wall_clearance=float(p.get("production_wall_clearance",30.0)); wall_rounding=float(p.get("production_wall_rounding",10.0)); box_margin=float(p.get("production_box_margin",5.0))
     surface_top=max(float(a.fields[6]) for a in data.sections["Atoms"] if abs(abs(float(a.fields[3]))-2.0)<1e-8)
     zend=surface_top+float(p.get("wall_clearance",30.0)); zstart=max(zend+100.0,data.bounds["z"][1]-5.0)
@@ -295,7 +300,7 @@ neighbor 2.0 bin
 neigh_modify every 1 delay 0 check yes
 timestep {regular_timestep}
 thermo 1000
-thermo_style custom step temp pe ke etotal press pxx pyy lx ly lz fmax
+thermo_style custom step temp pe ke etotal press pxx pyy lx ly lz fnorm fmax
 variable pressure equal 1.0
 variable pressureDamp equal 500.0
 variable epsilon equal 1.0
@@ -326,6 +331,15 @@ timestep {slow_timestep}
 min_style fire
 min_modify dmax 0.05
 minimize 0.0 1.0 20000 200000
+write_data optimized.data nocoeff
+write_restart optimized.restart
+write_dump all custom optimized.lammpstrj id mol type q x y z fx fy fz modify sort id
+variable optimization_step equal step
+variable optimization_pe equal pe
+variable optimization_fnorm equal fnorm
+variable optimization_fmax equal fmax
+variable optimization_force_target_met equal "fnorm <= 1.0"
+print "step=${{optimization_step}} potential_energy_kcal_per_mol=${{optimization_pe}} force_two_norm_kcal_per_mol_A=${{optimization_fnorm}} force_max_kcal_per_mol_A=${{optimization_fmax}} force_target_kcal_per_mol_A=1.0 force_target_met=${{optimization_force_target_met}}" file optimization-summary.txt screen yes
 reset_timestep 0
 velocity all create 5.0 214587 mom yes rot yes dist gaussian
 variable zstart equal {zstart}
@@ -361,4 +375,4 @@ write_restart deposited.restart
         check=re.sub(r"(?m)^minimize\s+.*$","# minimize omitted from non-advancing smoke validation",check)
         (output/f"validate-{name}.in").write_text("# Temporary-directory smoke form of the real stage\n"+check,encoding="utf-8")
     mode=f"manual override {float(manual_upper):g} A" if manual_upper is not None else f"automatic: ceil(max({wall_min:g}, max_atom_z+{wall_clearance:g})/{wall_rounding:g})*{wall_rounding:g} A"
-    (output/"protocol_notes.txt").write_text(f"Deposition endpoint: {zend:.3f} A. Deposition uses {slow_steps} steps at {slow_timestep:g} fs followed by {steps-slow_steps} steps at {regular_timestep:g} fs, with continuous step-based temperature and wall ramps. Production wall policy: {mode}; box margin {box_margin:g} A. 300 K source: deposited.data (DEFERRED until present), zlo={lower_300:g} A. 400 K source: equilibrated-300K.data (DEFERRED until present), zlo={lower_400:g} A. Each resolved wall is frozen before dynamics and zhi alone is expanded if required.\n",encoding="utf-8")
+    (output/"protocol_notes.txt").write_text(f"Deposition endpoint: {zend:.3f} A. Deposition uses {slow_steps} steps at {slow_timestep:g} fs followed by {steps-slow_steps} steps at {regular_timestep:g} fs, with continuous step-based temperature and wall ramps. The minimized structure and force summary are written before deposition dynamics. Production wall policy: {mode}; box margin {box_margin:g} A. 300 K source: deposited.data (DEFERRED until present), zlo={lower_300}. 400 K source: equilibrated-300K.data (DEFERRED until present), zlo={lower_400}. Each resolved wall is frozen before dynamics and zhi alone is expanded if required.\n",encoding="utf-8")

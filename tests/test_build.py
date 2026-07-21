@@ -90,14 +90,21 @@ def test_generated_stage_inputs_are_ordered_and_restartable(tmp_path):
     assert "processors * * 1" in deposition
     assert deposition.index("fix walllo all wall/lj93") < deposition.index("minimize ")
     assert deposition.count("fix walllo all wall/lj93")==1
+    assert "fix walllo all wall/lj93 zlo EDGE" in deposition
     assert "fix_modify walllo energy yes" in deposition
     assert "min_style fire" in deposition
     assert "minimize 0.0 1.0 20000 200000" in deposition
+    assert deposition.index("minimize ") < deposition.index("write_data optimized.data nocoeff") < deposition.index("reset_timestep 0")
+    assert "write_restart optimized.restart" in deposition
+    assert "write_dump all custom optimized.lammpstrj" in deposition
+    assert "file optimization-summary.txt screen yes" in deposition
+    assert "force_target_met=${optimization_force_target_met}" in deposition
+    assert "thermo_style custom step temp pe ke etotal press pxx pyy lx ly lz fnorm fmax" in deposition
     assert "reset_timestep 0" in deposition
     assert "timestep 0.5\nrun 2 start 0 stop 10" in deposition
     assert "timestep 1.0\nrun 8 start 0 stop 10" in deposition
-    assert "read_data deposited.data" in eq and "fix lo all wall/lj93 zlo -5.0" in eq
-    assert "read_data equilibrated-300K.data" in anneal and "fix lo all wall/lj93 zlo -10.0" in anneal
+    assert "read_data deposited.data" in eq and "fix lo all wall/lj93 zlo EDGE" in eq
+    assert "read_data equilibrated-300K.data" in anneal and "fix lo all wall/lj93 zlo EDGE" in anneal
     for text in (eq,anneal):
         assert "compute stage_zmax all reduce max z" in text
         assert "variable resolved_wall_hi equal ${rounded_wall}" in text
