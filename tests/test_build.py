@@ -87,6 +87,11 @@ def test_generated_stage_inputs_are_ordered_and_restartable(tmp_path):
         assert all(line.endswith(" nocoeff") for line in text.splitlines() if line.startswith("write_data "))
     deposition=(out/"deposition.in").read_text(); eq=(out/"equilibrate-300K.in").read_text(); anneal=(out/"anneal-400K.in").read_text()
     assert "variable zend equal 69.615" in deposition
+    assert "processors * * 1" in deposition
+    assert "minimize 0.0 1.0 10000 100000" in deposition
+    assert "reset_timestep 0" in deposition
+    assert "timestep 0.5\nrun 2 start 0 stop 10" in deposition
+    assert "timestep 1.0\nrun 8 start 0 stop 10" in deposition
     assert "read_data deposited.data" in eq and "fix lo all wall/lj93 zlo -5.0" in eq
     assert "read_data equilibrated-300K.data" in anneal and "fix lo all wall/lj93 zlo -10.0" in anneal
     for text in (eq,anneal):

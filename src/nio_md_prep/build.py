@@ -278,21 +278,24 @@ def build(config_path: Path, output: Path, primary_final: Path|None=None, packed
 
 def _write_input(output: Path,cfg:dict,data:DataFile)->None:
     p=cfg.get("protocol",{}); steps=int(p.get("deposition_steps",300000)); temp=float(p.get("temperature",300.0))
+    slow_steps=int(p.get("deposition_slow_steps",50000)); slow_timestep=float(p.get("deposition_slow_timestep",0.5)); regular_timestep=float(p.get("timestep",1.0))
+    if not 0 <= slow_steps < steps: raise ValueError("deposition_slow_steps must be at least zero and smaller than deposition_steps")
     deposition_lower=float(p.get("deposition_lower_wall",p.get("lower_wall",-5.0)))
     lower_300=float(p.get("production_lower_wall_300",-5.0)); lower_400=float(p.get("production_lower_wall_400",-10.0))
     manual_upper=p.get("production_upper_wall"); wall_min=float(p.get("production_upper_wall_min",120.0)); wall_clearance=float(p.get("production_wall_clearance",30.0)); wall_rounding=float(p.get("production_wall_rounding",10.0)); box_margin=float(p.get("production_box_margin",5.0))
     surface_top=max(float(a.fields[6]) for a in data.sections["Atoms"] if abs(abs(float(a.fields[3]))-2.0)<1e-8)
     zend=surface_top+float(p.get("wall_clearance",30.0)); zstart=max(zend+100.0,data.bounds["z"][1]-5.0)
     init=lambda source: f"""boundary p p f
+processors * * 1
 units real
 atom_style full
 read_data {source}
 include force_field_settings_lammps_with_header.lmp
 neighbor 2.0 bin
 neigh_modify every 1 delay 0 check yes
-timestep 1.0
+timestep {regular_timestep}
 thermo 1000
-thermo_style custom step temp pe ke etotal press pxx pyy lx ly lz
+thermo_style custom step temp pe ke etotal press pxx pyy lx ly lz fmax
 variable pressure equal 1.0
 variable pressureDamp equal 500.0
 variable epsilon equal 1.0
@@ -318,7 +321,9 @@ print "Final box zhi: $(zhi)"
 """
     text=f"""# Cao deposition; safely rerun only when deposited.data is absent
 {init('topology_output.lmp')}min_style cg
-minimize 1.0e-4 1.0e-6 1000 10000
+min_modify dmax 0.05 line quadratic
+minimize 0.0 1.0 10000 100000
+reset_timestep 0
 velocity all create 5.0 214587 mom yes rot yes dist gaussian
 variable zstart equal {zstart}
 variable zend equal {zend}
@@ -332,7 +337,10 @@ fix deposit all npt temp 5.0 {temp} 100.0 x ${{pressure}} ${{pressure}} ${{press
 dump trajectory all custom 1000 deposition.lammpstrj id mol type q x y z
 dump_modify trajectory sort id
 restart 100000 deposition.restart.1 deposition.restart.2
-run {steps}
+timestep {slow_timestep}
+run {slow_steps} start 0 stop {steps}
+timestep {regular_timestep}
+run {steps-slow_steps} start 0 stop {steps}
 unfix deposit
 unfix wall
 unfix walllo
@@ -347,8 +355,8 @@ write_restart deposited.restart
     (output/"equilibrate-300K.in").write_text(eq,encoding="utf-8")
     (output/"anneal-400K.in").write_text(anneal,encoding="utf-8")
     for name,source in (("deposition",text),("equilibrate-300K",eq),("anneal-400K",anneal)):
-        check=re.sub(r"(?m)^run\s+\d+\s*$","run 0",source)
+        check=re.sub(r"(?m)^run\s+.*$","run 0",source)
         check=re.sub(r"(?m)^minimize\s+.*$","# minimize omitted from non-advancing smoke validation",check)
         (output/f"validate-{name}.in").write_text("# Temporary-directory smoke form of the real stage\n"+check,encoding="utf-8")
     mode=f"manual override {float(manual_upper):g} A" if manual_upper is not None else f"automatic: ceil(max({wall_min:g}, max_atom_z+{wall_clearance:g})/{wall_rounding:g})*{wall_rounding:g} A"
-    (output/"protocol_notes.txt").write_text(f"Deposition endpoint: {zend:.3f} A. Production wall policy: {mode}; box margin {box_margin:g} A. 300 K source: deposited.data (DEFERRED until present), zlo={lower_300:g} A. 400 K source: equilibrated-300K.data (DEFERRED until present), zlo={lower_400:g} A. Each resolved wall is frozen before dynamics and zhi alone is expanded if required.\n",encoding="utf-8")
+    (output/"protocol_notes.txt").write_text(f"Deposition endpoint: {zend:.3f} A. Deposition uses {slow_steps} steps at {slow_timestep:g} fs followed by {steps-slow_steps} steps at {regular_timestep:g} fs, with continuous step-based temperature and wall ramps. Production wall policy: {mode}; box margin {box_margin:g} A. 300 K source: deposited.data (DEFERRED until present), zlo={lower_300:g} A. 400 K source: equilibrated-300K.data (DEFERRED until present), zlo={lower_400:g} A. Each resolved wall is frozen before dynamics and zhi alone is expanded if required.\n",encoding="utf-8")
