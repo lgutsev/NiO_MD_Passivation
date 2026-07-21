@@ -56,6 +56,41 @@ def _expected_symbols(templates: list[dict]) -> list[str]:
         expected.extend(symbols*item["count"])
     return expected
 
+def _fit_packed_molecules(
+    templates: list[dict],
+    coords: list[tuple[float,float,float]],
+    maximum_shift: float = 0.1,
+) -> tuple[list[tuple[float,float,float]],list[dict]]:
+    """Correct small Packmol boundary overshoots by rigid translation only."""
+    corrected=list(coords); adjustments=[]; cursor=0; safety=1.0e-6
+    for item in templates:
+        bounds=list(map(float,item["region"].split()))
+        for copy_index in range(item["count"]):
+            start=cursor+copy_index*item["atoms"]; stop=start+item["atoms"]
+            molecule=corrected[start:stop]; shifts=[]
+            for axis in range(3):
+                values=[xyz[axis] for xyz in molecule]
+                lower,upper=bounds[axis],bounds[axis+3]
+                if min(values)>=lower and max(values)<=upper:
+                    shifts.append(0.0); continue
+                allowed_low=lower+safety-min(values)
+                allowed_high=upper-safety-max(values)
+                if allowed_low>allowed_high:
+                    raise ValueError(f"{item['slug']} molecule {copy_index+1} cannot fit inside its validated region")
+                shift=max(allowed_low,min(0.0,allowed_high))
+                if abs(shift)>maximum_shift:
+                    raise ValueError(
+                        f"{item['slug']} molecule {copy_index+1} requires a {abs(shift):.6f} A "
+                        f"boundary correction; maximum allowed rigid shift is {maximum_shift:.6f} A"
+                    )
+                shifts.append(shift)
+            if any(shifts):
+                molecule=[tuple(value+shifts[axis] for axis,value in enumerate(xyz)) for xyz in molecule]
+                corrected[start:stop]=molecule
+                adjustments.append({"component":item["slug"],"copy":copy_index+1,"translation_angstrom":shifts})
+        cursor+=item["atoms"]*item["count"]
+    return corrected,adjustments
+
 def _packmol(config: dict, templates: list[dict], output: Path, supplied: Path|None=None) -> tuple[Path,list[tuple[float,float,float]]|None,bool]:
     lines=["tolerance 2.0", "filetype xyz", "output packed.xyz", "seed 202405367", ""]
     for item in templates:
@@ -80,6 +115,17 @@ def _packmol(config: dict, templates: list[dict], output: Path, supplied: Path|N
     for index,(actual,wanted) in enumerate(zip(symbols,expected_symbols),1):
         if actual!=wanted:
             raise ValueError(f"Packmol atom order mismatch at packed atom {index}: expected {wanted}, found {actual}; atoms must remain in LigParGen order")
+    coords,adjustments=_fit_packed_molecules(templates,coords)
+    if adjustments:
+        packed.write_text(
+            f"{len(coords)}\nPackmol output with validated rigid whole-molecule boundary corrections\n"
+            + "".join(f"{symbol} {x:.8f} {y:.8f} {z:.8f}\n" for symbol,(x,y,z) in zip(symbols,coords)),
+            encoding="utf-8",
+        )
+    (output/"packmol_adjustments.json").write_text(
+        json.dumps({"method":"rigid_whole_molecule_translation","maximum_shift_angstrom":0.1,"adjustments":adjustments},indent=2)+"\n",
+        encoding="utf-8",
+    )
     cursor=0
     for item in templates:
         n=item["atoms"]*item["count"]; bounds=list(map(float,item["region"].split()))

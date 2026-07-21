@@ -44,6 +44,19 @@ def test_packmol_element_order_failure(tmp_path):
     with pytest.raises(ValueError,match="Packmol atom order mismatch"):
         build(ROOT/"tests/data/small-study.toml",tmp_path/"bad",packed_xyz=packed)
 
+def test_small_packmol_boundary_overshoot_is_corrected_rigidly(tmp_path):
+    packed,template=packed_fixture(tmp_path/"fixture",shift=(18.59801,10.0,62.0))
+    before=[tuple(map(float,row.split()[1:4])) for row in packed.read_text().splitlines()[2:]]
+    out=build(ROOT/"tests/data/small-study.toml",tmp_path/"build",packed_xyz=packed)
+    after=parse(out/"topology_output.lmp").sections["Atoms"][:template.count("Atoms")]
+    after_xyz=[tuple(map(float,row.fields[4:7])) for row in after]
+    shifts={tuple(round(b-a,8) for a,b in zip(old,new)) for old,new in zip(before,after_xyz)}
+    assert len(shifts)==1
+    assert max(x for x,_,_ in after_xyz)<20.0
+    report=json.loads((out/"packmol_adjustments.json").read_text())
+    assert report["method"]=="rigid_whole_molecule_translation"
+    assert len(report["adjustments"])==1
+
 def test_missing_packmol_is_incomplete(tmp_path,monkeypatch):
     monkeypatch.setattr("nio_md_prep.build.shutil.which",lambda _:None)
     out=build(ROOT/"tests/data/small-study.toml",tmp_path/"incomplete")
