@@ -280,10 +280,13 @@ def _write_input(output: Path,cfg:dict,data:DataFile)->None:
     p=cfg.get("protocol",{}); steps=int(p.get("deposition_steps",600000)); temp=float(p.get("temperature",300.0))
     deposition_timestep=float(p.get("deposition_timestep",p.get("deposition_slow_timestep",0.5))); regular_timestep=float(p.get("timestep",1.0))
     hold_steps=int(p.get("hold_300K_steps",1000000)); hold_timestep=float(p.get("hold_300K_timestep",deposition_timestep))
+    hold_400_steps=int(p.get("hold_400K_steps",hold_steps)); hold_400_timestep=float(p.get("hold_400K_timestep",hold_timestep))
     if steps <= 0: raise ValueError("deposition_steps must be positive")
     if deposition_timestep <= 0: raise ValueError("deposition_timestep must be positive")
     if hold_steps <= 0: raise ValueError("hold_300K_steps must be positive")
     if hold_timestep <= 0: raise ValueError("hold_300K_timestep must be positive")
+    if hold_400_steps <= 0: raise ValueError("hold_400K_steps must be positive")
+    if hold_400_timestep <= 0: raise ValueError("hold_400K_timestep must be positive")
     def lower_wall(value: object) -> str:
         if isinstance(value,str):
             if value.upper()!="EDGE": raise ValueError("lower wall coordinate must be numeric or EDGE")
@@ -385,15 +388,40 @@ run {hold_steps}
 write_data held-300K.data nocoeff
 write_restart held-300K.restart
 """
+    hold_400=f"""# Independent compressed-film 400 K hold: run only after deposition.in
+{init('deposited.data')}variable hold_wall_hi equal {zend}
+thermo_style custom step temp pe ke etotal press pxx pyy lx ly lz v_hold_wall_hi fnorm fmax
+fix lo all wall/lj93 zlo {lower_400} ${{epsilon}} ${{sigma}} ${{cutoff}} units box
+fix hi all wall/lj126 zhi ${{hold_wall_hi}} ${{epsilon}} ${{sigma}} ${{cutoff}} units box
+fix_modify lo energy yes
+fix_modify hi energy yes
+fix ensemble all npt temp 400.0 400.0 100.0 x ${{pressure}} ${{pressure}} ${{pressureDamp}} y ${{pressure}} ${{pressure}} ${{pressureDamp}} couple xy
+dump trajectory all custom 2000 hold-400K.lammpstrj id mol type q x y z
+dump_modify trajectory sort id
+restart 200000 hold-400K.restart.1 hold-400K.restart.2
+timestep {hold_400_timestep}
+run {hold_400_steps}
+write_data held-400K.data nocoeff
+write_restart held-400K.restart
+"""
     eq=f"# Cao 300 K continuation: run only after hold-300K.in\n{init('held-300K.data')}{resolution('held-300K.data')}fix lo all wall/lj93 zlo {lower_300} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix hi all wall/lj93 zhi ${{resolved_wall_hi}} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix ensemble all npt temp {temp} {temp} 100.0 x ${{pressure}} ${{pressure}} ${{pressureDamp}} y ${{pressure}} ${{pressure}} ${{pressureDamp}} couple xy\ndump trajectory all custom 10000 equilibration-300K.lammpstrj id mol type q x y z\ndump_modify trajectory sort id\nrestart 500000 equilibration-300K.restart.1 equilibration-300K.restart.2\nrun 5000000\nwrite_data equilibrated-300K.data nocoeff\nwrite_restart equilibrated-300K.restart\n"
     anneal=f"# Cao 400 K continuation: run only after equilibrate-300K.in\n{init('equilibrated-300K.data')}{resolution('equilibrated-300K.data')}fix lo all wall/lj93 zlo {lower_400} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix hi all wall/lj93 zhi ${{resolved_wall_hi}} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix ensemble all npt temp 400.0 400.0 100.0 x ${{pressure}} ${{pressure}} ${{pressureDamp}} y ${{pressure}} ${{pressure}} ${{pressureDamp}} couple xy\ndump trajectory all custom 10000 anneal-400K.lammpstrj id mol type q x y z\ndump_modify trajectory sort id\nrestart 500000 anneal-400K.restart.1 anneal-400K.restart.2\nrun 3000000\nwrite_data annealed-400K.data nocoeff\nwrite_restart annealed-400K.restart\n"
     (output/"hold-300K.in").write_text(hold,encoding="utf-8")
+    (output/"hold-400K.in").write_text(hold_400,encoding="utf-8")
     (output/"equilibrate-300K.in").write_text(eq,encoding="utf-8")
     (output/"anneal-400K.in").write_text(anneal,encoding="utf-8")
-    for name,source in (("deposition",text),("hold-300K",hold),("equilibrate-300K",eq),("anneal-400K",anneal)):
+    for name,source in (("deposition",text),("hold-300K",hold),("hold-400K",hold_400),("equilibrate-300K",eq),("anneal-400K",anneal)):
         check=re.sub(r"(?m)^run\s+.*$","run 0",source)
         check=re.sub(r"(?m)^minimize\s+.*$","run 0 post no # minimization replaced by force evaluation for smoke validation",check)
         (output/f"validate-{name}.in").write_text("# Temporary-directory smoke form of the real stage\n"+check,encoding="utf-8")
     mode=f"manual override {float(manual_upper):g} A" if manual_upper is not None else f"automatic: ceil(max({wall_min:g}, max_atom_z+{wall_clearance:g})/{wall_rounding:g})*{wall_rounding:g} A"
-    duration_ps=steps*deposition_timestep/1000.0; hold_duration_ps=hold_steps*hold_timestep/1000.0
-    (output/"protocol_notes.txt").write_text(f"Deposition endpoint: {zend:.3f} A. Deposition uses {steps} steps at a continuous {deposition_timestep:g} fs timestep ({duration_ps:g} ps total), with continuous temperature and upper-wall ramps and no timestep transition. The minimized structure and force summary are written before deposition dynamics. The compressed-film hold uses deposited.data for {hold_steps} steps at {hold_timestep:g} fs ({hold_duration_ps:g} ps) and keeps zhi={zend:.3f} A at {temp:g} K. Production wall policy after the hold: {mode}; box margin {box_margin:g} A. Long 300 K source: held-300K.data (DEFERRED until present), zlo={lower_300}. 400 K source: equilibrated-300K.data (DEFERRED until present), zlo={lower_400}. Each resolved production wall is frozen before dynamics and zhi alone is expanded if required.\n",encoding="utf-8")
+    duration_ps=steps*deposition_timestep/1000.0; hold_duration_ps=hold_steps*hold_timestep/1000.0; hold_400_duration_ps=hold_400_steps*hold_400_timestep/1000.0
+    (output/"protocol_notes.txt").write_text(f"Deposition endpoint: {zend:.3f} A. Deposition uses {steps} steps at a continuous {deposition_timestep:g} fs timestep ({duration_ps:g} ps total), with continuous temperature and upper-wall ramps and no timestep transition. The minimized structure and force summary are written before deposition dynamics. Independent compressed-film holds both branch from deposited.data and keep zhi={zend:.3f} A: {hold_steps} steps at {hold_timestep:g} fs ({hold_duration_ps:g} ps) at {temp:g} K, and {hold_400_steps} steps at {hold_400_timestep:g} fs ({hold_400_duration_ps:g} ps) at 400 K. Production wall policy after the 300 K hold: {mode}; box margin {box_margin:g} A. Long 300 K source: held-300K.data (DEFERRED until present), zlo={lower_300}. 400 K source: equilibrated-300K.data (DEFERRED until present), zlo={lower_400}. Each resolved production wall is frozen before dynamics and zhi alone is expanded if required.\n",encoding="utf-8")
+
+def refresh_inputs(config_path: Path, output: Path) -> Path:
+    """Regenerate stage inputs without rebuilding or modifying simulation data."""
+    topology=output/"topology_output.lmp"
+    if not topology.is_file():
+        raise FileNotFoundError(f"existing topology is missing: {topology}")
+    _write_input(output,load(config_path),parse(topology))
+    return output

@@ -1,7 +1,7 @@
 from pathlib import Path
 import hashlib, json, shutil, subprocess
 import pytest
-from nio_md_prep.build import build
+from nio_md_prep.build import build, refresh_inputs
 from nio_md_prep.geometry import elements
 from nio_md_prep.lammps import parse, write
 from nio_md_prep.validate import _wall_result
@@ -79,13 +79,13 @@ def test_sequential_stage_preserves_existing_records(tmp_path):
 def test_generated_stage_inputs_are_ordered_and_restartable(tmp_path):
     packed,_=packed_fixture(tmp_path)
     out=build(ROOT/"tests/data/small-study.toml",tmp_path/"ordered",packed_xyz=packed)
-    for name in ("deposition.in","hold-300K.in","equilibrate-300K.in","anneal-400K.in"):
+    for name in ("deposition.in","hold-300K.in","hold-400K.in","equilibrate-300K.in","anneal-400K.in"):
         text=(out/name).read_text()
         positions=[text.index(x) for x in ("boundary p p f","units real","atom_style full","read_data ","include ")]
         assert positions==sorted(positions)
         assert "dump trajectory" in text and "restart " in text and "write_restart" in text
         assert all(line.endswith(" nocoeff") for line in text.splitlines() if line.startswith("write_data "))
-    deposition=(out/"deposition.in").read_text(); hold=(out/"hold-300K.in").read_text(); eq=(out/"equilibrate-300K.in").read_text(); anneal=(out/"anneal-400K.in").read_text()
+    deposition=(out/"deposition.in").read_text(); hold=(out/"hold-300K.in").read_text(); hold_400=(out/"hold-400K.in").read_text(); eq=(out/"equilibrate-300K.in").read_text(); anneal=(out/"anneal-400K.in").read_text()
     assert "variable zend equal 69.615" in deposition
     assert "processors * * 1" in deposition
     assert deposition.index("fix walllo all wall/lj93") < deposition.index("minimize ")
@@ -110,6 +110,12 @@ def test_generated_stage_inputs_are_ordered_and_restartable(tmp_path):
     assert "fix ensemble all npt temp 300.0 300.0" in hold
     assert "timestep 0.5\nrun 1000000" in hold
     assert "write_data held-300K.data nocoeff" in hold
+    assert "read_data deposited.data" in hold_400
+    assert "variable hold_wall_hi equal 69.615" in hold_400
+    assert "fix hi all wall/lj126 zhi ${hold_wall_hi}" in hold_400
+    assert "fix ensemble all npt temp 400.0 400.0" in hold_400
+    assert "timestep 0.5\nrun 1000000" in hold_400
+    assert "write_data held-400K.data nocoeff" in hold_400
     assert "read_data held-300K.data" in eq and "fix lo all wall/lj93 zlo EDGE" in eq
     assert "read_data equilibrated-300K.data" in anneal and "fix lo all wall/lj93 zlo EDGE" in anneal
     for text in (eq,anneal):
@@ -117,7 +123,7 @@ def test_generated_stage_inputs_are_ordered_and_restartable(tmp_path):
         assert "variable resolved_wall_hi equal ${rounded_wall}" in text
         assert "change_box all z final" in text
         assert "fix hi all wall/lj93 zhi ${resolved_wall_hi}" in text
-    for name,source in (("deposition","topology_output.lmp"),("hold-300K","deposited.data"),("equilibrate-300K","held-300K.data"),("anneal-400K","equilibrated-300K.data")):
+    for name,source in (("deposition","topology_output.lmp"),("hold-300K","deposited.data"),("hold-400K","deposited.data"),("equilibrate-300K","held-300K.data"),("anneal-400K","equilibrated-300K.data")):
         smoke=(out/f"validate-{name}.in").read_text()
         assert f"read_data {source}" in smoke and "run 0" in smoke
     assert "run 0 post no # minimization replaced by force evaluation" in (out/"validate-deposition.in").read_text()
@@ -133,6 +139,16 @@ def test_rebuild_reuses_own_packed_xyz_and_refreshes_hashes(tmp_path):
     manifest=json.loads((out/"assembly_manifest.json").read_text())
     actual={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in out.iterdir() if p.is_file() and p.name!="assembly_manifest.json"}
     assert manifest["output_hashes"]==actual
+
+def test_refresh_inputs_preserves_existing_results(tmp_path):
+    packed,_=packed_fixture(tmp_path/"fixture")
+    out=build(ROOT/"tests/data/small-study.toml",tmp_path/"refresh",packed_xyz=packed)
+    deposited=out/"deposited.data"; deposited.write_text("completed deposition sentinel\n")
+    held_300=out/"held-300K.data"; held_300.write_text("completed 300 K sentinel\n")
+    refresh_inputs(ROOT/"tests/data/small-study.toml",out)
+    assert deposited.read_text()=="completed deposition sentinel\n"
+    assert held_300.read_text()=="completed 300 K sentinel\n"
+    assert (out/"hold-400K.in").exists()
 
 def test_geometry_aware_wall_resolution_and_manual_override(tmp_path):
     data=parse(ROOT/"inputs/surfaces/corrugated-nio-110/surface.lmp")
