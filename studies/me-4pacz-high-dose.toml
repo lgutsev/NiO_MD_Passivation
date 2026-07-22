@@ -1,0 +1,39 @@
+[study]
+name = "Me-4PACz high-dose control"
+protocol = "cosam"
+
+[protocol]
+deposition_steps = 600000
+deposition_timestep = 0.5
+hold_300K_steps = 1000000
+hold_300K_timestep = 0.5
+hold_400K_steps = 1000000
+hold_400K_timestep = 0.5
+heat_400K_steps = 400000
+heat_400K_timestep = 0.5
+wall_clearance = 30.0
+deposition_lower_wall = "EDGE"
+production_lower_wall_300 = "EDGE"
+production_lower_wall_400 = "EDGE"
+production_upper_wall_mode = "auto"
+production_upper_wall_min = 120.0
+production_wall_clearance = 30.0
+production_wall_rounding = 10.0
+production_box_margin = 5.0
+
+[surface]
+data = "inputs/surfaces/corrugated-nio-110/surface.lmp"
+
+[[molecules]]
+slug = "me-4pacz"
+count = 261
+
+[composition]
+basis = "mean_mixed_inventory_control"
+stock_volume_assumption = "not a solution-volume model; pure-ligand loading control"
+rounding_rule = "exact arithmetic mean of 239, 257, and 287 molecules"
+
+[control]
+reference_total_counts = [239, 257, 287]
+mean_total_count = 261
+purpose = "separate increased molecule inventory from mixed-ligand chemistry and deposition order"

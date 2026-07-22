@@ -6,7 +6,7 @@
 #SBATCH -t 48:00:00
 #SBATCH -A loni_perovsk27
 #SBATCH -J nio.hold400
-#SBATCH --array=0-3
+#SBATCH --array=0-4
 #SBATCH -o nio.hold400.%A_%a.out
 
 set -euo pipefail
@@ -22,6 +22,7 @@ systems=(
     me-4pacz-meo-2pacz-cosam
     me-4pacz-meo-4padbc-cosam
     me-4pacz-dcz-4p-cosam
+    me-4pacz-high-dose
 )
 
 name="${systems[${SLURM_ARRAY_TASK_ID}]}"

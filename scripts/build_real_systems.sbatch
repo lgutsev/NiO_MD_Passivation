@@ -35,6 +35,7 @@ systems=(
     me-4pacz-meo-2pacz-cosam
     me-4pacz-meo-4padbc-cosam
     me-4pacz-dcz-4p-cosam
+    me-4pacz-high-dose
 )
 
 mkdir -p prepared
@@ -52,4 +53,4 @@ for name in "${systems[@]}"; do
     fi
 done
 
-echo "All four real CoSAM systems were built and deposition-smoke validated."
+echo "All five primary-deposition systems were built and deposition-smoke validated."

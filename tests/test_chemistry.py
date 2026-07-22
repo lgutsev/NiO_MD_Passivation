@@ -30,6 +30,7 @@ def test_all_study_total_atom_counts():
     molecule_atoms={"me-4pacz":45,"meo-2pacz":41,"meo-4padbc":59,"dcz-4p":76}
     expected={
         "me-4pacz-alone.toml":29160,
+        "me-4pacz-high-dose.toml":32805,
         "me-4pacz-meo-2pacz-cosam.toml":33547,
         "me-4pacz-meo-4padbc-cosam.toml":33703,
         "me-4pacz-dcz-4p-cosam.toml":33644,
