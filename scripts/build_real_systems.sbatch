@@ -1,10 +1,10 @@
 #!/bin/bash
-#SBATCH -p workq
+#SBATCH -p single
 #SBATCH -N 1
 #SBATCH -n 1
 #SBATCH -c 1
 #SBATCH -t 02:00:00
-#SBATCH -A loni_perovsk26
+#SBATCH -A loni_perovsk27
 #SBATCH -J nio.build
 #SBATCH -o nio.build.%j.out
 
