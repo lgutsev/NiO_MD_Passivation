@@ -132,7 +132,9 @@ def validate(folder: Path, packmol_ran: bool|None=None, primary_final: Path|None
     if not re.search(r"variable hold_wall_hi equal 69\.615(?:0+)?",hold): errors.append("300 K hold wall is not fixed at the deposition endpoint")
     if "read_data deposited.data" not in hold_400: errors.append("400 K hold does not branch from deposited.data")
     if not re.search(r"variable hold_wall_hi equal 69\.615(?:0+)?",hold_400): errors.append("400 K hold wall is not fixed at the deposition endpoint")
-    if "fix ensemble all npt temp 400.0 400.0" not in hold_400: errors.append("400 K hold thermostat is invalid")
+    if "fix heating all npt temp 300.0 400.0" not in hold_400: errors.append("400 K heating ramp is invalid")
+    if "write_data heated-400K.data nocoeff" not in hold_400: errors.append("400 K heating endpoint is not saved")
+    if "fix hold all npt temp 400.0 400.0" not in hold_400: errors.append("400 K hold thermostat is invalid")
     resolved=tomllib.loads((folder/"resolved_config.toml").read_text()); policy=resolved["resolved_wall_policy"]
     for stage,source_name in (("equilibrate_300K","held-300K.data"),("anneal_400K","equilibrated-300K.data")):
         source=folder/source_name

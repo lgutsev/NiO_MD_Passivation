@@ -113,7 +113,11 @@ def test_generated_stage_inputs_are_ordered_and_restartable(tmp_path):
     assert "read_data deposited.data" in hold_400
     assert "variable hold_wall_hi equal 69.615" in hold_400
     assert "fix hi all wall/lj126 zhi ${hold_wall_hi}" in hold_400
-    assert "fix ensemble all npt temp 400.0 400.0" in hold_400
+    assert "fix heating all npt temp 300.0 400.0" in hold_400
+    assert "timestep 0.5\nrun 400000" in hold_400
+    assert "write_data heated-400K.data nocoeff" in hold_400
+    assert "write_restart heated-400K.restart" in hold_400
+    assert hold_400.index("write_data heated-400K.data nocoeff") < hold_400.index("fix hold all npt temp 400.0 400.0")
     assert "timestep 0.5\nrun 1000000" in hold_400
     assert "write_data held-400K.data nocoeff" in hold_400
     assert "read_data held-300K.data" in eq and "fix lo all wall/lj93 zlo EDGE" in eq

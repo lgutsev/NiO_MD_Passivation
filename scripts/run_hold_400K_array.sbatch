@@ -3,7 +3,7 @@
 #SBATCH -N 1
 #SBATCH -n 64
 #SBATCH -c 1
-#SBATCH -t 24:00:00
+#SBATCH -t 48:00:00
 #SBATCH -A loni_perovsk26
 #SBATCH -J nio.hold400
 #SBATCH --array=0-3
@@ -43,10 +43,10 @@ if [[ -e "${run_directory}/held-400K.data" ]]; then
 fi
 
 cd "${run_directory}"
-echo "Running ${name} compressed-film hold at 400 K in ${run_directory}"
+echo "Running ${name} gradual 300-to-400 K heating and compressed-film hold in ${run_directory}"
 echo "LAMMPS: $(command -v lmp)"
 echo "MPI tasks: ${SLURM_NTASKS}"
 
 SECONDS=0
 srun -n "${SLURM_NTASKS}" lmp -in hold-400K.in -log "log.hold-400K.${SLURM_JOB_ID}.lammps"
-echo "400 K hold for ${name} took ${SECONDS} seconds."
+echo "400 K heating and hold for ${name} took ${SECONDS} seconds."
