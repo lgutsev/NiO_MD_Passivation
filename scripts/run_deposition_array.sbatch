@@ -4,7 +4,7 @@
 #SBATCH -n 64
 #SBATCH -c 1
 #SBATCH -t 72:00:00
-#SBATCH -A loni_perovsk26
+#SBATCH -A loni_perovsk27
 #SBATCH -J nio.deposit
 #SBATCH --array=0-4
 #SBATCH -o nio.deposit.%A_%a.out
