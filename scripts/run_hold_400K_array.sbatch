@@ -4,7 +4,7 @@
 #SBATCH -n 64
 #SBATCH -c 1
 #SBATCH -t 48:00:00
-#SBATCH -A loni_perovsk26
+#SBATCH -A loni_perovsk27
 #SBATCH -J nio.hold400
 #SBATCH --array=0-3
 #SBATCH -o nio.hold400.%A_%a.out
