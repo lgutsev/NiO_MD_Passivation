@@ -6,6 +6,8 @@ secondary_slug = "meo-2pacz"
 [protocol]
 deposition_steps = 600000
 deposition_timestep = 0.5
+hold_300K_steps = 1000000
+hold_300K_timestep = 0.5
 wall_clearance = 30.0
 deposition_lower_wall = "EDGE"
 production_lower_wall_300 = "EDGE"

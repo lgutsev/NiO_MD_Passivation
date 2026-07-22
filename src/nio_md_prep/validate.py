@@ -119,18 +119,19 @@ def validate(folder: Path, packmol_ran: bool|None=None, primary_final: Path|None
         manifest["stage1_stage2_minimum_separation_lower_bound_angstrom"]=separation
         (folder/"assembly_manifest.json").write_text(json.dumps(manifest,indent=2)+"\n",encoding="utf-8")
     required_order=("boundary p p f","units real","atom_style full","read_data ","include ")
-    for input_name in ("deposition.in","equilibrate-300K.in","anneal-400K.in"):
+    for input_name in ("deposition.in","hold-300K.in","equilibrate-300K.in","anneal-400K.in"):
         text=(folder/input_name).read_text(); positions=[text.find(token) for token in required_order]
         if any(x<0 for x in positions) or positions!=sorted(positions): errors.append(f"{input_name}: invalid initialization command order")
         for directive in ("thermo_style","dump trajectory","restart ","write_data","write_restart"):
             if directive not in text: errors.append(f"{input_name}: missing {directive.strip()} directive")
         for line in re.findall(r"(?m)^write_data\s+.*$",text):
             if not line.endswith(" nocoeff"): errors.append(f"{input_name}: write_data is not coefficient-free")
-    deposition=(folder/"deposition.in").read_text(); eq=(folder/"equilibrate-300K.in").read_text(); anneal=(folder/"anneal-400K.in").read_text()
+    deposition=(folder/"deposition.in").read_text(); hold=(folder/"hold-300K.in").read_text(); eq=(folder/"equilibrate-300K.in").read_text(); anneal=(folder/"anneal-400K.in").read_text()
     if not re.search(r"variable zend equal 69\.615(?:0+)?",deposition): errors.append("deposition wall endpoint is not 69.615 A")
-    if "read_data deposited.data" not in eq or "read_data equilibrated-300K.data" not in anneal: errors.append("continuation stage-local source selection is invalid")
+    if "read_data deposited.data" not in hold or "read_data held-300K.data" not in eq or "read_data equilibrated-300K.data" not in anneal: errors.append("continuation stage-local source selection is invalid")
+    if not re.search(r"variable hold_wall_hi equal 69\.615(?:0+)?",hold): errors.append("300 K hold wall is not fixed at the deposition endpoint")
     resolved=tomllib.loads((folder/"resolved_config.toml").read_text()); policy=resolved["resolved_wall_policy"]
-    for stage,source_name in (("equilibrate_300K","deposited.data"),("anneal_400K","equilibrated-300K.data")):
+    for stage,source_name in (("equilibrate_300K","held-300K.data"),("anneal_400K","equilibrated-300K.data")):
         source=folder/source_name
         if not source.exists():
             result={"status":"DEFERRED","source":source_name,"measured_max_atom_z":"DEFERRED","minimum_wall":float(policy["minimum"]),"clearance":float(policy["clearance"]),"rounding":float(policy["rounding"]),"box_margin":float(policy["box_margin"]),"resolved_wall":"DEFERRED","final_zlo":"DEFERRED","final_zhi":"DEFERRED","mode":"manual" if policy.get("manual_override") else "auto"}; deferred.append(f"{stage}: waiting for real {source_name}")
@@ -148,7 +149,7 @@ def validate(folder: Path, packmol_ran: bool|None=None, primary_final: Path|None
         with tempfile.TemporaryDirectory(prefix="nio-md-validate-") as temp:
             target=Path(temp); shutil.copy2(topology,target/topology.name)
             shutil.copy2(folder/"force_field_settings_lammps_with_header.lmp",target/"force_field_settings_lammps_with_header.lmp")
-            smoke_stages=[("deposition",None),("equilibrate-300K","deposited.data"),("anneal-400K","equilibrated-300K.data")]
+            smoke_stages=[("deposition",None),("hold-300K","deposited.data"),("equilibrate-300K","held-300K.data"),("anneal-400K","equilibrated-300K.data")]
             for name,predecessor in smoke_stages:
                 if predecessor and not (folder/predecessor).exists(): continue
                 if predecessor: shutil.copy2(folder/predecessor,target/predecessor)

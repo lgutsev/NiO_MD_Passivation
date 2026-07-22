@@ -79,13 +79,13 @@ def test_sequential_stage_preserves_existing_records(tmp_path):
 def test_generated_stage_inputs_are_ordered_and_restartable(tmp_path):
     packed,_=packed_fixture(tmp_path)
     out=build(ROOT/"tests/data/small-study.toml",tmp_path/"ordered",packed_xyz=packed)
-    for name in ("deposition.in","equilibrate-300K.in","anneal-400K.in"):
+    for name in ("deposition.in","hold-300K.in","equilibrate-300K.in","anneal-400K.in"):
         text=(out/name).read_text()
         positions=[text.index(x) for x in ("boundary p p f","units real","atom_style full","read_data ","include ")]
         assert positions==sorted(positions)
         assert "dump trajectory" in text and "restart " in text and "write_restart" in text
         assert all(line.endswith(" nocoeff") for line in text.splitlines() if line.startswith("write_data "))
-    deposition=(out/"deposition.in").read_text(); eq=(out/"equilibrate-300K.in").read_text(); anneal=(out/"anneal-400K.in").read_text()
+    deposition=(out/"deposition.in").read_text(); hold=(out/"hold-300K.in").read_text(); eq=(out/"equilibrate-300K.in").read_text(); anneal=(out/"anneal-400K.in").read_text()
     assert "variable zend equal 69.615" in deposition
     assert "processors * * 1" in deposition
     assert deposition.index("fix walllo all wall/lj93") < deposition.index("minimize ")
@@ -104,14 +104,20 @@ def test_generated_stage_inputs_are_ordered_and_restartable(tmp_path):
     assert "thermo_style custom step temp pe ke etotal press pxx pyy lx ly lz v_zwall fnorm fmax" in deposition
     assert "timestep 0.5\nrun 10 start 0 stop 10" in deposition
     assert deposition.count("run 10 start 0 stop 10")==1
-    assert "read_data deposited.data" in eq and "fix lo all wall/lj93 zlo EDGE" in eq
+    assert "read_data deposited.data" in hold
+    assert "variable hold_wall_hi equal 69.615" in hold
+    assert "fix hi all wall/lj126 zhi ${hold_wall_hi}" in hold
+    assert "fix ensemble all npt temp 300.0 300.0" in hold
+    assert "timestep 0.5\nrun 1000000" in hold
+    assert "write_data held-300K.data nocoeff" in hold
+    assert "read_data held-300K.data" in eq and "fix lo all wall/lj93 zlo EDGE" in eq
     assert "read_data equilibrated-300K.data" in anneal and "fix lo all wall/lj93 zlo EDGE" in anneal
     for text in (eq,anneal):
         assert "compute stage_zmax all reduce max z" in text
         assert "variable resolved_wall_hi equal ${rounded_wall}" in text
         assert "change_box all z final" in text
         assert "fix hi all wall/lj93 zhi ${resolved_wall_hi}" in text
-    for name,source in (("deposition","topology_output.lmp"),("equilibrate-300K","deposited.data"),("anneal-400K","equilibrated-300K.data")):
+    for name,source in (("deposition","topology_output.lmp"),("hold-300K","deposited.data"),("equilibrate-300K","held-300K.data"),("anneal-400K","equilibrated-300K.data")):
         smoke=(out/f"validate-{name}.in").read_text()
         assert f"read_data {source}" in smoke and "run 0" in smoke
     assert "run 0 post no # minimization replaced by force evaluation" in (out/"validate-deposition.in").read_text()
@@ -153,11 +159,11 @@ def test_lammps_real_predecessor_wall_resolution(tmp_path,manual,wall,zhi):
     ligand=[a for a in predecessor.sections["Atoms"] if int(a.fields[1])>0]
     shift=265.0-max(float(a.fields[6]) for a in ligand)
     for atom in ligand: atom.fields[6]=f"{float(atom.fields[6])+shift:.8f}"
-    predecessor.bounds["z"]=(predecessor.bounds["z"][0],270.0); write(predecessor,out/"deposited.data")
+    predecessor.bounds["z"]=(predecessor.bounds["z"][0],270.0); write(predecessor,out/"held-300K.data")
     smoke=tmp_path/"smoke"; smoke.mkdir()
-    for name in ("deposited.data","force_field_settings_lammps_with_header.lmp","validate-equilibrate-300K.in"):
+    for name in ("held-300K.data","force_field_settings_lammps_with_header.lmp","validate-equilibrate-300K.in"):
         shutil.copy2(out/name,smoke/name)
-    before=parse(smoke/"deposited.data"); before_xyz={int(a.fields[0]):tuple(map(float,a.fields[4:7])) for a in before.sections["Atoms"]}
+    before=parse(smoke/"held-300K.data"); before_xyz={int(a.fields[0]):tuple(map(float,a.fields[4:7])) for a in before.sections["Atoms"]}
     run=subprocess.run([executable,"-in","validate-equilibrate-300K.in"],cwd=smoke,capture_output=True,text=True)
     assert run.returncode==0,run.stderr+run.stdout[-2000:]
     assert f"Resolved production wall: {int(wall)}" in run.stdout
