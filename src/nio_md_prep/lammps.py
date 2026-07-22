@@ -86,7 +86,7 @@ def parse(path: Path) -> DataFile:
     return data
 
 def write(data: DataFile, path: Path) -> None:
-    order = ["Masses", "Pair Coeffs", "Bond Coeffs", "Angle Coeffs", "Dihedral Coeffs", "Improper Coeffs", "Atoms", "Bonds", "Angles", "Dihedrals", "Impropers"]
+    order = ["Masses", "Pair Coeffs", "Bond Coeffs", "Angle Coeffs", "Dihedral Coeffs", "Improper Coeffs", "Atoms", "Velocities", "Bonds", "Angles", "Dihedrals", "Impropers"]
     out = [data.title, ""]
     for sec, label in COUNT_NAMES.items():
         if data.count(sec) or sec == "Atoms": out.append(f"{data.count(sec)} {label}")

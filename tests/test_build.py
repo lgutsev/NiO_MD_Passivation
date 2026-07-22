@@ -3,7 +3,7 @@ import hashlib, json, shutil, subprocess
 import pytest
 from nio_md_prep.build import build, refresh_inputs
 from nio_md_prep.geometry import elements
-from nio_md_prep.lammps import parse, write
+from nio_md_prep.lammps import Record, parse, write
 from nio_md_prep.validate import _wall_result
 
 ROOT=Path(__file__).parents[1]
@@ -67,14 +67,28 @@ def test_sequential_stage_preserves_existing_records(tmp_path):
     packed,template=packed_fixture(tmp_path/"one")
     stage1=build(ROOT/"tests/data/small-study.toml",tmp_path/"stage1",packed_xyz=packed)
     before=parse(stage1/"topology_output.lmp")
+    before.sections["Velocities"]=[Record([atom.fields[0],"1.0","2.0","3.0"]) for atom in before.sections["Atoms"]]
+    primary=stage1/"held-300K.data"; write(before,primary)
     packed2,_=packed_fixture(tmp_path/"two",shift=(20.0,20.0,100.0))
-    stage2=build(ROOT/"tests/data/small-study.toml",tmp_path/"stage2",primary_final=stage1/"topology_output.lmp",packed_xyz=packed2)
+    stage2=build(ROOT/"tests/data/small-study.toml",tmp_path/"stage2",primary_final=primary,packed_xyz=packed2)
     after=parse(stage2/"topology_output.lmp")
     for section in ("Atoms","Bonds","Angles","Dihedrals","Impropers"):
         assert [r.fields for r in after.sections[section]][:before.count(section)]==[r.fields for r in before.sections[section]]
     assert after.count("Atoms")==before.count("Atoms")+45
+    assert after.count("Velocities")==after.count("Atoms")
+    assert [r.fields for r in after.sections["Velocities"]][:before.count("Atoms")]==[r.fields for r in before.sections["Velocities"]]
+    assert all(r.fields[1:]==["0.0","0.0","0.0"] for r in after.sections["Velocities"][before.count("Atoms"):])
     assert after.bounds==before.bounds
     assert "inside box 2.000000 2.000000 67.509910 123.100000 39.700000 265.000000" in (stage2/"packmol.inp").read_text()
+    deposition=(stage2/"deposition.in").read_text()
+    assert f"group stage2 id {before.count('Atoms')+1}:{after.count('Atoms')}" in deposition
+    assert "group stage1 subtract all stage2" in deposition
+    assert deposition.index("fix stage1_lock stage1 setforce 0.0 0.0 0.0") < deposition.index("minimize ") < deposition.index("unfix stage1_lock")
+    assert deposition.index("unfix stage1_lock") < deposition.index("velocity stage2 create 300.0")
+    assert "fix deposit all npt temp 300.0 300.0" in deposition
+    assert "velocity all create" not in deposition
+    refresh_inputs(ROOT/"tests/data/small-study.toml",stage2)
+    assert "velocity stage2 create 300.0" in (stage2/"deposition.in").read_text()
 
 def test_generated_stage_inputs_are_ordered_and_restartable(tmp_path):
     packed,_=packed_fixture(tmp_path)

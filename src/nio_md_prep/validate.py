@@ -111,7 +111,7 @@ def validate(folder: Path, packmol_ran: bool|None=None, primary_final: Path|None
     if primary_final:
         old=parse(primary_final)
         if old.bounds!=data.bounds: errors.append("sequential stage changed stage-1 box bounds")
-        for sec in ("Masses","Atoms","Bonds","Angles","Dihedrals","Impropers"):
+        for sec in ("Masses","Atoms","Velocities","Bonds","Angles","Dihedrals","Impropers"):
             before=_records(old,sec); after=_records(data,sec)[:len(before)]
             if before!=after: errors.append(f"sequential stage-1 {sec} changed")
         separation=_minimum_cross_separation(old.sections["Atoms"],data.sections["Atoms"][old.count("Atoms"):])
@@ -127,6 +127,22 @@ def validate(folder: Path, packmol_ran: bool|None=None, primary_final: Path|None
         for line in re.findall(r"(?m)^write_data\s+.*$",text):
             if not line.endswith(" nocoeff"): errors.append(f"{input_name}: write_data is not coefficient-free")
     deposition=(folder/"deposition.in").read_text(); hold=(folder/"hold-300K.in").read_text(); hold_400=(folder/"hold-400K.in").read_text(); eq=(folder/"equilibrate-300K.in").read_text(); anneal=(folder/"anneal-400K.in").read_text()
+    resolved=tomllib.loads((folder/"resolved_config.toml").read_text()); target_temp=float(resolved.get("protocol",{}).get("temperature",300.0))
+    primary=next((component for component in manifest.get("components",[]) if component.get("component")=="stage1_primary"),None)
+    if primary:
+        primary_last=int(primary["atom_ids"][1]); final_atom=max(ids)
+        required=(
+            f"group stage2 id {primary_last+1}:{final_atom}",
+            "group stage1 subtract all stage2",
+            "fix stage1_lock stage1 setforce 0.0 0.0 0.0",
+            "unfix stage1_lock",
+            f"velocity stage2 create {target_temp}",
+            f"fix deposit all npt temp {target_temp} {target_temp}",
+        )
+        if any(token not in deposition for token in required): errors.append("sequential deposition does not preserve and initialize the two stages correctly")
+        elif not (deposition.index("fix stage1_lock") < deposition.index("minimize ") < deposition.index("unfix stage1_lock") < deposition.index("velocity stage2 create")):
+            errors.append("sequential minimization lock and stage-2 velocity initialization are out of order")
+        if "velocity all create" in deposition: errors.append("sequential deposition replaces the completed stage-1 velocities")
     if not re.search(r"variable zend equal 69\.615(?:0+)?",deposition): errors.append("deposition wall endpoint is not 69.615 A")
     if "read_data deposited.data" not in hold or "read_data held-300K.data" not in eq or "read_data equilibrated-300K.data" not in anneal: errors.append("continuation stage-local source selection is invalid")
     if not re.search(r"variable hold_wall_hi equal 69\.615(?:0+)?",hold): errors.append("300 K hold wall is not fixed at the deposition endpoint")
@@ -135,7 +151,7 @@ def validate(folder: Path, packmol_ran: bool|None=None, primary_final: Path|None
     if "fix heating all npt temp 300.0 400.0" not in hold_400: errors.append("400 K heating ramp is invalid")
     if "write_data heated-400K.data nocoeff" not in hold_400: errors.append("400 K heating endpoint is not saved")
     if "fix hold all npt temp 400.0 400.0" not in hold_400: errors.append("400 K hold thermostat is invalid")
-    resolved=tomllib.loads((folder/"resolved_config.toml").read_text()); policy=resolved["resolved_wall_policy"]
+    policy=resolved["resolved_wall_policy"]
     for stage,source_name in (("equilibrate_300K","held-300K.data"),("anneal_400K","equilibrated-300K.data")):
         source=folder/source_name
         if not source.exists():

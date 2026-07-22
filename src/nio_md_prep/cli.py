@@ -32,9 +32,8 @@ def main(argv=None)->int:
         elif a.command=="refresh-inputs": refresh_inputs(a.config,a.output); print(f"Stage inputs refreshed in {a.output}; simulation data were not modified")
         elif a.command=="validate": validate(a.output); print((a.output/"validation_report.txt").read_text(),end="")
         else:
-            target=a.output/"stage2_secondary"
-            build(a.config,target,primary_final=a.primary_final,packed_xyz=a.packed_xyz)
-            print(f"Sequential stage 2 written to {target}")
+            build(a.config,a.output,primary_final=a.primary_final,packed_xyz=a.packed_xyz)
+            print(f"Sequential stage 2 written to {a.output}")
     except (ValueError,FileNotFoundError,RuntimeError) as e:
         p.exit(2,f"error: {e}\n")
     return 0
