@@ -17,7 +17,7 @@ module load lammps/22Jul2025-r9.0-cpu
 cd "${SLURM_SUBMIT_DIR}"
 source .venv/bin/activate
 
-for executable in python packmol nio-md-prep lmp; do
+for executable in python packmol nio-md-prep lmp_mpi; do
     if ! command -v "${executable}" >/dev/null 2>&1; then
         echo "ERROR: ${executable} is not available after module and virtual-environment setup." >&2
         exit 1
@@ -28,7 +28,7 @@ echo "Repository: $(pwd)"
 echo "Commit: $(git rev-parse --short HEAD)"
 echo "Python: $(python --version 2>&1)"
 echo "Packmol: $(command -v packmol)"
-echo "LAMMPS: $(command -v lmp)"
+echo "LAMMPS: $(command -v lmp_mpi)"
 
 systems=(
     me-4pacz-alone

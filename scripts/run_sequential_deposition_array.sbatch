@@ -17,6 +17,11 @@ module load lammps/22Jul2025-r9.0-cpu
 export OMP_NUM_THREADS=1
 export SINGULARITYENV_OMP_NUM_THREADS=1
 
+if ! LAMMPS_EXE="$(command -v lmp_mpi)"; then
+    echo "ERROR: lmp_mpi is unavailable after loading the QBD LAMMPS module." >&2
+    exit 1
+fi
+
 systems=(
     me-4pacz-then-dcz-4p
     me-4pacz-then-meo-2pacz
@@ -43,9 +48,9 @@ fi
 
 cd "${run_directory}"
 echo "Running ${name} sequential stage-2 deposition in ${run_directory}"
-echo "LAMMPS: $(command -v lmp)"
+echo "LAMMPS: ${LAMMPS_EXE}"
 echo "MPI tasks: ${SLURM_NTASKS}"
 
 SECONDS=0
-srun -n "${SLURM_NTASKS}" lmp -in deposition.in -log "log.deposition.${SLURM_JOB_ID}.lammps"
+srun -n "${SLURM_NTASKS}" "${LAMMPS_EXE}" -in deposition.in -log "log.deposition.${SLURM_JOB_ID}.lammps"
 echo "Sequential deposition for ${name} took ${SECONDS} seconds."

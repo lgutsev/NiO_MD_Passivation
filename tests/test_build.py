@@ -181,7 +181,7 @@ def test_geometry_aware_wall_resolution_and_manual_override(tmp_path):
 
 @pytest.mark.parametrize("manual,wall,zhi",[(None,300.0,305.0),(320.0,320.0,325.0)])
 def test_lammps_real_predecessor_wall_resolution(tmp_path,manual,wall,zhi):
-    executable=shutil.which("lmp") or shutil.which("lammps")
+    executable=shutil.which("lmp_mpi") or shutil.which("lmp") or shutil.which("lammps")
     if not executable: pytest.skip("LAMMPS executable unavailable")
     packed,_=packed_fixture(tmp_path/"fixture")
     config=ROOT/"tests/data/small-study.toml"

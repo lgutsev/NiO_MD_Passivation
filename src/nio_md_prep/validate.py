@@ -164,7 +164,7 @@ def validate(folder: Path, packmol_ran: bool|None=None, primary_final: Path|None
         wall_results[stage]=result
     _record_wall_results(folder,wall_results)
     if packmol_ran is False: errors.append("Packmol packing was not completed")
-    executable=shutil.which("lmp") or shutil.which("lammps")
+    executable=shutil.which("lmp_mpi") or shutil.which("lmp") or shutil.which("lammps")
     if not executable: warnings.append("LAMMPS executable not found; zero-step checks skipped")
     else:
         with tempfile.TemporaryDirectory(prefix="nio-md-validate-") as temp:
