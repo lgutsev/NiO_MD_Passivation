@@ -119,6 +119,7 @@ def test_generated_stage_inputs_are_ordered_and_restartable(tmp_path):
     deposition=(out/"deposition.in").read_text(); hold=(out/"hold-300K.in").read_text(); hold_400=(out/"hold-400K.in").read_text(); eq=(out/"equilibrate-300K.in").read_text(); anneal=(out/"anneal-400K.in").read_text()
     assert "variable zend equal 69.615" in deposition
     assert "processors * * 1" in deposition
+    assert "comm_modify cutoff 20.0" in deposition
     assert deposition.index("fix walllo all wall/lj93") < deposition.index("minimize ")
     assert deposition.count("fix walllo all wall/lj93")==1
     assert "fix walllo all wall/lj93 zlo EDGE" in deposition

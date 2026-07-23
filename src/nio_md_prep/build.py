@@ -322,6 +322,8 @@ def _write_input(output: Path,cfg:dict,data:DataFile)->None:
         return str(float(value))
     deposition_lower=lower_wall(p.get("deposition_lower_wall",p.get("lower_wall","EDGE")))
     lower_300=lower_wall(p.get("production_lower_wall_300","EDGE")); lower_400=lower_wall(p.get("production_lower_wall_400","EDGE"))
+    communication_cutoff=p.get("communication_cutoff")
+    communication_line=f"comm_modify cutoff {float(communication_cutoff)}\n" if communication_cutoff is not None else ""
     manual_upper=p.get("production_upper_wall"); wall_min=float(p.get("production_upper_wall_min",120.0)); wall_clearance=float(p.get("production_wall_clearance",30.0)); wall_rounding=float(p.get("production_wall_rounding",10.0)); box_margin=float(p.get("production_box_margin",5.0))
     surface_top=max(float(a.fields[6]) for a in data.sections["Atoms"] if abs(abs(float(a.fields[3]))-2.0)<1e-8)
     configured_endpoint=p.get("deposition_wall_endpoint")
@@ -356,7 +358,7 @@ read_data {source}
 include force_field_settings_lammps_with_header.lmp
 neighbor 2.0 bin
 neigh_modify every 1 delay 0 check yes
-timestep {regular_timestep}
+{communication_line}timestep {regular_timestep}
 thermo 1000
 thermo_style custom step temp pe ke etotal press pxx pyy lx ly lz fnorm fmax
 variable pressure equal 1.0
