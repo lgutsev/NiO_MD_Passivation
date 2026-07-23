@@ -12,12 +12,11 @@ set -euo pipefail
 
 module purge
 module load python/3.11.5-anaconda
-module load lammps/22Jul2025-r9.0-cpu
 
 cd "${SLURM_SUBMIT_DIR}"
 source .venv/bin/activate
 
-for executable in python packmol nio-md-prep lmp_mpi; do
+for executable in python packmol nio-md-prep; do
     if ! command -v "${executable}" >/dev/null 2>&1; then
         echo "ERROR: ${executable} is not available after module and virtual-environment setup." >&2
         exit 1
@@ -40,11 +39,9 @@ mkdir -p prepared
 
 for name in "${systems[@]}"; do
     output="prepared/${name}"
-    if [[ -s "${output}/topology_output.lmp" ]]; then
-        echo "VALIDATING EXISTING SEQUENTIAL STAGE 2: ${name}"
-        nio-md-prep validate "${output}"
-        echo "REUSING VALID EXISTING BUILD: ${name}"
-        continue
+    if [[ -e "${output}" ]]; then
+        echo "ERROR: ${output} already exists; remove or archive it before rebuilding." >&2
+        exit 1
     fi
 
     echo "BUILDING SEQUENTIAL STAGE 2: ${name}"
@@ -52,13 +49,15 @@ for name in "${systems[@]}"; do
         --primary-final "${primary}" \
         --output "${output}"
 
-    echo "VALIDATING: ${name}"
-    nio-md-prep validate "${output}"
+    for required in topology_output.lmp force_field_settings.lmp deposition.in hold-300K.in; do
+        if [[ ! -s "${output}/${required}" ]]; then
+            echo "ERROR: ${output}/${required} was not produced." >&2
+            exit 1
+        fi
+    done
 
-    if [[ ! -s "${output}/topology_output.lmp" ]]; then
-        echo "ERROR: ${output}/topology_output.lmp was not produced." >&2
-        exit 1
-    fi
+    echo "BUILT: ${name}"
 done
 
-echo "All three sequential stage-2 systems were built and deposition-smoke validated."
+echo "All three sequential stage-2 systems were built."
+echo "No deposition or hold job was submitted."
