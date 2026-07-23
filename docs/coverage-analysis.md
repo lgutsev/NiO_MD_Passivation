@@ -85,3 +85,38 @@ NPT changes in `Lx` and `Ly` are handled frame by frame. The occupancy map
 uses a fixed fractional grid, while physical disk radii remain in Å.
 Orthogonal periodic `x/y` boxes are supported. Triclinic boxes are rejected
 explicitly rather than analyzed incorrectly.
+
+## Analyze every completed hold on a compute node
+
+Do not analyze many trajectories on the login/head node. Submit the supplied
+single-CPU job from the repository root:
+
+```bash
+sbatch scripts/analyze_coverage_holds.sbatch
+```
+
+The job searches every immediate subdirectory of `prepared/` for non-empty
+`hold-300K.lammpstrj` and `hold-400K.lammpstrj` files and processes them
+sequentially. Results are kept separate:
+
+```text
+prepared/SYSTEM/coverage-analysis-hold-300K/
+prepared/SYSTEM/coverage-analysis-hold-400K/
+```
+
+By default, the final 100 frames of each trajectory are analyzed. To analyze
+all frames:
+
+```bash
+sbatch --export=ALL,LAST_FRAMES=0 scripts/analyze_coverage_holds.sbatch
+```
+
+The grid and statistical block count can also be overridden:
+
+```bash
+sbatch --export=ALL,GRID_SPACING=0.10,BLOCKS=5 \
+  scripts/analyze_coverage_holds.sbatch
+```
+
+The job uses the `single` partition with one task and one CPU, and constrains
+NumPy/SciPy math libraries to one thread.
