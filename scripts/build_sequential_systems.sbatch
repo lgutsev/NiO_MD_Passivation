@@ -6,7 +6,8 @@
 #SBATCH -t 02:00:00
 #SBATCH -A loni_perovsk27
 #SBATCH -J nio.seq.build
-#SBATCH -o nio.seq.build.%j.out
+#SBATCH --array=0-2
+#SBATCH -o nio.seq.build.%A_%a.out
 
 set -euo pipefail
 
@@ -35,29 +36,27 @@ systems=(
     me-4pacz-then-meo-4padbc
 )
 
+name="${systems[${SLURM_ARRAY_TASK_ID}]}"
+output="prepared/${name}"
+
 mkdir -p prepared
 
-for name in "${systems[@]}"; do
-    output="prepared/${name}"
-    if [[ -e "${output}" ]]; then
-        echo "ERROR: ${output} already exists; remove or archive it before rebuilding." >&2
+if [[ -e "${output}" ]]; then
+    echo "ERROR: ${output} already exists; remove or archive it before rebuilding." >&2
+    exit 1
+fi
+
+echo "BUILDING SEQUENTIAL STAGE 2: ${name} (array index ${SLURM_ARRAY_TASK_ID})"
+nio-md-prep prepare-sequential-stage2 "studies/${name}.toml" \
+    --primary-final "${primary}" \
+    --output "${output}"
+
+for required in topology_output.lmp force_field_settings.lmp deposition.in hold-300K.in; do
+    if [[ ! -s "${output}/${required}" ]]; then
+        echo "ERROR: ${output}/${required} was not produced." >&2
         exit 1
     fi
-
-    echo "BUILDING SEQUENTIAL STAGE 2: ${name}"
-    nio-md-prep prepare-sequential-stage2 "studies/${name}.toml" \
-        --primary-final "${primary}" \
-        --output "${output}"
-
-    for required in topology_output.lmp force_field_settings.lmp deposition.in hold-300K.in; do
-        if [[ ! -s "${output}/${required}" ]]; then
-            echo "ERROR: ${output}/${required} was not produced." >&2
-            exit 1
-        fi
-    done
-
-    echo "BUILT: ${name}"
 done
 
-echo "All three sequential stage-2 systems were built."
+echo "BUILT: ${name}"
 echo "No deposition or hold job was submitted."
