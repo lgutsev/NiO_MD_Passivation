@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -p workq
 #SBATCH -N 1
-#SBATCH -n 64
+#SBATCH -n 32
 #SBATCH -c 1
 #SBATCH -t 72:00:00
 #SBATCH -A loni_perovsk27
