@@ -40,9 +40,11 @@ mkdir -p prepared
 
 for name in "${systems[@]}"; do
     output="prepared/${name}"
-    if [[ -e "${output}/topology_output.lmp" ]]; then
-        echo "ERROR: ${output}/topology_output.lmp already exists; refusing to overwrite a prepared stage." >&2
-        exit 1
+    if [[ -s "${output}/topology_output.lmp" ]]; then
+        echo "VALIDATING EXISTING SEQUENTIAL STAGE 2: ${name}"
+        nio-md-prep validate "${output}"
+        echo "REUSING VALID EXISTING BUILD: ${name}"
+        continue
     fi
 
     echo "BUILDING SEQUENTIAL STAGE 2: ${name}"
