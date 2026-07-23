@@ -49,7 +49,12 @@ def _refresh_output_hashes(folder: Path) -> None:
     manifest["output_hashes"]={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(folder.iterdir()) if p.is_file() and p.name!="assembly_manifest.json"}
     path.write_text(json.dumps(manifest,indent=2)+"\n",encoding="utf-8")
 
-def validate(folder: Path, packmol_ran: bool|None=None, primary_final: Path|None=None) -> bool:
+def validate(
+    folder: Path,
+    packmol_ran: bool|None=None,
+    primary_final: Path|None=None,
+    run_lammps: bool=True,
+) -> bool:
     errors=[]; warnings=[]; deferred=[]; wall_results={}
     topology=folder/"topology_output.lmp"
     if not topology.exists():
@@ -110,7 +115,15 @@ def validate(folder: Path, packmol_ran: bool|None=None, primary_final: Path|None
     if abs(charge(data)-float(manifest["total_charge"]))>1e-6: errors.append("final charge disagrees with component/assembly manifest")
     if primary_final:
         old=parse(primary_final)
-        if old.bounds!=data.bounds: errors.append("sequential stage changed stage-1 box bounds")
+        same_bounds=(
+            old.bounds.keys()==data.bounds.keys()
+            and all(
+                math.isclose(before,after,rel_tol=0.0,abs_tol=1e-7)
+                for axis in old.bounds
+                for before,after in zip(old.bounds[axis],data.bounds[axis])
+            )
+        )
+        if not same_bounds: errors.append("sequential stage changed stage-1 box bounds")
         for sec in ("Masses","Atoms","Velocities","Bonds","Angles","Dihedrals","Impropers"):
             before=_records(old,sec); after=_records(data,sec)[:len(before)]
             if before!=after: errors.append(f"sequential stage-1 {sec} changed")
@@ -127,7 +140,10 @@ def validate(folder: Path, packmol_ran: bool|None=None, primary_final: Path|None
         for line in re.findall(r"(?m)^write_data\s+.*$",text):
             if not line.endswith(" nocoeff"): errors.append(f"{input_name}: write_data is not coefficient-free")
     deposition=(folder/"deposition.in").read_text(); hold=(folder/"hold-300K.in").read_text(); hold_400=(folder/"hold-400K.in").read_text(); eq=(folder/"equilibrate-300K.in").read_text(); anneal=(folder/"anneal-400K.in").read_text()
-    resolved=tomllib.loads((folder/"resolved_config.toml").read_text()); target_temp=float(resolved.get("protocol",{}).get("temperature",300.0))
+    resolved=tomllib.loads((folder/"resolved_config.toml").read_text())
+    protocol=resolved.get("protocol",{})
+    target_temp=float(protocol.get("temperature",300.0))
+    expected_endpoint=float(protocol.get("deposition_wall_endpoint",69.615))
     primary=next((component for component in manifest.get("components",[]) if component.get("component")=="stage1_primary"),None)
     if primary:
         primary_last=int(primary["atom_ids"][1]); final_atom=max(ids)
@@ -143,11 +159,12 @@ def validate(folder: Path, packmol_ran: bool|None=None, primary_final: Path|None
         elif not (deposition.index("fix stage1_lock") < deposition.index("minimize ") < deposition.index("unfix stage1_lock") < deposition.index("velocity stage2 create")):
             errors.append("sequential minimization lock and stage-2 velocity initialization are out of order")
         if "velocity all create" in deposition: errors.append("sequential deposition replaces the completed stage-1 velocities")
-    if not re.search(r"variable zend equal 69\.615(?:0+)?",deposition): errors.append("deposition wall endpoint is not 69.615 A")
+    endpoint_pattern=rf"{re.escape(str(expected_endpoint))}(?:0+)?"
+    if not re.search(rf"variable zend equal {endpoint_pattern}",deposition): errors.append(f"deposition wall endpoint is not {expected_endpoint:g} A")
     if "read_data deposited.data" not in hold or "read_data held-300K.data" not in eq or "read_data equilibrated-300K.data" not in anneal: errors.append("continuation stage-local source selection is invalid")
-    if not re.search(r"variable hold_wall_hi equal 69\.615(?:0+)?",hold): errors.append("300 K hold wall is not fixed at the deposition endpoint")
+    if not re.search(rf"variable hold_wall_hi equal {endpoint_pattern}",hold): errors.append("300 K hold wall is not fixed at the deposition endpoint")
     if "read_data deposited.data" not in hold_400: errors.append("400 K hold does not branch from deposited.data")
-    if not re.search(r"variable hold_wall_hi equal 69\.615(?:0+)?",hold_400): errors.append("400 K hold wall is not fixed at the deposition endpoint")
+    if not re.search(rf"variable hold_wall_hi equal {endpoint_pattern}",hold_400): errors.append("400 K hold wall is not fixed at the deposition endpoint")
     if "fix heating all npt temp 300.0 400.0" not in hold_400: errors.append("400 K heating ramp is invalid")
     if "write_data heated-400K.data nocoeff" not in hold_400: errors.append("400 K heating endpoint is not saved")
     if "fix hold all npt temp 400.0 400.0" not in hold_400: errors.append("400 K hold thermostat is invalid")
@@ -164,8 +181,11 @@ def validate(folder: Path, packmol_ran: bool|None=None, primary_final: Path|None
         wall_results[stage]=result
     _record_wall_results(folder,wall_results)
     if packmol_ran is False: errors.append("Packmol packing was not completed")
-    executable=shutil.which("lmp_mpi") or shutil.which("lmp") or shutil.which("lammps")
-    if not executable: warnings.append("LAMMPS executable not found; zero-step checks skipped")
+    executable=(shutil.which("lmp_mpi") or shutil.which("lmp") or shutil.which("lammps")) if run_lammps else None
+    if not run_lammps:
+        warnings.append("LAMMPS zero-step checks skipped during build-only sequential preparation")
+    elif not executable:
+        warnings.append("LAMMPS executable not found; zero-step checks skipped")
     else:
         with tempfile.TemporaryDirectory(prefix="nio-md-validate-") as temp:
             target=Path(temp); shutil.copy2(topology,target/topology.name)

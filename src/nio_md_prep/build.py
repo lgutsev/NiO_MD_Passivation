@@ -281,7 +281,12 @@ def build(config_path: Path, output: Path, primary_final: Path|None=None, packed
     type_map.update({"status":"assembled","source_hashes":hashes,"output_hashes":{},"total_charge":charge(result),"molecule_count":max(int(r.fields[1]) for r in result.sections["Atoms"]),"counts":{sec.lower():result.count(sec) for sec in ("Atoms","Bonds","Angles","Dihedrals","Impropers")},"box":result.bounds})
     (output/"assembly_manifest.json").write_text(json.dumps(type_map,indent=2)+"\n",encoding="utf-8")
     from .validate import validate
-    validate(output, packmol_ran=packed_ok, primary_final=primary_final)
+    validate(
+        output,
+        packmol_ran=packed_ok,
+        primary_final=primary_final,
+        run_lammps=primary_final is None,
+    )
     return output
 
 def _write_input(output: Path,cfg:dict,data:DataFile)->None:
@@ -307,7 +312,9 @@ def _write_input(output: Path,cfg:dict,data:DataFile)->None:
     lower_300=lower_wall(p.get("production_lower_wall_300","EDGE")); lower_400=lower_wall(p.get("production_lower_wall_400","EDGE"))
     manual_upper=p.get("production_upper_wall"); wall_min=float(p.get("production_upper_wall_min",120.0)); wall_clearance=float(p.get("production_wall_clearance",30.0)); wall_rounding=float(p.get("production_wall_rounding",10.0)); box_margin=float(p.get("production_box_margin",5.0))
     surface_top=max(float(a.fields[6]) for a in data.sections["Atoms"] if abs(abs(float(a.fields[3]))-2.0)<1e-8)
-    zend=surface_top+float(p.get("wall_clearance",30.0)); zstart=max(zend+100.0,data.bounds["z"][1]-5.0)
+    configured_endpoint=p.get("deposition_wall_endpoint")
+    zend=float(configured_endpoint) if configured_endpoint is not None else surface_top+float(p.get("wall_clearance",30.0))
+    zstart=max(zend+100.0,data.bounds["z"][1]-5.0)
     primary_atom_count=cfg.get("_sequential_primary_atom_count")
     sequential=primary_atom_count is not None
     if sequential:

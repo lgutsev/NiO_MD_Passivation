@@ -14,6 +14,7 @@ heat_400K_steps = 400000
 heat_400K_timestep = 0.5
 wall_start = 70.0
 wall_end = 60.0
+deposition_wall_endpoint = 69.615
 lower_wall = -5.0
 deposition_lower_wall = "EDGE"
 production_lower_wall_300 = "EDGE"
