@@ -28,6 +28,9 @@ def main(argv=None)->int:
     i.add_argument("--blocks",type=int,default=5)
     i.add_argument("--exclude-hydrogen",action="store_true")
     i.add_argument("--timestep-fs",type=float)
+    i=sub.add_parser("summarize-coverage")
+    i.add_argument("prepared_root",type=Path)
+    i.add_argument("--output",type=Path,required=True)
     a=p.parse_args(argv)
     try:
         if a.command=="init-molecule":
@@ -57,6 +60,10 @@ def main(argv=None)->int:
                 timestep_fs=a.timestep_fs,
             )
             print(f"Coverage analysis written to {summary.parent}")
+        elif a.command=="summarize-coverage":
+            from .analysis.report import create_coverage_workbook
+            workbook=create_coverage_workbook(a.prepared_root,a.output)
+            print(f"Coverage workbook written to {workbook}")
         else:
             build(a.config,a.output,primary_final=a.primary_final,packed_xyz=a.packed_xyz)
             print(f"Sequential stage 2 written to {a.output}")

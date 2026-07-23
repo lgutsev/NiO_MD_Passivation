@@ -104,6 +104,19 @@ prepared/SYSTEM/coverage-analysis-hold-300K/
 prepared/SYSTEM/coverage-analysis-hold-400K/
 ```
 
+After processing the trajectories, the job also writes a consolidated workbook:
+
+```text
+prepared/coverage_summary.xlsx
+```
+
+Its `Results` sheet contains one row per system and hold temperature, including
+total coverage, uncertainty, uncovered area, component overlap, and the primary
+and secondary component coverages. The `Components` sheet provides one
+normalized row per SAM component, and `Methods` records the coverage definition
+and quality-control checks. A bar chart on `Results` gives a quick comparison
+across all completed holds.
+
 By default, the final 100 frames of each trajectory are analyzed. To analyze
 all frames:
 
@@ -120,3 +133,11 @@ sbatch --export=ALL,GRID_SPACING=0.10,BLOCKS=5 \
 
 The job uses the `single` partition with one task and one CPU, and constrains
 NumPy/SciPy math libraries to one thread.
+
+The workbook can also be rebuilt from existing result directories without
+rerunning the trajectory analysis:
+
+```bash
+nio-md-prep summarize-coverage prepared \
+  --output prepared/coverage_summary.xlsx
+```

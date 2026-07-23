@@ -31,7 +31,7 @@ if ! command -v nio-md-prep >/dev/null 2>&1; then
     exit 1
 fi
 
-if ! python -c "import numpy, scipy, matplotlib" >/dev/null 2>&1; then
+if ! python -c "import numpy, scipy, matplotlib, openpyxl" >/dev/null 2>&1; then
     echo "ERROR: coverage-analysis dependencies are missing." >&2
     echo "Install once from the repository root with:" >&2
     echo "  python -m pip install -e '.[analysis]'" >&2
@@ -118,6 +118,16 @@ done < <(
 if (( found == 0 )); then
     echo "ERROR: no non-empty hold-300K.lammpstrj or hold-400K.lammpstrj files were found." >&2
     exit 1
+fi
+
+workbook="${prepared_root}/coverage_summary.xlsx"
+echo
+echo "Creating consolidated workbook: ${workbook}"
+if nio-md-prep summarize-coverage "${prepared_root}" --output "${workbook}"; then
+    echo "WORKBOOK: ${workbook}"
+else
+    failed=$((failed + 1))
+    echo "FAILED: consolidated coverage workbook" >&2
 fi
 
 echo
