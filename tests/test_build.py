@@ -99,6 +99,12 @@ def test_sequential_stage_preserves_existing_records(tmp_path,monkeypatch):
     assert f"group stage2 id {before.count('Atoms')+1}:{after.count('Atoms')}" in deposition
     assert "group stage1 subtract all stage2" in deposition
     assert deposition.index("fix stage1_lock stage1 setforce 0.0 0.0 0.0") < deposition.index("minimize ") < deposition.index("unfix stage1_lock")
+    assert "min_style fire" not in deposition
+    assert deposition.index("min_style sd") < deposition.index("minimize 0.0 10.0 5000 50000")
+    assert deposition.index("minimize 0.0 10.0 5000 50000") < deposition.index("min_style cg")
+    assert deposition.index("min_style cg") < deposition.index("minimize 0.0 1.0 20000 200000")
+    assert "min_modify dmax 0.005 line backtrack" in deposition
+    assert "min_modify dmax 0.01 line backtrack" in deposition
     assert deposition.index("unfix stage1_lock") < deposition.index("velocity stage2 create 300.0")
     assert "fix deposit all npt temp 300.0 300.0" in deposition
     assert "variable zend equal 69.615" in deposition

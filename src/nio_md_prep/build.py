@@ -338,14 +338,25 @@ def _write_input(output: Path,cfg:dict,data:DataFile)->None:
         stage2_groups=f"group stage2 id {primary_atom_count+1}:{data.count('Atoms')}\ngroup stage1 subtract all stage2\n"
         minimization_lock="fix stage1_lock stage1 setforce 0.0 0.0 0.0\n"
         minimization_unlock="unfix stage1_lock\n"
+        minimization_protocol="""min_style sd
+min_modify dmax 0.005 line backtrack
+minimize 0.0 10.0 5000 50000
+min_style cg
+min_modify dmax 0.01 line backtrack
+minimize 0.0 1.0 20000 200000
+"""
         velocity_initialization=f"velocity stage2 create {temp} 214587 mom yes rot yes dist gaussian"
         deposition_temperature_start=temp
         deposition_label="Sequential stage-2 deposition onto equilibrated Me-4PACz"
-        deposition_thermal_note=f"Stage 1 is fixed only during FIRE minimization; only stage-2 atoms receive new {temp:g} K velocities, and the full system then deposits at constant {temp:g} K."
+        deposition_thermal_note=f"Stage 1 is fixed during conservative SD/CG minimization; only stage-2 atoms receive new {temp:g} K velocities, and the full system then deposits at constant {temp:g} K."
     else:
         stage2_groups=""
         minimization_lock=""
         minimization_unlock=""
+        minimization_protocol="""min_style fire
+min_modify dmax 0.05
+minimize 0.0 1.0 20000 200000
+"""
         velocity_initialization="velocity all create 5.0 214587 mom yes rot yes dist gaussian"
         deposition_temperature_start=5.0
         deposition_label="Cao deposition"
@@ -388,9 +399,7 @@ print "Final box zhi: $(zhi)"
 {init('topology_output.lmp')}{stage2_groups}fix walllo all wall/lj93 zlo {deposition_lower} ${{epsilon}} ${{sigma}} ${{cutoff}} units box
 fix_modify walllo energy yes
 timestep {deposition_timestep}
-{minimization_lock}min_style fire
-min_modify dmax 0.05
-minimize 0.0 1.0 20000 200000
+{minimization_lock}{minimization_protocol}
 {minimization_unlock}variable optimization_step equal step
 variable optimization_pe equal pe
 variable optimization_fnorm equal fnorm
