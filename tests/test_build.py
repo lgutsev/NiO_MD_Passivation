@@ -71,6 +71,7 @@ def test_sequential_stage_preserves_existing_records(tmp_path,monkeypatch):
     for atom in before.sections["Atoms"]:
         if int(atom.fields[1])==0:
             atom.fields[6]=f"{float(atom.fields[6])+0.25:.8f}"
+        atom.fields.extend(("0","0","0"))
     primary=stage1/"held-300K.data"; write(before,primary)
     primary.write_text(
         primary.read_text().replace(
@@ -86,6 +87,8 @@ def test_sequential_stage_preserves_existing_records(tmp_path,monkeypatch):
     for section in ("Atoms","Bonds","Angles","Dihedrals","Impropers"):
         assert [r.fields for r in after.sections[section]][:before.count(section)]==[r.fields for r in before.sections[section]]
     assert after.count("Atoms")==before.count("Atoms")+45
+    assert {len(atom.fields) for atom in after.sections["Atoms"]}=={10}
+    assert all(atom.fields[-3:]==["0","0","0"] for atom in after.sections["Atoms"][before.count("Atoms"):])
     assert after.count("Velocities")==after.count("Atoms")
     assert [r.fields for r in after.sections["Velocities"]][:before.count("Atoms")]==[r.fields for r in before.sections["Velocities"]]
     assert all(r.fields[1:]==["0.0","0.0","0.0"] for r in after.sections["Velocities"][before.count("Atoms"):])

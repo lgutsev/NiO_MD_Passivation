@@ -61,6 +61,9 @@ def validate(
         raise ValueError("packing is incomplete; topology_output.lmp was not produced. Run: packmol < packmol.inp")
     data=parse(topology); manifest=json.loads((folder/"assembly_manifest.json").read_text())
     atoms=data.sections["Atoms"]; ids=[int(r.fields[0]) for r in atoms]; by_id={int(r.fields[0]):r for r in atoms}
+    atom_widths={len(r.fields) for r in atoms}
+    if len(atom_widths)!=1 or next(iter(atom_widths)) not in (7,10):
+        errors.append(f"Atoms records have inconsistent or unsupported field counts: {sorted(atom_widths)}")
     for sec in ("Atoms","Bonds","Angles","Dihedrals","Impropers"):
         declared=data.declared_counts.get(sec)
         if declared is not None and declared!=data.count(sec): errors.append(f"header declares {declared} {sec}, found {data.count(sec)}")
