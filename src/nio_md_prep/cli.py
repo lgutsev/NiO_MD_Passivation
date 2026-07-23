@@ -17,6 +17,17 @@ def main(argv=None)->int:
     i=sub.add_parser("refresh-inputs"); i.add_argument("config",type=Path); i.add_argument("--output",type=Path,required=True)
     i=sub.add_parser("validate"); i.add_argument("output",type=Path)
     i=sub.add_parser("prepare-sequential-stage2"); i.add_argument("config",type=Path); i.add_argument("--primary-final",type=Path,required=True); i.add_argument("--output",type=Path,required=True); i.add_argument("--packed-xyz",type=Path)
+    i=sub.add_parser("analyze-coverage")
+    i.add_argument("build_directory",type=Path)
+    i.add_argument("--trajectory",type=Path)
+    i.add_argument("--output",type=Path)
+    i.add_argument("--grid-spacing",type=float,default=0.20)
+    i.add_argument("--radius-scale",type=float,default=1.0)
+    i.add_argument("--last-frames",type=int,default=100,help="analyze the final N frames; use 0 for all frames")
+    i.add_argument("--stride",type=int,default=1)
+    i.add_argument("--blocks",type=int,default=5)
+    i.add_argument("--exclude-hydrogen",action="store_true")
+    i.add_argument("--timestep-fs",type=float)
     a=p.parse_args(argv)
     try:
         if a.command=="init-molecule":
@@ -31,6 +42,21 @@ def main(argv=None)->int:
         elif a.command=="build": build(a.config,a.output,packed_xyz=a.packed_xyz); print(f"Build plan written to {a.output}")
         elif a.command=="refresh-inputs": refresh_inputs(a.config,a.output); print(f"Stage inputs refreshed in {a.output}; simulation data were not modified")
         elif a.command=="validate": validate(a.output); print((a.output/"validation_report.txt").read_text(),end="")
+        elif a.command=="analyze-coverage":
+            from .analysis.coverage import analyze_coverage
+            summary=analyze_coverage(
+                a.build_directory,
+                trajectory=a.trajectory,
+                output=a.output,
+                grid_spacing=a.grid_spacing,
+                radius_scale=a.radius_scale,
+                last_frames=None if a.last_frames==0 else a.last_frames,
+                stride=a.stride,
+                blocks=a.blocks,
+                exclude_hydrogen=a.exclude_hydrogen,
+                timestep_fs=a.timestep_fs,
+            )
+            print(f"Coverage analysis written to {summary.parent}")
         else:
             build(a.config,a.output,primary_final=a.primary_final,packed_xyz=a.packed_xyz)
             print(f"Sequential stage 2 written to {a.output}")

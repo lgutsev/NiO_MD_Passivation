@@ -116,3 +116,23 @@ The user workflow is:
 8. Run LAMMPS on LONI; neither Codex nor LigParGen is installed or run there.
 
 LigParGen remains a manual external step. The legacy notebooks, historical examples, and paper Figure S27 are retained only as scientific provenance.
+
+## Coordinate-based coverage analysis
+
+Completed LAMMPS trajectories can be analyzed without OVITO screenshots or
+color-pixel counting:
+
+```bash
+python -m pip install -e '.[analysis]'
+nio-md-prep analyze-coverage prepared/me-4pacz-alone \
+  --trajectory equilibration-300K.lammpstrj \
+  --last-frames 100 \
+  --timestep-fs 1.0
+```
+
+The analyzer calculates the periodic projected van der Waals footprint of all
+ligands and reports total, uncovered, component-resolved, and overlapping
+coverage with block-based uncertainty. See
+[`docs/coverage-analysis.md`](docs/coverage-analysis.md) for the method,
+outputs, numerical-convergence check, and trajectory-specific timestep
+options.

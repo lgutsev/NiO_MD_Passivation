@@ -10,6 +10,13 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
 
+[project.optional-dependencies]
+analysis = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "matplotlib>=3.7",
+]
+
 [project.scripts]
 nio-md-prep = "nio_md_prep.cli:main"
 
