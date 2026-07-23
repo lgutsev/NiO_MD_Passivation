@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -p workq
+#SBATCH -p single
 #SBATCH -N 1
 #SBATCH -n 1
 #SBATCH -c 1
