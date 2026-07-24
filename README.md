@@ -499,28 +499,28 @@ All systems use the same 600 canonical exposed-Ni atom identities mapped from
 the authoritative pristine corrugated surface, including sequential systems
 whose NiO coordinates have already evolved during stage 1.
 
-Two additional independent 300 K deposition seeds are provided for the
-Me-4PACz baseline, DCZ-4P and MeO-2PACz CoSAM systems, and their corresponding
-sequential systems. Each sequential replicate uses its own independently
-deposited Me-4PACz substrate:
+The existing builders and runners can also write an independent replicate
+tree. Set `PREPARED_ROOT` on every stage and provide new random seeds only to
+the two build stages. For example, seed 02 uses:
 
 ```bash
-sbatch scripts/build_replicate_primary_cosam.sbatch
-sbatch scripts/run_replicate_primary_deposition.sbatch
-sbatch scripts/run_replicate_primary_hold_300K.sbatch
-sbatch scripts/run_replicate_primary_hold_400K.sbatch
-sbatch scripts/build_replicate_sequential.sbatch
-sbatch scripts/run_replicate_sequential_deposition.sbatch
-sbatch scripts/run_replicate_sequential_hold_300K.sbatch
-sbatch scripts/run_replicate_sequential_hold_400K.sbatch
+sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02,PACKMOL_SEED=202607242,VELOCITY_SEED=31415927 scripts/build_real_systems.sbatch
+sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02 scripts/run_deposition_array.sbatch
+sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02 scripts/run_hold_array.sbatch
+sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02 scripts/run_hold_400K_array.sbatch
+
+sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02,PACKMOL_SEED=202608242,VELOCITY_SEED=31416927 scripts/build_sequential_systems.sbatch
+sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02 scripts/run_sequential_deposition_array.sbatch
+sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02 scripts/run_sequential_hold_array.sbatch
+sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02 scripts/run_sequential_hold_400K_array.sbatch
 ```
 
 The 300 and 400 K hold arrays are independent branches from each replicate's
 `deposited.data` and may be submitted concurrently after deposition finishes.
 
 See [`docs/interfacial-analysis.md`](docs/interfacial-analysis.md) for the
-definitions, cutoff policy, replicate layout, output sheets, and
-interpretation limits.
+definitions, cutoff policy, seed-03 values, output sheets, and interpretation
+limits.
 
 ## Repository map
 

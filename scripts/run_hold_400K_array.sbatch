@@ -31,7 +31,8 @@ systems=(
 )
 
 name="${systems[${SLURM_ARRAY_TASK_ID}]}"
-run_directory="${SLURM_SUBMIT_DIR}/prepared/${name}"
+prepared_root="${PREPARED_ROOT:-prepared}"
+run_directory="${SLURM_SUBMIT_DIR}/${prepared_root}/${name}"
 
 if [[ ! -s "${run_directory}/deposited.data" ]]; then
     echo "ERROR: ${run_directory}/deposited.data is missing; finish deposition first." >&2

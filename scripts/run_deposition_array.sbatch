@@ -31,7 +31,8 @@ systems=(
 )
 
 name="${systems[${SLURM_ARRAY_TASK_ID}]}"
-run_directory="${SLURM_SUBMIT_DIR}/prepared/${name}"
+prepared_root="${PREPARED_ROOT:-prepared}"
+run_directory="${SLURM_SUBMIT_DIR}/${prepared_root}/${name}"
 
 if [[ ! -s "${run_directory}/topology_output.lmp" ]]; then
     echo "ERROR: ${run_directory}/topology_output.lmp is missing; run the build job first." >&2
