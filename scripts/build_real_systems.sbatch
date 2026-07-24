@@ -30,7 +30,7 @@ echo "Python: $(python --version 2>&1)"
 echo "Packmol: $(command -v packmol)"
 echo "LAMMPS: $(command -v lmp_mpi)"
 
-systems=(
+default_systems=(
     me-4pacz-alone
     me-4pacz-meo-2pacz-cosam
     me-4pacz-meo-4padbc-cosam
@@ -38,19 +38,35 @@ systems=(
     me-4pacz-high-dose
 )
 
-mkdir -p prepared
+if [[ -n "${SYSTEMS:-}" ]]; then
+    read -r -a systems <<< "${SYSTEMS}"
+else
+    systems=("${default_systems[@]}")
+fi
+prepared_root="${PREPARED_ROOT:-prepared}"
+mkdir -p "${prepared_root}"
 
 for name in "${systems[@]}"; do
     echo "BUILDING: ${name}"
-    nio-md-prep build "studies/${name}.toml" --output "prepared/${name}"
+    build_args=(
+        "studies/${name}.toml"
+        --output "${prepared_root}/${name}"
+    )
+    if [[ -n "${PACKMOL_SEED:-}" ]]; then
+        build_args+=(--packmol-seed "${PACKMOL_SEED}")
+    fi
+    if [[ -n "${VELOCITY_SEED:-}" ]]; then
+        build_args+=(--velocity-seed "${VELOCITY_SEED}")
+    fi
+    nio-md-prep build "${build_args[@]}"
 
     echo "VALIDATING: ${name}"
-    nio-md-prep validate "prepared/${name}"
+    nio-md-prep validate "${prepared_root}/${name}"
 
-    if [[ ! -s "prepared/${name}/topology_output.lmp" ]]; then
-        echo "ERROR: prepared/${name}/topology_output.lmp was not produced." >&2
+    if [[ ! -s "${prepared_root}/${name}/topology_output.lmp" ]]; then
+        echo "ERROR: ${prepared_root}/${name}/topology_output.lmp was not produced." >&2
         exit 1
     fi
 done
 
-echo "All five primary-deposition systems were built and deposition-smoke validated."
+echo "All requested primary-deposition systems were built and validated."
