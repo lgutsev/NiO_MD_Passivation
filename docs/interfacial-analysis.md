@@ -239,14 +239,18 @@ previous stage:
 sbatch scripts/build_replicate_primary_cosam.sbatch
 sbatch scripts/run_replicate_primary_deposition.sbatch
 sbatch scripts/run_replicate_primary_hold_300K.sbatch
+sbatch scripts/run_replicate_primary_hold_400K.sbatch
 
 sbatch scripts/build_replicate_sequential.sbatch
 sbatch scripts/run_replicate_sequential_deposition.sbatch
 sbatch scripts/run_replicate_sequential_hold_300K.sbatch
+sbatch scripts/run_replicate_sequential_hold_400K.sbatch
 ```
 
-The scripts never submit the next stage automatically and refuse to overwrite
-completed outputs.
+For each primary or sequential replicate, the 300 and 400 K arrays are
+independent branches from the same `deposited.data`; they may run concurrently
+once deposition is complete. The scripts never submit the next stage
+automatically and refuse to overwrite completed outputs.
 
 ## Interpretation boundary
 

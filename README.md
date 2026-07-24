@@ -508,10 +508,15 @@ deposited Me-4PACz substrate:
 sbatch scripts/build_replicate_primary_cosam.sbatch
 sbatch scripts/run_replicate_primary_deposition.sbatch
 sbatch scripts/run_replicate_primary_hold_300K.sbatch
+sbatch scripts/run_replicate_primary_hold_400K.sbatch
 sbatch scripts/build_replicate_sequential.sbatch
 sbatch scripts/run_replicate_sequential_deposition.sbatch
 sbatch scripts/run_replicate_sequential_hold_300K.sbatch
+sbatch scripts/run_replicate_sequential_hold_400K.sbatch
 ```
+
+The 300 and 400 K hold arrays are independent branches from each replicate's
+`deposited.data` and may be submitted concurrently after deposition finishes.
 
 See [`docs/interfacial-analysis.md`](docs/interfacial-analysis.md) for the
 definitions, cutoff policy, replicate layout, output sheets, and
