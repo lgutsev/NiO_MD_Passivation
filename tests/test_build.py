@@ -156,8 +156,9 @@ def test_generated_stage_inputs_are_ordered_and_restartable(tmp_path):
     assert deposition.count("fix walllo all wall/lj93")==1
     assert "fix walllo all wall/lj93 zlo EDGE" in deposition
     assert "fix_modify walllo energy yes" in deposition
-    assert "min_style fire" in deposition
-    assert "minimize 0.0 1.0 20000 200000" in deposition
+    assert "min_style cg" in deposition
+    assert "min_modify dmax 0.05 line quadratic" in deposition
+    assert "minimize 0.0 1.0 10000 100000" in deposition
     assert deposition.index("minimize ") < deposition.index("file optimization-summary.txt screen yes") < deposition.index("write_data optimized.data nocoeff") < deposition.index("reset_timestep 0")
     assert "write_restart optimized.restart" in deposition
     assert "write_dump all custom optimized.lammpstrj" in deposition
