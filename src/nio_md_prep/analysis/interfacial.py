@@ -17,6 +17,7 @@ import json
 import math
 import re
 
+from ..config import ROOT
 from ..lammps import DataFile, parse
 from .coverage import (
     Component,
@@ -49,6 +50,7 @@ class InterfacialTopology:
     atom_coordinates: dict[int, tuple[float, float, float]]
     lateral_bounds: tuple[tuple[float, float], tuple[float, float]]
     surface_coordination_cutoff: float
+    surface_site_source: str
 
 
 def _dependencies() -> tuple[Any, Any, Any]:
@@ -201,6 +203,87 @@ def _static_exposed_ni_sites(
     return tuple(sorted(selected))
 
 
+def _canonical_exposed_ni_sites(
+    data: DataFile,
+    atom_elements: dict[int, str],
+    atom_molecules: dict[int, int],
+    cutoff: float,
+) -> tuple[tuple[int, ...], str]:
+    """Map one canonical pristine-slab site selection into an assembled system."""
+    reference_path = (
+        ROOT / "inputs" / "surfaces" / "corrugated-nio-110" / "surface.lmp"
+    )
+    if not reference_path.is_file():
+        raise FileNotFoundError(
+            f"canonical corrugated NiO reference is missing: {reference_path}"
+        )
+    reference = parse(reference_path)
+    reference_type_elements = load_type_elements(reference_path)
+    reference_rows = reference.sections["Atoms"]
+    reference_elements = {
+        int(row.fields[0]): reference_type_elements[int(row.fields[2])]
+        for row in reference_rows
+    }
+    reference_molecules = {
+        int(row.fields[0]): int(row.fields[1]) for row in reference_rows
+    }
+    reference_coordinates = {
+        int(row.fields[0]): tuple(map(float, row.fields[4:7]))
+        for row in reference_rows
+    }
+    selected_reference_ids = set(
+        _static_exposed_ni_sites(
+            reference,
+            reference_elements,
+            reference_molecules,
+            reference_coordinates,
+            cutoff,
+        )
+    )
+    reference_surface_rows = [
+        row for row in reference_rows if int(row.fields[1]) == 0
+    ]
+    assembled_surface_rows = [
+        row for row in data.sections["Atoms"] if int(row.fields[1]) == 0
+    ]
+    if len(assembled_surface_rows) != len(reference_surface_rows):
+        coordinates = {
+            int(row.fields[0]): tuple(map(float, row.fields[4:7]))
+            for row in data.sections["Atoms"]
+        }
+        return (
+            _static_exposed_ni_sites(
+                data,
+                atom_elements,
+                atom_molecules,
+                coordinates,
+                cutoff,
+            ),
+            "topology_fallback_for_noncanonical_surface",
+        )
+    selected = []
+    for reference_row, assembled_row in zip(
+        reference_surface_rows, assembled_surface_rows
+    ):
+        reference_id = int(reference_row.fields[0])
+        assembled_id = int(assembled_row.fields[0])
+        if reference_elements[reference_id] != atom_elements[assembled_id]:
+            raise ValueError(
+                "assembled surface atom order does not match the canonical "
+                "corrugated NiO reference"
+            )
+        if atom_molecules[assembled_id] != 0:
+            raise ValueError("canonical surface mapping reached a ligand atom")
+        if reference_id in selected_reference_ids:
+            selected.append(assembled_id)
+    if len(selected) != len(selected_reference_ids):
+        raise ValueError("canonical exposed-Ni mapping is incomplete")
+    return (
+        tuple(selected),
+        str(reference_path.relative_to(ROOT)),
+    )
+
+
 def load_interfacial_topology(
     build_directory: Path,
     *,
@@ -281,11 +364,10 @@ def load_interfacial_topology(
                 ),
             )
         )
-    exposed_sites = _static_exposed_ni_sites(
+    exposed_sites, surface_site_source = _canonical_exposed_ni_sites(
         data,
         atom_elements,
         atom_molecules,
-        atom_coordinates,
         surface_coordination_cutoff,
     )
     return InterfacialTopology(
@@ -297,6 +379,7 @@ def load_interfacial_topology(
         atom_coordinates=atom_coordinates,
         lateral_bounds=(data.bounds["x"], data.bounds["y"]),
         surface_coordination_cutoff=surface_coordination_cutoff,
+        surface_site_source=surface_site_source,
     )
 
 
@@ -349,6 +432,49 @@ def _periodic_centroid(np, positions, lx: float, ly: float):
     )
     centroid = unwrapped.mean(axis=0)
     return centroid
+
+
+def _unwrap_xy(np, positions, lx: float, ly: float):
+    positions = np.asarray(positions, dtype=float)
+    reference = positions[0].copy()
+    unwrapped = positions.copy()
+    unwrapped[:, 0] = reference[0] + _minimum_image(
+        positions[:, 0] - reference[0], lx
+    )
+    unwrapped[:, 1] = reference[1] + _minimum_image(
+        positions[:, 1] - reference[1], ly
+    )
+    return unwrapped
+
+
+def _plane_orientation(np, positions, lx: float, ly: float):
+    """Return plane-normal tilt and P2; 0 degrees means a flat molecular plane."""
+    positions = _unwrap_xy(np, positions, lx, ly)
+    if len(positions) < 3:
+        return math.nan, math.nan
+    centered = positions - positions.mean(axis=0)
+    if np.linalg.matrix_rank(centered) < 2:
+        return math.nan, math.nan
+    _, _, vectors = np.linalg.svd(centered, full_matrices=False)
+    normal = vectors[-1]
+    cosine = min(1.0, max(0.0, float(abs(normal[2]))))
+    tilt = math.degrees(math.acos(cosine))
+    p2 = 0.5 * (3.0 * cosine * cosine - 1.0)
+    return tilt, p2
+
+
+def _anchor_axis_orientation(np, phosphorus_positions, lx: float, ly: float):
+    """Return multi-anchor P--P axis tilt and absolute vertical separation."""
+    if len(phosphorus_positions) < 2:
+        return math.nan, math.nan
+    positions = _unwrap_xy(np, phosphorus_positions, lx, ly)
+    vector = positions[-1] - positions[0]
+    horizontal = float(math.hypot(vector[0], vector[1]))
+    vertical = float(abs(vector[2]))
+    norm = math.hypot(horizontal, vertical)
+    if norm <= 0:
+        return math.nan, math.nan
+    return math.degrees(math.atan2(horizontal, vertical)), vertical
 
 
 def _surface_tree_for_frame(np, frame, lookup, topology):
@@ -507,7 +633,8 @@ def analyze_interfacial_structure(
     last_frames: int | None = 100,
     stride: int = 1,
     blocks: int = 5,
-    contact_cutoff: float | None = None,
+    contact_cutoff: float | None = 3.25,
+    sensitivity_cutoffs: tuple[float, ...] = (3.0, 3.25, 3.5),
     surface_coordination_cutoff: float = 2.8,
     persistence_threshold: float = 0.50,
     z_min: float = -5.0,
@@ -526,6 +653,8 @@ def analyze_interfacial_structure(
         raise ValueError("last_frames must be positive or None")
     if contact_cutoff is not None and contact_cutoff <= 0:
         raise ValueError("contact_cutoff must be positive or None")
+    if not sensitivity_cutoffs or any(value <= 0 for value in sensitivity_cutoffs):
+        raise ValueError("sensitivity cutoffs must contain positive values")
     if not 0.0 < persistence_threshold <= 1.0:
         raise ValueError("persistence_threshold must be in (0, 1]")
     if not z_min < z_max or z_bin_width <= 0:
@@ -564,7 +693,10 @@ def analyze_interfacial_structure(
     if contact_cutoff is None:
         contact_cutoff = inferred
     else:
-        cutoff_method = "user_supplied"
+        cutoff_method = "fixed_common_cutoff"
+    sensitivity_cutoffs = tuple(
+        sorted({float(contact_cutoff), *(float(value) for value in sensitivity_cutoffs)})
+    )
 
     with (output / "contact_distance_histogram.csv").open(
         "w", newline="", encoding="utf-8"
@@ -594,10 +726,30 @@ def analyze_interfacial_structure(
             "mean_anchored_terminals": [],
             "tilt_degrees": [],
             "orientational_P2": [],
+            "plane_normal_tilt_degrees": [],
+            "plane_alignment_P2": [],
+            "anchor_axis_tilt_degrees": [],
+            "anchor_vertical_separation_angstrom": [],
             "phosphorus_height_angstrom": [],
             "core_height_angstrom": [],
             "core_minus_phosphorus_height_angstrom": [],
+            "bound_phosphorus_height_angstrom": [],
+            "unbound_phosphorus_height_angstrom": [],
+            "bound_core_height_angstrom": [],
+            "unbound_core_height_angstrom": [],
+            "bound_tilt_degrees": [],
+            "unbound_tilt_degrees": [],
             "nearest_neighbor_distance_angstrom": [],
+        }
+        for component in topology.components
+    }
+    sensitivity_series = {
+        component.key: {
+            cutoff: {
+                "bound_fraction_percent": [],
+                "mean_anchored_terminals": [],
+            }
+            for cutoff in sensitivity_cutoffs
         }
         for component in topology.components
     }
@@ -668,18 +820,30 @@ def analyze_interfacial_structure(
         for component in topology.components:
             molecule_bound = []
             terminal_counts = []
+            sensitivity_terminal_counts = {
+                cutoff: [] for cutoff in sensitivity_cutoffs
+            }
             tilts = []
             p2_values = []
+            plane_tilts = []
+            plane_p2_values = []
+            anchor_axis_tilts = []
+            anchor_vertical_separations = []
             p_heights = []
             core_heights = []
             relative_heights = []
             molecules = molecules_by_component[component.key]
             for molecule in molecules:
                 terminal_contacts = 0
+                terminal_minimum_distances = []
                 molecule_sites: set[int] = set()
                 for terminal in molecule.terminal_oxygen_ids:
                     positions = _positions_for_ids(np, frame, lookup, terminal)
                     positions = _wrap_xy(np, positions, frame.bounds)
+                    nearest_distances, _ = tree3d.query(positions, k=1)
+                    terminal_minimum_distances.append(
+                        float(np.min(nearest_distances))
+                    )
                     neighbors = tree3d.query_ball_point(
                         positions, float(contact_cutoff)
                     )
@@ -697,6 +861,13 @@ def analyze_interfacial_structure(
                 bound_sequences[molecule.molecule_id].append(bound)
                 molecule_bound.append(bound)
                 terminal_counts.append(terminal_contacts)
+                for cutoff in sensitivity_cutoffs:
+                    sensitivity_terminal_counts[cutoff].append(
+                        sum(
+                            distance <= cutoff
+                            for distance in terminal_minimum_distances
+                        )
+                    )
 
                 p_positions = _positions_for_ids(
                     np, frame, lookup, molecule.phosphorus_ids
@@ -706,6 +877,12 @@ def analyze_interfacial_structure(
                 )
                 p_centroid = _periodic_centroid(np, p_positions, lx, ly)
                 core_centroid = _periodic_centroid(np, core_positions, lx, ly)
+                plane_tilt, plane_p2 = _plane_orientation(
+                    np, core_positions, lx, ly
+                )
+                anchor_axis_tilt, anchor_vertical_separation = (
+                    _anchor_axis_orientation(np, p_positions, lx, ly)
+                )
                 vector = core_centroid - p_centroid
                 vector[0] = _minimum_image(vector[0], lx)
                 vector[1] = _minimum_image(vector[1], ly)
@@ -737,8 +914,14 @@ def analyze_interfacial_structure(
                 core_surface_z = float(site_positions[nearest_core_site, 2])
                 tilts.append(tilt)
                 p2_values.append(p2)
-                p_heights.append(float(p_centroid[2] - p_surface_z))
-                core_heights.append(float(core_centroid[2] - core_surface_z))
+                plane_tilts.append(plane_tilt)
+                plane_p2_values.append(plane_p2)
+                anchor_axis_tilts.append(anchor_axis_tilt)
+                anchor_vertical_separations.append(anchor_vertical_separation)
+                p_height = float(p_centroid[2] - p_surface_z)
+                core_height = float(core_centroid[2] - core_surface_z)
+                p_heights.append(p_height)
+                core_heights.append(core_height)
                 relative_heights.append(float(core_centroid[2] - p_centroid[2]))
                 component_centers[component.key].append(
                     (
@@ -767,10 +950,66 @@ def analyze_interfacial_structure(
                 "mean_anchored_terminals": _mean_or_nan(np, terminal_counts),
                 "tilt_degrees": _mean_or_nan(np, tilts),
                 "orientational_P2": _mean_or_nan(np, p2_values),
+                "plane_normal_tilt_degrees": _mean_or_nan(np, plane_tilts),
+                "plane_alignment_P2": _mean_or_nan(np, plane_p2_values),
+                "anchor_axis_tilt_degrees": _mean_or_nan(
+                    np, anchor_axis_tilts
+                ),
+                "anchor_vertical_separation_angstrom": _mean_or_nan(
+                    np, anchor_vertical_separations
+                ),
                 "phosphorus_height_angstrom": _mean_or_nan(np, p_heights),
                 "core_height_angstrom": _mean_or_nan(np, core_heights),
                 "core_minus_phosphorus_height_angstrom": _mean_or_nan(
                     np, relative_heights
+                ),
+                "bound_phosphorus_height_angstrom": _mean_or_nan(
+                    np,
+                    [
+                        value
+                        for value, bound in zip(p_heights, molecule_bound)
+                        if bound
+                    ],
+                ),
+                "unbound_phosphorus_height_angstrom": _mean_or_nan(
+                    np,
+                    [
+                        value
+                        for value, bound in zip(p_heights, molecule_bound)
+                        if not bound
+                    ],
+                ),
+                "bound_core_height_angstrom": _mean_or_nan(
+                    np,
+                    [
+                        value
+                        for value, bound in zip(core_heights, molecule_bound)
+                        if bound
+                    ],
+                ),
+                "unbound_core_height_angstrom": _mean_or_nan(
+                    np,
+                    [
+                        value
+                        for value, bound in zip(core_heights, molecule_bound)
+                        if not bound
+                    ],
+                ),
+                "bound_tilt_degrees": _mean_or_nan(
+                    np,
+                    [
+                        value
+                        for value, bound in zip(tilts, molecule_bound)
+                        if bound
+                    ],
+                ),
+                "unbound_tilt_degrees": _mean_or_nan(
+                    np,
+                    [
+                        value
+                        for value, bound in zip(tilts, molecule_bound)
+                        if not bound
+                    ],
                 ),
                 "nearest_neighbor_distance_angstrom": _nearest_neighbor_mean(
                     np, component_centers[component.key], lx, ly
@@ -779,6 +1018,17 @@ def analyze_interfacial_structure(
             for metric, value in component_values.items():
                 component_series[component.key][metric].append(value)
                 row[f"{component.key}_{metric}"] = value
+            for cutoff, counts in sensitivity_terminal_counts.items():
+                sensitivity_series[component.key][cutoff][
+                    "bound_fraction_percent"
+                ].append(
+                    100.0 * sum(value > 0 for value in counts) / len(counts)
+                    if counts
+                    else math.nan
+                )
+                sensitivity_series[component.key][cutoff][
+                    "mean_anchored_terminals"
+                ].append(_mean_or_nan(np, counts))
             maximum_terminals = max(
                 (len(molecule.terminal_oxygen_ids) for molecule in molecules),
                 default=0,
@@ -984,12 +1234,27 @@ def analyze_interfacial_structure(
                 metric: _statistics(np, values, blocks)
                 for metric, values in component_series[component.key].items()
             },
+            "contact_cutoff_sensitivity": {
+                f"{cutoff:g}": {
+                    metric: _statistics(np, values, blocks)
+                    for metric, values in metrics.items()
+                }
+                for cutoff, metrics in sensitivity_series[
+                    component.key
+                ].items()
+            },
             "terminal_state_populations_percent": {
                 str(count): _statistics(np, values, blocks)
                 for count, values in terminal_series[component.key].items()
             },
         }
 
+    manifest_path = build_directory / "assembly_manifest.json"
+    manifest = (
+        json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest_path.is_file()
+        else {}
+    )
     summary = {
         "method": "anchor_resolved_interfacial_structure",
         "trajectory": str(trajectory_path),
@@ -1001,12 +1266,19 @@ def analyze_interfacial_structure(
         "contact_cutoff_angstrom": float(contact_cutoff),
         "contact_cutoff_method": cutoff_method,
         "auto_inferred_contact_cutoff_angstrom": float(inferred),
+        "contact_sensitivity_cutoffs_angstrom": list(sensitivity_cutoffs),
         "surface_coordination_cutoff_angstrom": surface_coordination_cutoff,
         "surface_site_definition": (
-            "molecule-0 Ni in upper half of slab with fewer than six "
-            "molecule-0 O neighbors within the coordination cutoff"
+            "canonical exposed-Ni identities selected once from the "
+            "authoritative pristine corrugated NiO slab and mapped by "
+            "molecule-0 atom order into every assembled topology"
         ),
+        "surface_site_source": topology.surface_site_source,
         "surface_site_count": len(topology.surface_site_ids),
+        "random_seeds": {
+            "packmol_seed": manifest.get("packmol_seed"),
+            "velocity_seed": manifest.get("velocity_seed"),
+        },
         "persistence_threshold": persistence_threshold,
         "timestep_fs": timestep_fs,
         "frame_spacing_ps": frame_spacing_ps,
