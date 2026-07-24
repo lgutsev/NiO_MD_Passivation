@@ -13,10 +13,10 @@ def main(argv=None)->int:
     p=argparse.ArgumentParser(prog="nio-md-prep"); sub=p.add_subparsers(dest="command",required=True)
     i=sub.add_parser("init-molecule"); i.add_argument("name")
     i=sub.add_parser("inspect-molecule"); i.add_argument("name")
-    i=sub.add_parser("build"); i.add_argument("config",type=Path); i.add_argument("--output",type=Path,required=True); i.add_argument("--packed-xyz",type=Path)
+    i=sub.add_parser("build"); i.add_argument("config",type=Path); i.add_argument("--output",type=Path,required=True); i.add_argument("--packed-xyz",type=Path); i.add_argument("--packmol-seed",type=int); i.add_argument("--velocity-seed",type=int)
     i=sub.add_parser("refresh-inputs"); i.add_argument("config",type=Path); i.add_argument("--output",type=Path,required=True)
     i=sub.add_parser("validate"); i.add_argument("output",type=Path)
-    i=sub.add_parser("prepare-sequential-stage2"); i.add_argument("config",type=Path); i.add_argument("--primary-final",type=Path,required=True); i.add_argument("--output",type=Path,required=True); i.add_argument("--packed-xyz",type=Path)
+    i=sub.add_parser("prepare-sequential-stage2"); i.add_argument("config",type=Path); i.add_argument("--primary-final",type=Path,required=True); i.add_argument("--output",type=Path,required=True); i.add_argument("--packed-xyz",type=Path); i.add_argument("--packmol-seed",type=int); i.add_argument("--velocity-seed",type=int)
     i=sub.add_parser("analyze-coverage")
     i.add_argument("build_directory",type=Path)
     i.add_argument("--trajectory",type=Path)
@@ -38,7 +38,8 @@ def main(argv=None)->int:
     i.add_argument("--last-frames",type=int,default=100,help="analyze the final N frames; use 0 for all frames")
     i.add_argument("--stride",type=int,default=1)
     i.add_argument("--blocks",type=int,default=5)
-    i.add_argument("--contact-cutoff",default="auto",help="Ni-phosphonate-O cutoff in A, or 'auto'")
+    i.add_argument("--contact-cutoff",default="3.25",help="Ni-phosphonate-O cutoff in A, or 'auto' (default: 3.25)")
+    i.add_argument("--sensitivity-cutoffs",default="3.0,3.25,3.5",help="comma-separated contact cutoffs for bound-fraction sensitivity")
     i.add_argument("--surface-coordination-cutoff",type=float,default=2.8)
     i.add_argument("--persistence-threshold",type=float,default=0.50)
     i.add_argument("--z-min",type=float,default=-5.0)
@@ -61,7 +62,7 @@ def main(argv=None)->int:
             folder,m=molecule_manifest(a.name); path=folder/m["files"].get("ligpargen","ligpargen.lmp")
             if not path.exists(): raise missing_ligpargen(path,f"nio-md-prep inspect-molecule {a.name}")
             d=parse(path); symbols=elements(d); print(f"{m['molecule']['display_name']}: {d.count('Atoms')} atoms, charge {charge(d):.8f}, elements {' '.join(symbols)}")
-        elif a.command=="build": build(a.config,a.output,packed_xyz=a.packed_xyz); print(f"Build plan written to {a.output}")
+        elif a.command=="build": build(a.config,a.output,packed_xyz=a.packed_xyz,packmol_seed=a.packmol_seed,velocity_seed=a.velocity_seed); print(f"Build plan written to {a.output}")
         elif a.command=="refresh-inputs": refresh_inputs(a.config,a.output); print(f"Stage inputs refreshed in {a.output}; simulation data were not modified")
         elif a.command=="validate": validate(a.output); print((a.output/"validation_report.txt").read_text(),end="")
         elif a.command=="analyze-coverage":
@@ -102,6 +103,11 @@ def main(argv=None)->int:
                 stride=a.stride,
                 blocks=a.blocks,
                 contact_cutoff=contact_cutoff,
+                sensitivity_cutoffs=tuple(
+                    float(value)
+                    for value in a.sensitivity_cutoffs.split(",")
+                    if value.strip()
+                ),
                 surface_coordination_cutoff=a.surface_coordination_cutoff,
                 persistence_threshold=a.persistence_threshold,
                 z_min=a.z_min,
@@ -117,7 +123,7 @@ def main(argv=None)->int:
             workbook=create_interfacial_workbook(a.prepared_root,a.output)
             print(f"Interfacial workbook written to {workbook}")
         else:
-            build(a.config,a.output,primary_final=a.primary_final,packed_xyz=a.packed_xyz)
+            build(a.config,a.output,primary_final=a.primary_final,packed_xyz=a.packed_xyz,packmol_seed=a.packmol_seed,velocity_seed=a.velocity_seed)
             print(f"Sequential stage 2 written to {a.output}")
     except (ValueError,FileNotFoundError,RuntimeError) as e:
         p.exit(2,f"error: {e}\n")
