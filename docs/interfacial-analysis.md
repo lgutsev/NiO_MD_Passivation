@@ -231,10 +231,12 @@ checking the previous stage:
 sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02,PACKMOL_SEED=202607242,VELOCITY_SEED=31415927 scripts/build_real_systems.sbatch
 sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02 scripts/run_deposition_array.sbatch
 sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02 scripts/run_hold_array.sbatch
+sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02 scripts/run_hold_400K_array.sbatch
 
 sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02,PACKMOL_SEED=202608242,VELOCITY_SEED=31416927 scripts/build_sequential_systems.sbatch
 sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02 scripts/run_sequential_deposition_array.sbatch
 sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02 scripts/run_sequential_hold_array.sbatch
+sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02 scripts/run_sequential_hold_400K_array.sbatch
 ```
 
 For seed 03, replace `seed-02` with `seed-03`, use primary seeds
@@ -242,7 +244,8 @@ For seed 03, replace `seed-02` with `seed-03`, use primary seeds
 `202608243`/`27183818`. Each sequential replicate automatically consumes the
 independently deposited and held Me-4PACz substrate under the same
 `PREPARED_ROOT`. The existing scripts still refuse to overwrite completed
-outputs.
+outputs. The 300 and 400 K holds are independent branches from the same
+`deposited.data` and may run concurrently after deposition.
 
 ## Interpretation boundary
 
