@@ -31,15 +31,19 @@ nio-md-prep analyze-interface prepared/me-4pacz-then-dcz-4p \
     --timestep-fs 0.5
 ```
 
-The default contact cutoff is `auto`. The analyzer builds the distribution of
-the nearest exposed-Ni distance for every phosphonate O atom and chooses the
-first smoothed minimum after the contact peak. Both the distribution and the
-selected cutoff are saved. A fixed sensitivity-test cutoff can be requested:
+The default contact cutoff is the common value `3.25 Å`. The workbook also
+reports bound fractions at `3.0`, `3.25`, and `3.5 Å`, so qualitative
+conclusions can be checked against the contact definition without rerunning
+the trajectory analysis. The analyzer still records the nearest-distance
+distribution and an automatically inferred minimum as diagnostics.
+
+The main cutoff and sensitivity grid can be overridden:
 
 ```bash
 nio-md-prep analyze-interface prepared/me-4pacz-then-dcz-4p \
     --trajectory hold-300K.lammpstrj \
-    --contact-cutoff 3.75
+    --contact-cutoff 3.25 \
+    --sensitivity-cutoffs 3.0,3.25,3.5
 ```
 
 Important controls include:
@@ -49,8 +53,8 @@ Important controls include:
 - `--blocks N`: block count for within-trajectory SEM.
 - `--persistence-threshold 0.50`: fraction of frames required for a molecule
   to be classified as persistently bound.
-- `--surface-coordination-cutoff 2.8`: Ni-O neighbor cutoff used only to
-  identify under-coordinated upper-surface Ni sites.
+- `--surface-coordination-cutoff 2.8`: Ni-O neighbor cutoff used once on the
+  canonical pristine surface to define the fixed exposed-Ni identities.
 - `--rdf-rmax 15.0` and `--rdf-bin-width 0.25`: lateral RDF range and binning.
 - `--z-min`, `--z-max`, and `--z-bin-width`: local-height density grid.
 
@@ -60,11 +64,15 @@ Important controls include:
 
 ### Exposed Ni site
 
-The static topology is used to select molecule-0 Ni atoms in the upper half
-of the slab with fewer than six molecule-0 O neighbors within the surface
-coordination cutoff. This coordination-based definition follows the
-corrugated upper surface rather than selecting only atoms near one global
-maximum-z plane.
+The authoritative pristine corrugated-NiO topology is used once to select
+molecule-0 Ni atoms in the upper half of the slab with fewer than six
+molecule-0 O neighbors. Those canonical atom identities are mapped by
+molecule-0 atom order into every CoSAM, sequential, compressed, relaxed, and
+independent-seed topology. Distances use the actual coordinates in each
+trajectory, but the chemical site identities and denominator remain fixed.
+
+This avoids reclassifying thermally distorted bulk Ni atoms as new surface
+sites in sequential systems.
 
 ### Phosphonate terminal and bound molecule
 
@@ -108,6 +116,17 @@ P2 = (3 cos(theta)^2 - 1) / 2
 `P2 = 1` is upright and `P2 = -0.5` is flat. DCZ-4P has two terminal P atoms;
 their centroid is used as the anchor-side reference, so its tilt should be
 interpreted together with the zero/one/two-terminal populations.
+
+The component table additionally reports:
+
+- the normal of a least-squares plane through the graph-distant molecular
+  core (`0°` means that plane is parallel to the surface);
+- the P--P anchor-axis tilt for multi-phosphonate molecules;
+- the absolute vertical separation of the two anchor P atoms; and
+- bound-only and unbound-only height and tilt statistics.
+
+These descriptors are preferable to the single P-to-core vector when
+diagnosing whether bifunctional DCZ-4P lies above the primary SAM.
 
 ### Heights and density profiles
 
@@ -178,6 +197,8 @@ The workbook contains:
   temperature;
 - `Z Profiles`: local-height number-density data;
 - `Lateral RDF`: normalized pair-distribution data;
+- `Cutoff Sensitivity`: component bound fractions at the common 3.0, 3.25,
+  and 3.5 Å contact definitions;
 - `Methods`: definitions and interpretation limits.
 
 Rebuild the workbook from completed result directories without rereading the
@@ -191,9 +212,41 @@ nio-md-prep summarize-interface prepared \
 Submission-time controls use environment variables:
 
 ```bash
-sbatch --export=ALL,LAST_FRAMES=0,CONTACT_CUTOFF=auto,RDF_RMAX=15.0 \
+sbatch --export=ALL,LAST_FRAMES=0,CONTACT_CUTOFF=3.25,RDF_RMAX=15.0 \
     scripts/analyze_interface_holds.sbatch
 ```
+
+The batch search is recursive, so trajectories under
+`prepared/replicates/seed-*/` enter the same workbook with their Packmol and
+LAMMPS velocity seeds recorded.
+
+## Independent deposition seeds
+
+The original completed calculations are seed 01. Two additional statistically
+independent 300 K deposition histories are supplied as seeds 02 and 03 for:
+
+- Me-4PACz alone;
+- Me-4PACz/DCZ-4P CoSAM;
+- Me-4PACz/MeO-2PACz CoSAM;
+- Me-4PACz followed by DCZ-4P; and
+- Me-4PACz followed by MeO-2PACz.
+
+Each sequential replicate uses the independently deposited and held Me-4PACz
+substrate from the same seed. Submit each stage only after checking the
+previous stage:
+
+```bash
+sbatch scripts/build_replicate_primary_cosam.sbatch
+sbatch scripts/run_replicate_primary_deposition.sbatch
+sbatch scripts/run_replicate_primary_hold_300K.sbatch
+
+sbatch scripts/build_replicate_sequential.sbatch
+sbatch scripts/run_replicate_sequential_deposition.sbatch
+sbatch scripts/run_replicate_sequential_hold_300K.sbatch
+```
+
+The scripts never submit the next stage automatically and refuse to overwrite
+completed outputs.
 
 ## Interpretation boundary
 
