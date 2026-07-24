@@ -91,8 +91,20 @@ def _fit_packed_molecules(
         cursor+=item["atoms"]*item["count"]
     return corrected,adjustments
 
-def _packmol(config: dict, templates: list[dict], output: Path, supplied: Path|None=None) -> tuple[Path,list[tuple[float,float,float]]|None,bool]:
-    lines=["tolerance 2.0", "filetype xyz", "output packed.xyz", "seed 202405367", ""]
+def _packmol(
+    config: dict,
+    templates: list[dict],
+    output: Path,
+    supplied: Path | None = None,
+) -> tuple[Path, list[tuple[float, float, float]] | None, bool]:
+    packmol_seed = int(config["_resolved_random"]["packmol_seed"])
+    lines=[
+        "tolerance 2.0",
+        "filetype xyz",
+        "output packed.xyz",
+        f"seed {packmol_seed}",
+        "",
+    ]
     for item in templates:
         lines += [f"structure {item['xyz'].name}", f"  number {item['count']}", f"  inside box {item['region']}", "end structure", ""]
         destination=output/item["xyz"].name
@@ -144,8 +156,34 @@ def _surface(data: DataFile, offsets: dict[str,int], ids: dict[str,int], molecul
         f=r.fields.copy(); f[0]=str(ids["atom"]+i+1); f[1]=str(molecule); f[2]=str(type_map[int(f[2])]); rows["Atoms"].append(Record(f,r.comment))
     return rows,{"atom":len(data.sections["Atoms"]),"molecule":0}
 
-def build(config_path: Path, output: Path, primary_final: Path|None=None, packed_xyz: Path|None=None) -> Path:
+def build(
+    config_path: Path,
+    output: Path,
+    primary_final: Path | None = None,
+    packed_xyz: Path | None = None,
+    packmol_seed: int | None = None,
+    velocity_seed: int | None = None,
+) -> Path:
     cfg=load(config_path); output.mkdir(parents=True,exist_ok=True)
+    configured_random=cfg.get("random",{})
+    resolved_packmol_seed=int(
+        configured_random.get("packmol_seed",202405367)
+        if packmol_seed is None else packmol_seed
+    )
+    resolved_velocity_seed=int(
+        configured_random.get("velocity_seed",214587)
+        if velocity_seed is None else velocity_seed
+    )
+    for label,value in (
+        ("Packmol",resolved_packmol_seed),
+        ("LAMMPS velocity",resolved_velocity_seed),
+    ):
+        if not 0 < value < 900000000:
+            raise ValueError(f"{label} seed must be between 1 and 899999999")
+    cfg["_resolved_random"]={
+        "packmol_seed":resolved_packmol_seed,
+        "velocity_seed":resolved_velocity_seed,
+    }
     protocol=cfg.get("study",{}).get("protocol","cosam")
     species=cfg.get("molecules",[])
     if not species or any("count" not in x for x in species): raise ValueError("every study molecule requires an explicit resolved count")
@@ -179,7 +217,7 @@ def build(config_path: Path, output: Path, primary_final: Path|None=None, packed
         manifests.append(manifest)
     packed,coords,packed_ok=_packmol(cfg,templates,output,packed_xyz)
     if coords is None:
-        plan={"status":"packing_incomplete","packmol_seed":202405367,"command":"packmol < packmol.inp","component_order":[t["slug"] for t in templates]+([] if primary_final else ["corrugated-nio-110"]),"molecules":[{"slug":t["slug"],"count":t["count"],"atoms_per_molecule":t["atoms"]} for t in templates]}
+        plan={"status":"packing_incomplete","packmol_seed":resolved_packmol_seed,"velocity_seed":resolved_velocity_seed,"command":"packmol < packmol.inp","component_order":[t["slug"] for t in templates]+([] if primary_final else ["corrugated-nio-110"]),"molecules":[{"slug":t["slug"],"count":t["count"],"atoms_per_molecule":t["atoms"]} for t in templates]}
         (output/"assembly_manifest.json").write_text(json.dumps(plan,indent=2)+"\n",encoding="utf-8")
         (output/"validation_report.txt").write_text("INCOMPLETE\nPackmol has not run; no scientifically usable topology was produced.\nRun: packmol < packmol.inp\n",encoding="utf-8")
         return output
@@ -201,7 +239,7 @@ def build(config_path: Path, output: Path, primary_final: Path|None=None, packed
         primary_atom_width=None
         preserve_primary_velocities=False
         ids={"atom":0,"bond":0,"angle":0,"dihedral":0,"improper":0}; types={k:0 for k in ids}; mol=0
-    cursor=0; type_map={"components":[],"surface":{},"packmol_seed":202405367}
+    cursor=0; type_map={"components":[],"surface":{},"packmol_seed":resolved_packmol_seed,"velocity_seed":resolved_velocity_seed}
     if primary_final:
         existing_atoms=result.sections["Atoms"]
         type_map["components"].append({"component":"stage1_primary","count":len({int(r.fields[1]) for r in existing_atoms if int(r.fields[1])>0}),"atoms_per_molecule":None,"charge":charge(result),"atom_ids":[min(int(r.fields[0]) for r in existing_atoms),max(int(r.fields[0]) for r in existing_atoms)],"molecule_ids":[0,max(int(r.fields[1]) for r in existing_atoms)],"types":{cat:[1,result.type_count(cat)] for cat in types if result.type_count(cat)}})
@@ -279,7 +317,7 @@ def build(config_path: Path, output: Path, primary_final: Path|None=None, packed
         report.update({"unrounded_concentration_mw_ratio":exact,"rounded_count_ratio":secondary["count"]/primary_count,"primary_reference_count":primary_count})
     (output/"ratio_report.json").write_text(json.dumps(report,indent=2)+"\n",encoding="utf-8")
     p=cfg.get("protocol",{}); manual=p.get("production_upper_wall")
-    policy=f'''\n[resolved_wall_policy]\nmode = "{"manual" if manual is not None else p.get("production_upper_wall_mode","auto")}"\nminimum = {float(p.get("production_upper_wall_min",120.0))}\nclearance = {float(p.get("production_wall_clearance",30.0))}\nrounding = {float(p.get("production_wall_rounding",10.0))}\nbox_margin = {float(p.get("production_box_margin",5.0))}\nmanual_override = {"true" if manual is not None else "false"}\n'''
+    policy=f'''\n[resolved_random]\npackmol_seed = {resolved_packmol_seed}\nvelocity_seed = {resolved_velocity_seed}\n\n[resolved_wall_policy]\nmode = "{"manual" if manual is not None else p.get("production_upper_wall_mode","auto")}"\nminimum = {float(p.get("production_upper_wall_min",120.0))}\nclearance = {float(p.get("production_wall_clearance",30.0))}\nrounding = {float(p.get("production_wall_rounding",10.0))}\nbox_margin = {float(p.get("production_box_margin",5.0))}\nmanual_override = {"true" if manual is not None else "false"}\n'''
     if manual is not None: policy+=f"manual_value = {float(manual)}\n"
     policy+='''\n[resolved_wall_results.decompress_300K]\nstatus = "DEFERRED"\nsource = "held-300K.data"\n\n[resolved_wall_results.decompress_400K]\nstatus = "DEFERRED"\nsource = "held-400K.data"\n\n[resolved_wall_results.equilibrate_300K]\nstatus = "DEFERRED"\nsource = "held-300K.data"\n\n[resolved_wall_results.anneal_400K]\nstatus = "DEFERRED"\nsource = "equilibrated-300K.data"\n'''
     (output/"resolved_config.toml").write_text(config_path.read_text(encoding="utf-8")+policy,encoding="utf-8")
@@ -335,6 +373,12 @@ def _write_input(output: Path,cfg:dict,data:DataFile)->None:
     configured_endpoint=p.get("deposition_wall_endpoint")
     zend=float(configured_endpoint) if configured_endpoint is not None else surface_top+float(p.get("wall_clearance",30.0))
     zstart=max(zend+100.0,data.bounds["z"][1]-5.0)
+    velocity_seed=int(
+        cfg.get("_resolved_random",cfg.get("resolved_random",cfg.get("random",{})))
+        .get("velocity_seed",214587)
+    )
+    if not 0 < velocity_seed < 900000000:
+        raise ValueError("LAMMPS velocity seed must be between 1 and 899999999")
     primary_atom_count=cfg.get("_sequential_primary_atom_count")
     sequential=primary_atom_count is not None
     if sequential:
@@ -351,7 +395,7 @@ min_style cg
 min_modify dmax 0.01 line backtrack
 minimize 0.0 1.0 20000 200000
 """
-        velocity_initialization=f"velocity stage2 create {temp} 214587 mom yes rot yes dist gaussian"
+        velocity_initialization=f"velocity stage2 create {temp} {velocity_seed} mom yes rot yes dist gaussian"
         deposition_temperature_start=temp
         deposition_label="Sequential stage-2 deposition onto equilibrated Me-4PACz"
         deposition_thermal_note=f"Stage 1 is fixed during conservative SD/CG minimization; only stage-2 atoms receive new {temp:g} K velocities, and the full system then deposits at constant {temp:g} K."
@@ -363,7 +407,7 @@ minimize 0.0 1.0 20000 200000
 min_modify dmax 0.05
 minimize 0.0 1.0 20000 200000
 """
-        velocity_initialization="velocity all create 5.0 214587 mom yes rot yes dist gaussian"
+        velocity_initialization=f"velocity all create 5.0 {velocity_seed} mom yes rot yes dist gaussian"
         deposition_temperature_start=5.0
         deposition_label="Cao deposition"
         deposition_thermal_note=f"The full system starts at 5 K and heats continuously to {temp:g} K during deposition."
@@ -545,5 +589,9 @@ def refresh_inputs(config_path: Path, output: Path) -> Path:
         manifest=json.loads(manifest_path.read_text(encoding="utf-8"))
         primary=next((component for component in manifest.get("components",[]) if component.get("component")=="stage1_primary"),None)
         if primary: cfg["_sequential_primary_atom_count"]=int(primary["atom_ids"][1])
+        cfg["_resolved_random"]={
+            "packmol_seed":int(manifest.get("packmol_seed",202405367)),
+            "velocity_seed":int(manifest.get("velocity_seed",214587)),
+        }
     _write_input(output,cfg,parse(topology))
     return output

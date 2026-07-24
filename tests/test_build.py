@@ -39,6 +39,25 @@ def test_small_offline_build(tmp_path):
     assert first.fields[3]==template.sections["Atoms"][0].fields[3]
     assert "Spreadsheet assembly: not required" in (out/"validation_report.txt").read_text()
 
+
+def test_build_records_independent_random_seeds(tmp_path):
+    packed,_=packed_fixture(tmp_path)
+    out=build(
+        ROOT/"tests/data/small-study.toml",
+        tmp_path/"seeded",
+        packed_xyz=packed,
+        packmol_seed=1234567,
+        velocity_seed=7654321,
+    )
+    manifest=json.loads((out/"assembly_manifest.json").read_text())
+    assert manifest["packmol_seed"]==1234567
+    assert manifest["velocity_seed"]==7654321
+    assert "seed 1234567" in (out/"packmol.inp").read_text()
+    assert "velocity all create 5.0 7654321" in (out/"deposition.in").read_text()
+    resolved=(out/"resolved_config.toml").read_text()
+    assert "packmol_seed = 1234567" in resolved
+    assert "velocity_seed = 7654321" in resolved
+
 def test_packmol_element_order_failure(tmp_path):
     packed,_=packed_fixture(tmp_path,swap=True)
     with pytest.raises(ValueError,match="Packmol atom order mismatch"):
