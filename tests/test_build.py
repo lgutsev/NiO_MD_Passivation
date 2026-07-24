@@ -242,6 +242,22 @@ def test_geometry_aware_wall_resolution_and_manual_override(tmp_path):
     forced=_wall_result(source,manual)
     assert forced["resolved_wall"]==320.0 and forced["final_zhi"]==325.0 and forced["mode"]=="manual"
 
+def test_lammps_validation_uses_srun_inside_slurm(monkeypatch):
+    from nio_md_prep.validate import _lammps_command
+    monkeypatch.setenv("SLURM_JOB_ID","936339")
+    monkeypatch.setattr("nio_md_prep.validate.shutil.which",lambda name: "/usr/bin/srun" if name=="srun" else None)
+    assert _lammps_command("/opt/lammps/lmp_mpi","validate-deposition.in")==[
+        "srun","--exclusive","-N","1","-n","1",
+        "/opt/lammps/lmp_mpi","-in","validate-deposition.in",
+    ]
+
+def test_lammps_validation_runs_directly_outside_slurm(monkeypatch):
+    from nio_md_prep.validate import _lammps_command
+    monkeypatch.delenv("SLURM_JOB_ID",raising=False)
+    assert _lammps_command("/opt/lammps/lmp_mpi","validate-deposition.in")==[
+        "/opt/lammps/lmp_mpi","-in","validate-deposition.in",
+    ]
+
 @pytest.mark.parametrize("manual,wall,zhi",[(None,300.0,305.0),(320.0,320.0,325.0)])
 def test_lammps_real_predecessor_wall_resolution(tmp_path,manual,wall,zhi):
     executable=shutil.which("lmp_mpi") or shutil.which("lmp") or shutil.which("lammps")
