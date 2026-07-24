@@ -2,7 +2,7 @@
 
 This repository began as a practical companion to the LAMMPS calculations
 reported in
-[Advanced Energy Materials, 2024, 2405367](https://onlinelibrary.wiley.com/doi/10.1002/aenm.202405367).
+[Advanced Energy Materials, 2025, 2405367](https://onlinelibrary.wiley.com/doi/10.1002/aenm.202405367).
 The original task was straightforward in concept: prepare a corrugated NiO
 surface, place Me-4PACz or a Me-4PACz/MPTMS-OH mixture above it, bring those
 molecules down with a moving wall, and follow the resulting film at 300 and
@@ -507,11 +507,16 @@ the two build stages. For example, seed 02 uses:
 sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02,PACKMOL_SEED=202607242,VELOCITY_SEED=31415927 scripts/build_real_systems.sbatch
 sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02 scripts/run_deposition_array.sbatch
 sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02 scripts/run_hold_array.sbatch
+sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02 scripts/run_hold_400K_array.sbatch
 
 sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02,PACKMOL_SEED=202608242,VELOCITY_SEED=31416927 scripts/build_sequential_systems.sbatch
 sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02 scripts/run_sequential_deposition_array.sbatch
 sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02 scripts/run_sequential_hold_array.sbatch
+sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02 scripts/run_sequential_hold_400K_array.sbatch
 ```
+
+The 300 and 400 K hold arrays are independent branches from each replicate's
+`deposited.data` and may be submitted concurrently after deposition finishes.
 
 See [`docs/interfacial-analysis.md`](docs/interfacial-analysis.md) for the
 definitions, cutoff policy, seed-03 values, output sheets, and interpretation
