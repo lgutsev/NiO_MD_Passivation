@@ -222,35 +222,27 @@ LAMMPS velocity seeds recorded.
 
 ## Independent deposition seeds
 
-The original completed calculations are seed 01. Two additional statistically
-independent 300 K deposition histories are supplied as seeds 02 and 03 for:
-
-- Me-4PACz alone;
-- Me-4PACz/DCZ-4P CoSAM;
-- Me-4PACz/MeO-2PACz CoSAM;
-- Me-4PACz followed by DCZ-4P; and
-- Me-4PACz followed by MeO-2PACz.
-
-Each sequential replicate uses the independently deposited and held Me-4PACz
-substrate from the same seed. Submit each stage only after checking the
-previous stage:
+The original completed calculations are seed 01. The existing builders accept
+`PREPARED_ROOT`, `PACKMOL_SEED`, and `VELOCITY_SEED`, so no parallel set of
+replicate scripts is required. For seed 02, submit each stage only after
+checking the previous stage:
 
 ```bash
-sbatch scripts/build_replicate_primary_cosam.sbatch
-sbatch scripts/run_replicate_primary_deposition.sbatch
-sbatch scripts/run_replicate_primary_hold_300K.sbatch
-sbatch scripts/run_replicate_primary_hold_400K.sbatch
+sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02,PACKMOL_SEED=202607242,VELOCITY_SEED=31415927 scripts/build_real_systems.sbatch
+sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02 scripts/run_deposition_array.sbatch
+sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02 scripts/run_hold_array.sbatch
 
-sbatch scripts/build_replicate_sequential.sbatch
-sbatch scripts/run_replicate_sequential_deposition.sbatch
-sbatch scripts/run_replicate_sequential_hold_300K.sbatch
-sbatch scripts/run_replicate_sequential_hold_400K.sbatch
+sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02,PACKMOL_SEED=202608242,VELOCITY_SEED=31416927 scripts/build_sequential_systems.sbatch
+sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02 scripts/run_sequential_deposition_array.sbatch
+sbatch --export=ALL,PREPARED_ROOT=prepared/replicates/seed-02 scripts/run_sequential_hold_array.sbatch
 ```
 
-For each primary or sequential replicate, the 300 and 400 K arrays are
-independent branches from the same `deposited.data`; they may run concurrently
-once deposition is complete. The scripts never submit the next stage
-automatically and refuse to overwrite completed outputs.
+For seed 03, replace `seed-02` with `seed-03`, use primary seeds
+`202607243`/`27182818`, and use sequential-stage seeds
+`202608243`/`27183818`. Each sequential replicate automatically consumes the
+independently deposited and held Me-4PACz substrate under the same
+`PREPARED_ROOT`. The existing scripts still refuse to overwrite completed
+outputs.
 
 ## Interpretation boundary
 
