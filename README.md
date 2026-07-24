@@ -454,6 +454,49 @@ prepared/coverage_summary.xlsx
 See [`docs/coverage-analysis.md`](docs/coverage-analysis.md) for the numerical
 method, output columns, convergence controls, and per-study files.
 
+## Anchor-resolved interfacial structure analysis
+
+Projected coverage deliberately reproduces the historical top-view shielding
+metric, but it cannot distinguish an NiO-bound phosphonate from a molecule
+lying above another SAM. A separate interfacial module therefore reports:
+
+- exposed-Ni site ownership by primary and secondary components;
+- molecule and phosphonate-terminal anchoring populations;
+- persistent contacts and residence episodes;
+- molecular tilt, graph-derived core height, and orientational `P2`;
+- component-resolved local-height density profiles;
+- lateral same-component and cross-component two-dimensional RDFs; and
+- matched compressed-hold versus decompressed-relaxation changes.
+
+Analyze one trajectory:
+
+```bash
+nio-md-prep analyze-interface prepared/me-4pacz-then-dcz-4p \
+    --trajectory hold-300K.lammpstrj \
+    --last-frames 100 \
+    --timestep-fs 0.5
+```
+
+Analyze every available compressed and relaxed 300/400 K trajectory on the
+`single` partition and create the separate consolidated workbook:
+
+```bash
+sbatch scripts/analyze_interface_holds.sbatch
+```
+
+The workbook is written to:
+
+```text
+prepared/interface_structure_summary.xlsx
+```
+
+For DCZ-4P, its `Terminal States` sheet directly reports zero-, one-, and
+two-terminal anchoring populations. The `Hold vs Relax` sheet makes it
+possible to identify structures maintained only by the compressed upper wall.
+
+See [`docs/interfacial-analysis.md`](docs/interfacial-analysis.md) for the
+definitions, cutoff policy, output sheets, and interpretation limits.
+
 ## Repository map
 
 | Path | Contents |
