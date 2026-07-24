@@ -42,6 +42,9 @@ RESULT_HEADERS = [
     "Status",
     "Trajectory",
     "Summary JSON",
+    "Run Directory",
+    "Packmol Seed",
+    "Velocity Seed",
 ]
 
 COMPONENT_HEADERS = [
@@ -70,6 +73,19 @@ COMPONENT_HEADERS = [
     "Max Residence (frames)",
     "Mean Residence (ps)",
     "Max Residence (ps)",
+    "Plane-normal Tilt (deg)",
+    "Plane Alignment P2",
+    "Anchor-axis Tilt (deg)",
+    "Anchor Δz (Å)",
+    "Bound P Height (Å)",
+    "Unbound P Height (Å)",
+    "Bound Core Height (Å)",
+    "Unbound Core Height (Å)",
+    "Bound Tilt (deg)",
+    "Unbound Tilt (deg)",
+    "Run Directory",
+    "Packmol Seed",
+    "Velocity Seed",
 ]
 
 TERMINAL_HEADERS = [
@@ -85,7 +101,7 @@ TERMINAL_HEADERS = [
 ]
 
 COMPARISON_HEADERS = [
-    "System",
+    "Run Directory",
     "Temperature (K)",
     "Compressed Stage",
     "Relaxed Stage",
@@ -121,6 +137,19 @@ RDF_HEADERS = [
     "Ideal Pairs",
 ]
 
+CUTOFF_HEADERS = [
+    "Run",
+    "System",
+    "Temperature (K)",
+    "Stage",
+    "Component",
+    "Contact Cutoff (Å)",
+    "Bound Fraction (%)",
+    "Block SEM (%)",
+    "Anchored Terminals / Molecule",
+    "Run Directory",
+]
+
 
 def _metric(component: dict[str, Any] | None, name: str, field: str = "mean"):
     if component is None:
@@ -151,14 +180,25 @@ def _component_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
 
 def collect_interfacial_results(
     prepared_root: Path,
-) -> tuple[list[dict], list[dict], list[dict], list[dict], list[dict]]:
+) -> tuple[
+    list[dict],
+    list[dict],
+    list[dict],
+    list[dict],
+    list[dict],
+    list[dict],
+]:
     """Collect normalized result, component, terminal, z-profile, and RDF rows."""
     prepared_root = Path(prepared_root)
     paths = sorted(
-        set(prepared_root.glob("*/interface-analysis-hold-*/interface_summary.json"))
+        set(
+            prepared_root.rglob(
+                "interface-analysis-hold-*/interface_summary.json"
+            )
+        )
         | set(
-            prepared_root.glob(
-                "*/interface-analysis-relax-*/interface_summary.json"
+            prepared_root.rglob(
+                "interface-analysis-relax-*/interface_summary.json"
             )
         )
     )
@@ -173,17 +213,21 @@ def collect_interfacial_results(
     terminals_out = []
     z_out = []
     rdf_out = []
+    cutoff_out = []
     for summary_path in paths:
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
-        system = summary_path.parents[1].name
+        run_directory_path = summary_path.parents[1]
+        system = run_directory_path.name
+        run_directory = str(run_directory_path.relative_to(prepared_root))
         stage = summary_path.parent.name.removeprefix("interface-analysis-")
         trajectory = str(summary.get("trajectory", ""))
         temperature = _temperature(stage, trajectory)
         run = (
-            f"{system} | {stage}"
+            f"{run_directory} | {stage}"
             if temperature is None
-            else f"{system} | {temperature} K | {stage.split('-', 1)[0]}"
+            else f"{run_directory} | {temperature} K | {stage.split('-', 1)[0]}"
         )
+        random_seeds = summary.get("random_seeds", {})
         component_rows = _component_rows(summary)
         primary = component_rows[0] if component_rows else None
         secondary = component_rows[1] if len(component_rows) > 1 else None
@@ -285,6 +329,9 @@ def collect_interfacial_results(
             "status": status,
             "trajectory": trajectory,
             "summary_path": relative_summary,
+            "run_directory": run_directory,
+            "packmol_seed": random_seeds.get("packmol_seed"),
+            "velocity_seed": random_seeds.get("velocity_seed"),
         }
         results.append(result)
 
@@ -331,8 +378,59 @@ def collect_interfacial_results(
                     "max_residence_frames": values.get("max_residence_frames"),
                     "mean_residence_ps": values.get("mean_residence_ps"),
                     "max_residence_ps": values.get("max_residence_ps"),
+                    "plane_tilt": _metric(
+                        values, "plane_normal_tilt_degrees"
+                    ),
+                    "plane_p2": _metric(values, "plane_alignment_P2"),
+                    "anchor_axis_tilt": _metric(
+                        values, "anchor_axis_tilt_degrees"
+                    ),
+                    "anchor_vertical_separation": _metric(
+                        values, "anchor_vertical_separation_angstrom"
+                    ),
+                    "bound_p_height": _metric(
+                        values, "bound_phosphorus_height_angstrom"
+                    ),
+                    "unbound_p_height": _metric(
+                        values, "unbound_phosphorus_height_angstrom"
+                    ),
+                    "bound_core_height": _metric(
+                        values, "bound_core_height_angstrom"
+                    ),
+                    "unbound_core_height": _metric(
+                        values, "unbound_core_height_angstrom"
+                    ),
+                    "bound_tilt": _metric(values, "bound_tilt_degrees"),
+                    "unbound_tilt": _metric(values, "unbound_tilt_degrees"),
+                    "run_directory": run_directory,
+                    "packmol_seed": random_seeds.get("packmol_seed"),
+                    "velocity_seed": random_seeds.get("velocity_seed"),
                 }
             )
+            for cutoff, cutoff_values in sorted(
+                values.get("contact_cutoff_sensitivity", {}).items(),
+                key=lambda item: float(item[0]),
+            ):
+                bound_values = cutoff_values.get(
+                    "bound_fraction_percent", {}
+                )
+                anchored_values = cutoff_values.get(
+                    "mean_anchored_terminals", {}
+                )
+                cutoff_out.append(
+                    {
+                        "run": run,
+                        "system": system,
+                        "temperature": temperature,
+                        "stage": stage,
+                        "component": component["name"],
+                        "cutoff": float(cutoff),
+                        "bound": bound_values.get("mean"),
+                        "sem": bound_values.get("block_sem"),
+                        "anchored": anchored_values.get("mean"),
+                        "run_directory": run_directory,
+                    }
+                )
             for count, population in sorted(
                 values.get("terminal_state_populations_percent", {}).items(),
                 key=lambda item: int(item[0]),
@@ -406,16 +504,18 @@ def collect_interfacial_results(
             math.inf if row["lo"] is None else row["lo"],
         )
     )
-    return results, components_out, terminals_out, z_out, rdf_out
+    return results, components_out, terminals_out, z_out, rdf_out, cutoff_out
 
 
 def _stage_comparisons(results: list[dict]) -> list[list[Any]]:
     grouped: dict[tuple[str, int | None], dict[str, dict]] = {}
     for row in results:
         kind = row["stage"].split("-", 1)[0]
-        grouped.setdefault((row["system"], row["temperature"]), {})[kind] = row
+        grouped.setdefault(
+            (row["run_directory"], row["temperature"]), {}
+        )[kind] = row
     comparisons = []
-    for (system, temperature), stages in sorted(grouped.items()):
+    for (run_directory, temperature), stages in sorted(grouped.items()):
         if "hold" not in stages or "relax" not in stages:
             continue
         compressed = stages["hold"]
@@ -428,7 +528,7 @@ def _stage_comparisons(results: list[dict]) -> list[list[Any]]:
 
         comparisons.append(
             [
-                system,
+                run_directory,
                 temperature,
                 compressed["stage"],
                 relaxed["stage"],
@@ -454,7 +554,7 @@ def create_interfacial_workbook(prepared_root: Path, output: Path) -> Path:
     PatternFill = api["PatternFill"]
     Font = api["Font"]
 
-    results, components, terminals, z_rows, rdf_rows = (
+    results, components, terminals, z_rows, rdf_rows, cutoff_rows = (
         collect_interfacial_results(prepared_root)
     )
     workbook = Workbook()
@@ -467,6 +567,7 @@ def create_interfacial_workbook(prepared_root: Path, output: Path) -> Path:
     comparison_sheet = workbook.create_sheet("Hold vs Relax")
     z_sheet = workbook.create_sheet("Z Profiles")
     rdf_sheet = workbook.create_sheet("Lateral RDF")
+    cutoff_sheet = workbook.create_sheet("Cutoff Sensitivity")
     methods_sheet = workbook.create_sheet("Methods")
 
     result_rows = [
@@ -502,6 +603,9 @@ def create_interfacial_workbook(prepared_root: Path, output: Path) -> Path:
             row["status"],
             row["trajectory"],
             row["summary_path"],
+            row["run_directory"],
+            row["packmol_seed"],
+            row["velocity_seed"],
         ]
         for row in results
     ]
@@ -571,6 +675,9 @@ def create_interfacial_workbook(prepared_root: Path, output: Path) -> Path:
             11,
             48,
             48,
+            44,
+            17,
+            17,
         ],
         1,
     ):
@@ -640,6 +747,19 @@ def create_interfacial_workbook(prepared_root: Path, output: Path) -> Path:
             row["max_residence_frames"],
             row["mean_residence_ps"],
             row["max_residence_ps"],
+            row["plane_tilt"],
+            row["plane_p2"],
+            row["anchor_axis_tilt"],
+            row["anchor_vertical_separation"],
+            row["bound_p_height"],
+            row["unbound_p_height"],
+            row["bound_core_height"],
+            row["unbound_core_height"],
+            row["bound_tilt"],
+            row["unbound_tilt"],
+            row["run_directory"],
+            row["packmol_seed"],
+            row["velocity_seed"],
         ]
         for row in components
     ]
@@ -660,6 +780,7 @@ def create_interfacial_workbook(prepared_root: Path, output: Path) -> Path:
         component_sheet.column_dimensions[
             component_sheet.cell(1, index).column_letter
         ].width = 19 if index > 5 else 28
+    component_sheet.column_dimensions["AJ"].width = 44
 
     terminal_rows = [
         [
@@ -763,6 +884,36 @@ def create_interfacial_workbook(prepared_root: Path, output: Path) -> Path:
     ):
         rdf_sheet.column_dimensions[column].width = width
 
+    cutoff_values = [
+        [
+            row["run"],
+            row["system"],
+            row["temperature"],
+            row["stage"],
+            row["component"],
+            row["cutoff"],
+            row["bound"],
+            row["sem"],
+            row["anchored"],
+            row["run_directory"],
+        ]
+        for row in cutoff_rows
+    ]
+    _style_table_sheet(
+        cutoff_sheet,
+        CUTOFF_HEADERS,
+        cutoff_values,
+        "CutoffSensitivityTable",
+        api,
+    )
+    for column in ("F", "G", "H", "I"):
+        for cell in cutoff_sheet[column][1:]:
+            cell.number_format = "0.00"
+    for column, width in zip(
+        "ABCDEFGHIJ", [46, 34, 14, 16, 25, 20, 21, 16, 29, 44]
+    ):
+        cutoff_sheet.column_dimensions[column].width = width
+
     methods_sheet.sheet_view.showGridLines = False
     methods = [
         ["Field", "Value"],
@@ -776,7 +927,7 @@ def create_interfacial_workbook(prepared_root: Path, output: Path) -> Path:
         ],
         [
             "Contact cutoff",
-            "First smoothed minimum after the nearest Ni-phosphonate-O distance peak, unless explicitly overridden.",
+            "A common 3.25 A cutoff is the default. The Cutoff Sensitivity sheet reports bound fractions at 3.0, 3.25, and 3.5 A; auto-inference remains available diagnostically.",
         ],
         [
             "Persistent molecule",
@@ -784,11 +935,19 @@ def create_interfacial_workbook(prepared_root: Path, output: Path) -> Path:
         ],
         [
             "Surface sites",
-            "Upper-half molecule-0 Ni atoms with fewer than six molecule-0 O neighbors within the coordination cutoff.",
+            "Canonical exposed-Ni atom identities selected once from the authoritative pristine corrugated NiO slab and mapped into every assembled topology.",
         ],
         [
             "Tilt",
             "Angle between the phosphonate-P-to-graph-distant-core vector and the surface normal; 0° upright, 90° flat.",
+        ],
+        [
+            "Molecular plane",
+            "Plane-normal angle from graph-distant core atoms; 0° means the molecular plane is parallel to the surface. The anchor-axis fields apply to multi-phosphonate molecules such as DCZ-4P.",
+        ],
+        [
+            "Bound/unbound structure",
+            "Phosphorus height, core height, and tilt are also reported separately for molecules classified as bound and unbound at the common cutoff.",
         ],
         [
             "Orientational P2",
@@ -817,8 +976,14 @@ def create_interfacial_workbook(prepared_root: Path, output: Path) -> Path:
     methods_sheet.column_dimensions["A"].width = 25
     methods_sheet.column_dimensions["B"].width = 115
     methods_sheet.freeze_panes = "A2"
-    for row in methods_sheet.iter_rows():
+    for row_index, row in enumerate(methods_sheet.iter_rows(), start=1):
         row[1].alignment = api["Alignment"](wrap_text=True, vertical="top")
+        if row_index > 1:
+            value = str(row[1].value or "")
+            wrapped_lines = max(1, (len(value) + 104) // 105)
+            methods_sheet.row_dimensions[row_index].height = max(
+                18, 15 * wrapped_lines
+            )
 
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
