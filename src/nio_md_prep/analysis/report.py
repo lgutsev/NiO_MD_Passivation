@@ -73,9 +73,9 @@ def _openpyxl():
 
 
 def _temperature(stage: str, trajectory: str) -> int | None:
-    match = re.search(r"hold-(\d+)K", stage)
+    match = re.search(r"(?:hold|relax)-(\d+)K", stage)
     if match is None:
-        match = re.search(r"hold-(\d+)K", Path(trajectory).name)
+        match = re.search(r"(?:hold|relax)-(\d+)K", Path(trajectory).name)
     return int(match.group(1)) if match else None
 
 
@@ -87,13 +87,12 @@ def collect_coverage_results(prepared_root: Path) -> tuple[list[dict], list[dict
     """Collect one result row per completed hold and normalized component rows."""
     prepared_root = Path(prepared_root)
     paths = sorted(
-        prepared_root.glob(
-            "*/coverage-analysis-hold-*/coverage_summary.json"
-        )
+        set(prepared_root.glob("*/coverage-analysis-hold-*/coverage_summary.json"))
+        | set(prepared_root.glob("*/coverage-analysis-relax-*/coverage_summary.json"))
     )
     if not paths:
         raise FileNotFoundError(
-            f"{prepared_root}: no coverage-analysis-hold-*/coverage_summary.json "
+            f"{prepared_root}: no compressed-hold or relaxed-hold coverage summaries "
             "files were found"
         )
 

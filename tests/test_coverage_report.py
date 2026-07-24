@@ -19,14 +19,15 @@ def write_summary(
     primary: float,
     secondary: float,
     overlap: float,
+    stage: str = "hold",
 ) -> None:
-    output = prepared / system / f"coverage-analysis-hold-{temperature}K"
+    output = prepared / system / f"coverage-analysis-{stage}-{temperature}K"
     output.mkdir(parents=True)
     total = primary + secondary - overlap
     summary = {
         "method": "periodic_projected_vdw_union",
         "trajectory": str(
-            prepared / system / f"hold-{temperature}K.lammpstrj"
+            prepared / system / f"{stage}-{temperature}K.lammpstrj"
         ),
         "frames_analyzed": 100,
         "grid_target_spacing_angstrom": 0.2,
@@ -131,6 +132,25 @@ def test_create_workbook_contains_summary_components_and_chart(tmp_path):
     assert "CoverageComponentsTable" in components.tables
 
 
+def test_collect_results_includes_relaxed_holds(tmp_path):
+    prepared = tmp_path / "prepared"
+    write_summary(
+        prepared,
+        "mixed-sam",
+        300,
+        primary=52.0,
+        secondary=14.0,
+        overlap=2.0,
+        stage="relax",
+    )
+
+    results, _ = collect_coverage_results(prepared)
+
+    assert len(results) == 1
+    assert results[0]["temperature"] == 300
+    assert results[0]["stage"] == "relax-300K"
+
+
 def test_workbook_requires_completed_summaries(tmp_path):
-    with pytest.raises(FileNotFoundError, match="no coverage-analysis"):
+    with pytest.raises(FileNotFoundError, match="no compressed-hold or relaxed-hold"):
         collect_coverage_results(tmp_path / "prepared")

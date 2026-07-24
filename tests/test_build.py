@@ -116,13 +116,13 @@ def test_sequential_stage_preserves_existing_records(tmp_path,monkeypatch):
 def test_generated_stage_inputs_are_ordered_and_restartable(tmp_path):
     packed,_=packed_fixture(tmp_path)
     out=build(ROOT/"tests/data/small-study.toml",tmp_path/"ordered",packed_xyz=packed)
-    for name in ("deposition.in","hold-300K.in","hold-400K.in","equilibrate-300K.in","anneal-400K.in"):
+    for name in ("deposition.in","hold-300K.in","hold-400K.in","decompress-300K.in","decompress-400K.in","equilibrate-300K.in","anneal-400K.in"):
         text=(out/name).read_text()
         positions=[text.index(x) for x in ("boundary p p f","units real","atom_style full","read_data ","include ")]
         assert positions==sorted(positions)
         assert "dump trajectory" in text and "restart " in text and "write_restart" in text
         assert all(line.endswith(" nocoeff") for line in text.splitlines() if line.startswith("write_data "))
-    deposition=(out/"deposition.in").read_text(); hold=(out/"hold-300K.in").read_text(); hold_400=(out/"hold-400K.in").read_text(); eq=(out/"equilibrate-300K.in").read_text(); anneal=(out/"anneal-400K.in").read_text()
+    deposition=(out/"deposition.in").read_text(); hold=(out/"hold-300K.in").read_text(); hold_400=(out/"hold-400K.in").read_text(); decompress_300=(out/"decompress-300K.in").read_text(); decompress_400=(out/"decompress-400K.in").read_text(); eq=(out/"equilibrate-300K.in").read_text(); anneal=(out/"anneal-400K.in").read_text()
     assert "variable zend equal 69.615" in deposition
     assert "processors * * 1" in deposition
     assert "comm_modify cutoff 20.0" in deposition
@@ -158,6 +158,24 @@ def test_generated_stage_inputs_are_ordered_and_restartable(tmp_path):
     assert hold_400.index("write_data heated-400K.data nocoeff") < hold_400.index("fix hold all npt temp 400.0 400.0")
     assert "timestep 0.5\nrun 1000000" in hold_400
     assert "write_data held-400K.data nocoeff" in hold_400
+    for text,source,suffix,temperature in (
+        (decompress_300,"held-300K.data","300K","300.0"),
+        (decompress_400,"held-400K.data","400K","400.0"),
+    ):
+        assert f"read_data {source}" in text
+        assert "variable compressed_wall_hi equal 69.615" in text
+        assert "variable decompression_wall_hi equal" in text
+        assert "(step/400000.0)" in text
+        assert "fix hi all wall/lj126 zhi v_decompression_wall_hi" in text
+        assert f"fix decompress all npt temp {temperature} {temperature}" in text
+        assert "timestep 0.5\nrun 400000 start 0 stop 400000" in text
+        assert f"write_data decompressed-{suffix}.data nocoeff" in text
+        assert "variable relaxed_wall_hi equal ${resolved_wall_hi}" in text
+        assert "fix hi all wall/lj126 zhi ${relaxed_wall_hi}" in text
+        assert f"fix relax all npt temp {temperature} {temperature}" in text
+        assert "timestep 0.5\nrun 1000000" in text
+        assert f"write_data relaxed-{suffix}.data nocoeff" in text
+        assert text.index(f"write_data decompressed-{suffix}.data nocoeff") < text.index(f"write_data relaxed-{suffix}.data nocoeff")
     assert "read_data held-300K.data" in eq and "fix lo all wall/lj93 zlo EDGE" in eq
     assert "read_data equilibrated-300K.data" in anneal and "fix lo all wall/lj93 zlo EDGE" in anneal
     for text in (eq,anneal):
@@ -165,7 +183,7 @@ def test_generated_stage_inputs_are_ordered_and_restartable(tmp_path):
         assert "variable resolved_wall_hi equal ${rounded_wall}" in text
         assert "change_box all z final" in text
         assert "fix hi all wall/lj93 zhi ${resolved_wall_hi}" in text
-    for name,source in (("deposition","topology_output.lmp"),("hold-300K","deposited.data"),("hold-400K","deposited.data"),("equilibrate-300K","held-300K.data"),("anneal-400K","equilibrated-300K.data")):
+    for name,source in (("deposition","topology_output.lmp"),("hold-300K","deposited.data"),("hold-400K","deposited.data"),("decompress-300K","held-300K.data"),("decompress-400K","held-400K.data"),("equilibrate-300K","held-300K.data"),("anneal-400K","equilibrated-300K.data")):
         smoke=(out/f"validate-{name}.in").read_text()
         assert f"read_data {source}" in smoke and "run 0" in smoke
     assert "run 0 post no # minimization replaced by force evaluation" in (out/"validate-deposition.in").read_text()
@@ -191,6 +209,8 @@ def test_refresh_inputs_preserves_existing_results(tmp_path):
     assert deposited.read_text()=="completed deposition sentinel\n"
     assert held_300.read_text()=="completed 300 K sentinel\n"
     assert (out/"hold-400K.in").exists()
+    assert (out/"decompress-300K.in").exists()
+    assert (out/"decompress-400K.in").exists()
 
 def test_geometry_aware_wall_resolution_and_manual_override(tmp_path):
     data=parse(ROOT/"inputs/surfaces/corrugated-nio-110/surface.lmp")

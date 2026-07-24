@@ -111,12 +111,13 @@ while IFS= read -r -d '' trajectory; do
     fi
 done < <(
     find "${prepared_root}" -mindepth 2 -maxdepth 2 -type f \
-        \( -name 'hold-300K.lammpstrj' -o -name 'hold-400K.lammpstrj' \) \
+        \( -name 'hold-300K.lammpstrj' -o -name 'hold-400K.lammpstrj' \
+           -o -name 'relax-300K.lammpstrj' -o -name 'relax-400K.lammpstrj' \) \
         -size +0c -print0 | sort -z
 )
 
 if (( found == 0 )); then
-    echo "ERROR: no non-empty hold-300K.lammpstrj or hold-400K.lammpstrj files were found." >&2
+    echo "ERROR: no non-empty compressed-hold or relaxed-hold trajectories were found." >&2
     exit 1
 fi
 

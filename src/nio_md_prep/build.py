@@ -281,7 +281,7 @@ def build(config_path: Path, output: Path, primary_final: Path|None=None, packed
     p=cfg.get("protocol",{}); manual=p.get("production_upper_wall")
     policy=f'''\n[resolved_wall_policy]\nmode = "{"manual" if manual is not None else p.get("production_upper_wall_mode","auto")}"\nminimum = {float(p.get("production_upper_wall_min",120.0))}\nclearance = {float(p.get("production_wall_clearance",30.0))}\nrounding = {float(p.get("production_wall_rounding",10.0))}\nbox_margin = {float(p.get("production_box_margin",5.0))}\nmanual_override = {"true" if manual is not None else "false"}\n'''
     if manual is not None: policy+=f"manual_value = {float(manual)}\n"
-    policy+='''\n[resolved_wall_results.equilibrate_300K]\nstatus = "DEFERRED"\nsource = "held-300K.data"\n\n[resolved_wall_results.anneal_400K]\nstatus = "DEFERRED"\nsource = "equilibrated-300K.data"\n'''
+    policy+='''\n[resolved_wall_results.decompress_300K]\nstatus = "DEFERRED"\nsource = "held-300K.data"\n\n[resolved_wall_results.decompress_400K]\nstatus = "DEFERRED"\nsource = "held-400K.data"\n\n[resolved_wall_results.equilibrate_300K]\nstatus = "DEFERRED"\nsource = "held-300K.data"\n\n[resolved_wall_results.anneal_400K]\nstatus = "DEFERRED"\nsource = "equilibrated-300K.data"\n'''
     (output/"resolved_config.toml").write_text(config_path.read_text(encoding="utf-8")+policy,encoding="utf-8")
     (output/"type_map.json").write_text(json.dumps(type_map,indent=2)+"\n",encoding="utf-8")
     hashes={}
@@ -307,6 +307,8 @@ def _write_input(output: Path,cfg:dict,data:DataFile)->None:
     hold_steps=int(p.get("hold_300K_steps",1000000)); hold_timestep=float(p.get("hold_300K_timestep",deposition_timestep))
     hold_400_steps=int(p.get("hold_400K_steps",hold_steps)); hold_400_timestep=float(p.get("hold_400K_timestep",hold_timestep))
     heat_400_steps=int(p.get("heat_400K_steps",400000)); heat_400_timestep=float(p.get("heat_400K_timestep",hold_400_timestep))
+    decompression_steps=int(p.get("decompression_steps",400000)); decompression_timestep=float(p.get("decompression_timestep",hold_timestep))
+    relaxed_hold_steps=int(p.get("relaxed_hold_steps",1000000)); relaxed_hold_timestep=float(p.get("relaxed_hold_timestep",hold_timestep))
     if steps <= 0: raise ValueError("deposition_steps must be positive")
     if deposition_timestep <= 0: raise ValueError("deposition_timestep must be positive")
     if hold_steps <= 0: raise ValueError("hold_300K_steps must be positive")
@@ -315,6 +317,10 @@ def _write_input(output: Path,cfg:dict,data:DataFile)->None:
     if hold_400_timestep <= 0: raise ValueError("hold_400K_timestep must be positive")
     if heat_400_steps <= 0: raise ValueError("heat_400K_steps must be positive")
     if heat_400_timestep <= 0: raise ValueError("heat_400K_timestep must be positive")
+    if decompression_steps <= 0: raise ValueError("decompression_steps must be positive")
+    if decompression_timestep <= 0: raise ValueError("decompression_timestep must be positive")
+    if relaxed_hold_steps <= 0: raise ValueError("relaxed_hold_steps must be positive")
+    if relaxed_hold_timestep <= 0: raise ValueError("relaxed_hold_timestep must be positive")
     def lower_wall(value: object) -> str:
         if isinstance(value,str):
             if value.upper()!="EDGE": raise ValueError("lower wall coordinate must be numeric or EDGE")
@@ -476,19 +482,57 @@ run {hold_400_steps}
 write_data held-400K.data nocoeff
 write_restart held-400K.restart
 """
+    def decompression(source: str, temperature: float, suffix: str, lower_wall_coordinate: str) -> str:
+        return f"""# Gradual {suffix} decompression and relaxed-film hold: run only after the compressed hold
+{init(source)}{resolution(source)}reset_timestep 0
+variable compressed_wall_hi equal {zend}
+variable decompression_wall_hi equal "v_compressed_wall_hi + (v_resolved_wall_hi-v_compressed_wall_hi)*(step/{decompression_steps}.0)"
+thermo_style custom step temp pe ke etotal press pxx pyy lx ly lz v_decompression_wall_hi fnorm fmax
+fix lo all wall/lj93 zlo {lower_wall_coordinate} ${{epsilon}} ${{sigma}} ${{cutoff}} units box
+fix hi all wall/lj126 zhi v_decompression_wall_hi ${{epsilon}} ${{sigma}} ${{cutoff}} units box
+fix_modify lo energy yes
+fix_modify hi energy yes
+fix decompress all npt temp {temperature} {temperature} 100.0 x ${{pressure}} ${{pressure}} ${{pressureDamp}} y ${{pressure}} ${{pressure}} ${{pressureDamp}} couple xy
+dump trajectory all custom 2000 decompress-{suffix}.lammpstrj id mol type q x y z
+dump_modify trajectory sort id
+restart 100000 decompress-{suffix}.restart.1 decompress-{suffix}.restart.2
+timestep {decompression_timestep}
+run {decompression_steps} start 0 stop {decompression_steps}
+unfix decompress
+unfix hi
+undump trajectory
+write_data decompressed-{suffix}.data nocoeff
+write_restart decompressed-{suffix}.restart
+variable relaxed_wall_hi equal ${{resolved_wall_hi}}
+thermo_style custom step temp pe ke etotal press pxx pyy lx ly lz v_relaxed_wall_hi fnorm fmax
+fix hi all wall/lj126 zhi ${{relaxed_wall_hi}} ${{epsilon}} ${{sigma}} ${{cutoff}} units box
+fix_modify hi energy yes
+fix relax all npt temp {temperature} {temperature} 100.0 x ${{pressure}} ${{pressure}} ${{pressureDamp}} y ${{pressure}} ${{pressure}} ${{pressureDamp}} couple xy
+dump trajectory all custom 2000 relax-{suffix}.lammpstrj id mol type q x y z
+dump_modify trajectory sort id
+restart 200000 relax-{suffix}.restart.1 relax-{suffix}.restart.2
+timestep {relaxed_hold_timestep}
+run {relaxed_hold_steps}
+write_data relaxed-{suffix}.data nocoeff
+write_restart relaxed-{suffix}.restart
+"""
+    decompress_300=decompression("held-300K.data",temp,"300K",lower_300)
+    decompress_400=decompression("held-400K.data",400.0,"400K",lower_400)
     eq=f"# Cao 300 K continuation: run only after hold-300K.in\n{init('held-300K.data')}{resolution('held-300K.data')}fix lo all wall/lj93 zlo {lower_300} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix hi all wall/lj93 zhi ${{resolved_wall_hi}} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix ensemble all npt temp {temp} {temp} 100.0 x ${{pressure}} ${{pressure}} ${{pressureDamp}} y ${{pressure}} ${{pressure}} ${{pressureDamp}} couple xy\ndump trajectory all custom 10000 equilibration-300K.lammpstrj id mol type q x y z\ndump_modify trajectory sort id\nrestart 500000 equilibration-300K.restart.1 equilibration-300K.restart.2\nrun 5000000\nwrite_data equilibrated-300K.data nocoeff\nwrite_restart equilibrated-300K.restart\n"
     anneal=f"# Cao 400 K continuation: run only after equilibrate-300K.in\n{init('equilibrated-300K.data')}{resolution('equilibrated-300K.data')}fix lo all wall/lj93 zlo {lower_400} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix hi all wall/lj93 zhi ${{resolved_wall_hi}} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix ensemble all npt temp 400.0 400.0 100.0 x ${{pressure}} ${{pressure}} ${{pressureDamp}} y ${{pressure}} ${{pressure}} ${{pressureDamp}} couple xy\ndump trajectory all custom 10000 anneal-400K.lammpstrj id mol type q x y z\ndump_modify trajectory sort id\nrestart 500000 anneal-400K.restart.1 anneal-400K.restart.2\nrun 3000000\nwrite_data annealed-400K.data nocoeff\nwrite_restart annealed-400K.restart\n"
     (output/"hold-300K.in").write_text(hold,encoding="utf-8")
     (output/"hold-400K.in").write_text(hold_400,encoding="utf-8")
+    (output/"decompress-300K.in").write_text(decompress_300,encoding="utf-8")
+    (output/"decompress-400K.in").write_text(decompress_400,encoding="utf-8")
     (output/"equilibrate-300K.in").write_text(eq,encoding="utf-8")
     (output/"anneal-400K.in").write_text(anneal,encoding="utf-8")
-    for name,source in (("deposition",text),("hold-300K",hold),("hold-400K",hold_400),("equilibrate-300K",eq),("anneal-400K",anneal)):
+    for name,source in (("deposition",text),("hold-300K",hold),("hold-400K",hold_400),("decompress-300K",decompress_300),("decompress-400K",decompress_400),("equilibrate-300K",eq),("anneal-400K",anneal)):
         check=re.sub(r"(?m)^run\s+.*$","run 0",source)
         check=re.sub(r"(?m)^minimize\s+.*$","run 0 post no # minimization replaced by force evaluation for smoke validation",check)
         (output/f"validate-{name}.in").write_text("# Temporary-directory smoke form of the real stage\n"+check,encoding="utf-8")
     mode=f"manual override {float(manual_upper):g} A" if manual_upper is not None else f"automatic: ceil(max({wall_min:g}, max_atom_z+{wall_clearance:g})/{wall_rounding:g})*{wall_rounding:g} A"
-    duration_ps=steps*deposition_timestep/1000.0; hold_duration_ps=hold_steps*hold_timestep/1000.0; heat_400_duration_ps=heat_400_steps*heat_400_timestep/1000.0; hold_400_duration_ps=hold_400_steps*hold_400_timestep/1000.0
-    (output/"protocol_notes.txt").write_text(f"Deposition endpoint: {zend:.3f} A. Deposition uses {steps} steps at a continuous {deposition_timestep:g} fs timestep ({duration_ps:g} ps total), with a continuous upper-wall ramp and no timestep transition. {deposition_thermal_note} The minimized structure and force summary are written before deposition dynamics. Independent compressed-film temperature branches both start from deposited.data and keep zhi={zend:.3f} A. The 300 K branch holds for {hold_steps} steps at {hold_timestep:g} fs ({hold_duration_ps:g} ps). The 400 K branch first heats from {temp:g} to 400 K for {heat_400_steps} steps at {heat_400_timestep:g} fs ({heat_400_duration_ps:g} ps), writes heated-400K.data, then holds at 400 K for {hold_400_steps} steps at {hold_400_timestep:g} fs ({hold_400_duration_ps:g} ps). Production wall policy after the 300 K hold: {mode}; box margin {box_margin:g} A. Long 300 K source: held-300K.data (DEFERRED until present), zlo={lower_300}. 400 K source: equilibrated-300K.data (DEFERRED until present), zlo={lower_400}. Each resolved production wall is frozen before dynamics and zhi alone is expanded if required.\n",encoding="utf-8")
+    duration_ps=steps*deposition_timestep/1000.0; hold_duration_ps=hold_steps*hold_timestep/1000.0; heat_400_duration_ps=heat_400_steps*heat_400_timestep/1000.0; hold_400_duration_ps=hold_400_steps*hold_400_timestep/1000.0; decompression_duration_ps=decompression_steps*decompression_timestep/1000.0; relaxed_hold_duration_ps=relaxed_hold_steps*relaxed_hold_timestep/1000.0
+    (output/"protocol_notes.txt").write_text(f"Deposition endpoint: {zend:.3f} A. Deposition uses {steps} steps at a continuous {deposition_timestep:g} fs timestep ({duration_ps:g} ps total), with a continuous upper-wall ramp and no timestep transition. {deposition_thermal_note} The minimized structure and force summary are written before deposition dynamics. Independent compressed-film temperature branches both start from deposited.data and keep zhi={zend:.3f} A. The 300 K branch holds for {hold_steps} steps at {hold_timestep:g} fs ({hold_duration_ps:g} ps). The 400 K branch first heats from {temp:g} to 400 K for {heat_400_steps} steps at {heat_400_timestep:g} fs ({heat_400_duration_ps:g} ps), writes heated-400K.data, then holds at 400 K for {hold_400_steps} steps at {hold_400_timestep:g} fs ({hold_400_duration_ps:g} ps). Independent decompression branches read held-300K.data and held-400K.data, retract the upper wall from {zend:.3f} A to the resolved production height over {decompression_steps} steps at {decompression_timestep:g} fs ({decompression_duration_ps:g} ps), then hold the relaxed film for {relaxed_hold_steps} steps at {relaxed_hold_timestep:g} fs ({relaxed_hold_duration_ps:g} ps). Production wall policy: {mode}; box margin {box_margin:g} A. Long 300 K source: held-300K.data (DEFERRED until present), zlo={lower_300}. 400 K source: equilibrated-300K.data (DEFERRED until present), zlo={lower_400}. Each resolved production wall is frozen before dynamics and zhi alone is expanded if required.\n",encoding="utf-8")
 
 def refresh_inputs(config_path: Path, output: Path) -> Path:
     """Regenerate stage inputs without rebuilding or modifying simulation data."""

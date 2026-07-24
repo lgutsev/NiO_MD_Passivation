@@ -61,6 +61,8 @@ _DATA_SECTIONS = {
 }
 
 _TRAJECTORY_CANDIDATES = (
+    "relax-300K.lammpstrj",
+    "relax-400K.lammpstrj",
     "equilibration-300K.lammpstrj",
     "hold-300K.lammpstrj",
     "hold-400K.lammpstrj",

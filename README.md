@@ -56,8 +56,12 @@ flowchart TD
     C --> D["Moving-wall deposition"]
     D --> E["Compressed 300 K hold"]
     D --> F["300→400 K heating + 400 K hold"]
-    E --> G["Coverage and morphology analysis"]
+    E --> K["300 K wall retraction + relaxed hold"]
+    F --> L["400 K wall retraction + relaxed hold"]
+    E --> G["Coverage analysis"]
     F --> G
+    K --> G
+    L --> G
     E --> H["Sequential layer-2 build"]
     H --> I["Sequential moving-wall deposition"]
     I --> J["Independent 300/400 K branches"]
@@ -274,7 +278,8 @@ the next scientific step.
 ## Simulation stages and wall policy
 
 Every completed build writes `deposition.in`, `hold-300K.in`,
-`hold-400K.in`, `equilibrate-300K.in`, and `anneal-400K.in`.
+`hold-400K.in`, `decompress-300K.in`, `decompress-400K.in`,
+`equilibrate-300K.in`, and `anneal-400K.in`.
 
 | Stage | Source | Default duration | Main output |
 |---|---|---:|---|
@@ -282,6 +287,10 @@ Every completed build writes `deposition.in`, `hold-300K.in`,
 | Compressed 300 K hold | `deposited.data` | 1,000,000 × 0.5 fs = 500 ps | `held-300K.data` |
 | Gradual heating | `deposited.data` | 400,000 × 0.5 fs = 200 ps | `heated-400K.data` |
 | Compressed 400 K hold | heated 400 K state | 1,000,000 × 0.5 fs = 500 ps | `held-400K.data` |
+| 300 K wall retraction | `held-300K.data` | 400,000 × 0.5 fs = 200 ps | `decompressed-300K.data` |
+| Relaxed 300 K hold | decompressed 300 K state | 1,000,000 × 0.5 fs = 500 ps | `relaxed-300K.data` |
+| 400 K wall retraction | `held-400K.data` | 400,000 × 0.5 fs = 200 ps | `decompressed-400K.data` |
+| Relaxed 400 K hold | decompressed 400 K state | 1,000,000 × 0.5 fs = 500 ps | `relaxed-400K.data` |
 | Optional long 300 K continuation | `held-300K.data` | 5,000,000 steps | `equilibrated-300K.data` |
 | Optional long 400 K continuation | `equilibrated-300K.data` | 3,000,000 steps | `annealed-400K.data` |
 
@@ -306,6 +315,49 @@ ceil(max(120 Å, max_atom_z + 30 Å) / 10 Å) × 10 Å
 Only the nonperiodic cell ceiling is expanded, retaining a 5 Å margin. A
 numeric `production_upper_wall` in the study file overrides this automatic
 policy.
+
+### Relaxing the compressed films
+
+The decompression branches preserve every compressed result and operate
+independently at 300 and 400 K. Each branch gradually retracts the upper wall
+from `69.615 Å` to the resolved production height over 200 ps, then keeps the
+distant wall fixed for a 500 ps relaxed-film hold. The lower recoil wall
+remains at `EDGE`, and only the periodic `x/y` dimensions are barostatted.
+
+On QBD, first regenerate only the stage inputs for all eight prepared systems:
+
+```bash
+sbatch scripts/build_decompression_inputs.sbatch
+```
+
+This `single`-partition array does not rebuild topology and does not modify
+data, restarts, trajectories, or logs. After all eight builder tasks finish,
+the temperature branches can be submitted independently:
+
+```bash
+sbatch scripts/run_decompress_300K_array.sbatch
+sbatch scripts/run_decompress_400K_array.sbatch
+```
+
+The common decompression array order retains the five primary indices and
+appends the three sequential systems:
+
+| Array index | Prepared system |
+|---:|---|
+| 0 | `me-4pacz-alone` |
+| 1 | `me-4pacz-meo-2pacz-cosam` |
+| 2 | `me-4pacz-meo-4padbc-cosam` |
+| 3 | `me-4pacz-dcz-4p-cosam` |
+| 4 | `me-4pacz-high-dose` |
+| 5 | `me-4pacz-then-dcz-4p` |
+| 6 | `me-4pacz-then-meo-2pacz` |
+| 7 | `me-4pacz-then-meo-4padbc` |
+
+The final trajectories are `relax-300K.lammpstrj` and
+`relax-400K.lammpstrj`. The coverage batch automatically includes these
+alongside the original compressed `hold-*.lammpstrj` trajectories, allowing
+the wall-constrained and relaxed morphologies to be compared in the same
+workbook.
 
 ## Validation and safe input refresh
 
