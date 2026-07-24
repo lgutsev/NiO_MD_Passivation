@@ -2,7 +2,7 @@
 
 This repository began as a practical companion to the LAMMPS calculations
 reported in
-[Advanced Energy Materials, 2024, 2405367](https://onlinelibrary.wiley.com/doi/10.1002/aenm.202405367).
+[Advanced Energy Materials, 2025, 2405367](https://onlinelibrary.wiley.com/doi/10.1002/aenm.202405367).
 The original task was straightforward in concept: prepare a corrugated NiO
 surface, place Me-4PACz or a Me-4PACz/MPTMS-OH mixture above it, bring those
 molecules down with a moving wall, and follow the resulting film at 300 and
