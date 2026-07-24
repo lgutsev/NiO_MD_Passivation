@@ -84,10 +84,12 @@ class DumpFrame:
     index: int
     step: int
     bounds: tuple[tuple[float, float], tuple[float, float], tuple[float, float]]
+    atom_ids: Any
     molecule_ids: Any
     atom_types: Any
     x: Any
     y: Any
+    z: Any
 
 
 def _dependencies() -> tuple[Any, Any]:
@@ -165,13 +167,14 @@ def iter_dump_frames(path: Path) -> Iterator[DumpFrame]:
             bounds = _read_box(handle, path, box_header)
             atom_header = _required_line(handle, path, "ITEM: ATOMS")
             columns = atom_header.split()[2:]
-            for required in ("mol", "type"):
+            for required in ("id", "mol", "type"):
                 if required not in columns:
                     raise ValueError(
                         f"{path}: dump ATOMS columns are missing {required!r}"
                     )
             x_index, x_scaled = _coordinate_column(columns, "x")
             y_index, y_scaled = _coordinate_column(columns, "y")
+            z_index, z_scaled = _coordinate_column(columns, "z")
             rows = [_required_line(handle, path) for _ in range(atom_count)]
             values = np.fromstring("".join(rows), sep=" ")
             expected = atom_count * len(columns)
@@ -189,14 +192,20 @@ def iter_dump_frames(path: Path) -> Iterator[DumpFrame]:
             if y_scaled:
                 ylo, yhi = bounds[1]
                 y = ylo + y * (yhi - ylo)
+            z = values[:, z_index]
+            if z_scaled:
+                zlo, zhi = bounds[2]
+                z = zlo + z * (zhi - zlo)
             yield DumpFrame(
                 index=frame_index,
                 step=step,
                 bounds=bounds,
+                atom_ids=values[:, columns.index("id")].astype(np.int64),
                 molecule_ids=values[:, columns.index("mol")].astype(np.int64),
                 atom_types=values[:, columns.index("type")].astype(np.int64),
                 x=x,
                 y=y,
+                z=z,
             )
             frame_index += 1
 
