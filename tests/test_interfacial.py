@@ -5,12 +5,17 @@ import shutil
 
 import pytest
 
-from nio_md_prep.analysis.interfacial import analyze_interfacial_structure
+from nio_md_prep.analysis.coverage import load_type_elements
+from nio_md_prep.analysis.interfacial import (
+    _canonical_exposed_ni_sites,
+    analyze_interfacial_structure,
+)
 from nio_md_prep.analysis.interfacial_report import (
     COMPONENT_HEADERS,
     RESULT_HEADERS,
     create_interfacial_workbook,
 )
+from nio_md_prep.lammps import parse
 
 
 ATOM_ROWS = [
@@ -37,6 +42,32 @@ ATOM_ROWS = [
     (21, 0, 2, 2.0, 2.0, -2.0),
     (22, 0, 2, 8.0, 8.0, -2.0),
 ]
+
+
+def test_canonical_surface_sites_do_not_change_with_thermal_coordinates():
+    root = Path(__file__).parents[1]
+    path = root / "inputs/surfaces/corrugated-nio-110/surface.lmp"
+    data = parse(path)
+    type_elements = load_type_elements(path)
+    atom_elements = {
+        int(row.fields[0]): type_elements[int(row.fields[2])]
+        for row in data.sections["Atoms"]
+    }
+    atom_molecules = {
+        int(row.fields[0]): int(row.fields[1])
+        for row in data.sections["Atoms"]
+    }
+    reference_ids, source = _canonical_exposed_ni_sites(
+        data, atom_elements, atom_molecules, 2.8
+    )
+    for index, row in enumerate(data.sections["Atoms"]):
+        row.fields[6] = f"{float(row.fields[6]) + 0.75 * ((index % 5) - 2):.8f}"
+    distorted_ids, distorted_source = _canonical_exposed_ni_sites(
+        data, atom_elements, atom_molecules, 2.8
+    )
+    assert len(reference_ids) == 600
+    assert distorted_ids == reference_ids
+    assert distorted_source == source
 
 BONDS = [
     (1, 1, 1, 2),
@@ -163,13 +194,18 @@ def test_anchor_orientation_terminal_rdf_and_density_outputs(tmp_path):
     summary = json.loads(summary_path.read_text())
     assert summary["method"] == "anchor_resolved_interfacial_structure"
     assert summary["surface_site_count"] == 2
-    assert summary["contact_cutoff_method"] == "user_supplied"
+    assert summary["contact_cutoff_method"] == "fixed_common_cutoff"
+    assert summary["contact_sensitivity_cutoffs_angstrom"] == [3.0, 3.25, 3.5]
     primary = summary["components"]["primary"]
     dcz = summary["components"]["dcz-4p"]
     assert primary["metrics"]["bound_fraction_percent"]["mean"] == 100.0
     assert dcz["terminal_state_populations_percent"]["1"]["mean"] == 50.0
     assert dcz["terminal_state_populations_percent"]["2"]["mean"] == 50.0
     assert dcz["persistent_bound_molecules_percent"] == 100.0
+    assert set(dcz["contact_cutoff_sensitivity"]) == {"3", "3.25", "3.5"}
+    assert "plane_normal_tilt_degrees" in dcz["metrics"]
+    assert "anchor_axis_tilt_degrees" in dcz["metrics"]
+    assert "bound_phosphorus_height_angstrom" in dcz["metrics"]
     assert summary["site_ownership_metrics"]["shared_percent"]["mean"] == 25.0
     assert summary["site_ownership_metrics"]["empty_percent"]["mean"] == 0.0
     for name in (
@@ -218,6 +254,7 @@ def test_separate_workbook_contains_normalized_sheets(tmp_path):
         "Hold vs Relax",
         "Z Profiles",
         "Lateral RDF",
+        "Cutoff Sensitivity",
         "Methods",
     ]
     assert [cell.value for cell in workbook["Results"][1]] == RESULT_HEADERS
@@ -226,5 +263,6 @@ def test_separate_workbook_contains_normalized_sheets(tmp_path):
     assert workbook["Results"]["AC2"].value == "OK"
     assert "InterfaceResultsTable" in workbook["Results"].tables
     assert "InterfaceComponentsTable" in workbook["Components"].tables
+    assert "CutoffSensitivityTable" in workbook["Cutoff Sensitivity"].tables
     assert workbook["Hold vs Relax"].max_row == 2
     assert workbook["Hold vs Relax"]["A2"].value == "mixed-system"
