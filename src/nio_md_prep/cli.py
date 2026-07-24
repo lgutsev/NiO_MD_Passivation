@@ -31,6 +31,25 @@ def main(argv=None)->int:
     i=sub.add_parser("summarize-coverage")
     i.add_argument("prepared_root",type=Path)
     i.add_argument("--output",type=Path,required=True)
+    i=sub.add_parser("analyze-interface")
+    i.add_argument("build_directory",type=Path)
+    i.add_argument("--trajectory",type=Path)
+    i.add_argument("--output",type=Path)
+    i.add_argument("--last-frames",type=int,default=100,help="analyze the final N frames; use 0 for all frames")
+    i.add_argument("--stride",type=int,default=1)
+    i.add_argument("--blocks",type=int,default=5)
+    i.add_argument("--contact-cutoff",default="auto",help="Ni-phosphonate-O cutoff in A, or 'auto'")
+    i.add_argument("--surface-coordination-cutoff",type=float,default=2.8)
+    i.add_argument("--persistence-threshold",type=float,default=0.50)
+    i.add_argument("--z-min",type=float,default=-5.0)
+    i.add_argument("--z-max",type=float,default=60.0)
+    i.add_argument("--z-bin-width",type=float,default=0.50)
+    i.add_argument("--rdf-bin-width",type=float,default=0.25)
+    i.add_argument("--rdf-rmax",type=float,default=15.0)
+    i.add_argument("--timestep-fs",type=float)
+    i=sub.add_parser("summarize-interface")
+    i.add_argument("prepared_root",type=Path)
+    i.add_argument("--output",type=Path,required=True)
     a=p.parse_args(argv)
     try:
         if a.command=="init-molecule":
@@ -64,6 +83,39 @@ def main(argv=None)->int:
             from .analysis.report import create_coverage_workbook
             workbook=create_coverage_workbook(a.prepared_root,a.output)
             print(f"Coverage workbook written to {workbook}")
+        elif a.command=="analyze-interface":
+            from .analysis.interfacial import analyze_interfacial_structure
+            if str(a.contact_cutoff).lower()=="auto":
+                contact_cutoff=None
+            else:
+                try:
+                    contact_cutoff=float(a.contact_cutoff)
+                except ValueError as exc:
+                    raise ValueError(
+                        "--contact-cutoff must be a positive number or 'auto'"
+                    ) from exc
+            summary=analyze_interfacial_structure(
+                a.build_directory,
+                trajectory=a.trajectory,
+                output=a.output,
+                last_frames=None if a.last_frames==0 else a.last_frames,
+                stride=a.stride,
+                blocks=a.blocks,
+                contact_cutoff=contact_cutoff,
+                surface_coordination_cutoff=a.surface_coordination_cutoff,
+                persistence_threshold=a.persistence_threshold,
+                z_min=a.z_min,
+                z_max=a.z_max,
+                z_bin_width=a.z_bin_width,
+                rdf_bin_width=a.rdf_bin_width,
+                rdf_rmax=a.rdf_rmax,
+                timestep_fs=a.timestep_fs,
+            )
+            print(f"Interfacial analysis written to {summary.parent}")
+        elif a.command=="summarize-interface":
+            from .analysis.interfacial_report import create_interfacial_workbook
+            workbook=create_interfacial_workbook(a.prepared_root,a.output)
+            print(f"Interfacial workbook written to {workbook}")
         else:
             build(a.config,a.output,primary_final=a.primary_final,packed_xyz=a.packed_xyz)
             print(f"Sequential stage 2 written to {a.output}")
