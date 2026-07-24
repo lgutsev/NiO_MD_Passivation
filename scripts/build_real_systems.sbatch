@@ -12,7 +12,7 @@ set -euo pipefail
 
 module purge
 module load python/3.11.5-anaconda
-module load lammps/22Jul2025-r9.0-cpu
+module load lammps/22Jul2025-r9.7-cpu
 
 cd "${SLURM_SUBMIT_DIR}"
 source .venv/bin/activate
