@@ -1,10 +1,16 @@
 from __future__ import annotations
 from pathlib import Path
-import hashlib, json, math, re, shutil, subprocess, tempfile, tomllib
+import hashlib, json, math, os, re, shutil, subprocess, tempfile, tomllib
 from .lammps import TOPOLOGY, charge, parse
 
 def _records(data, section):
     return [r.fields for r in data.sections.get(section,[])]
+
+def _lammps_command(executable: str, source: str) -> list[str]:
+    command=[executable,"-in",source]
+    if os.environ.get("SLURM_JOB_ID") and shutil.which("srun"):
+        return ["srun","--exclusive","-N","1","-n","1",*command]
+    return command
 
 def _minimum_cross_separation(old_atoms,new_atoms,cutoff=2.0):
     cells={}
@@ -221,7 +227,7 @@ def validate(
                 if predecessor and not (folder/predecessor).exists(): continue
                 if predecessor: shutil.copy2(folder/predecessor,target/predecessor)
                 source=folder/f"validate-{name}.in"; shutil.copy2(source,target/source.name)
-                run=subprocess.run([executable,"-in",source.name],cwd=target,capture_output=True,text=True)
+                run=subprocess.run(_lammps_command(executable,source.name),cwd=target,capture_output=True,text=True)
                 if run.returncode: errors.append(f"LAMMPS zero-step {name} failed: {(run.stderr or run.stdout)[-500:]}")
                 else: warnings.append(f"LAMMPS zero-step {name}: passed")
     status="INVALID" if errors else ("VALID_WITH_DEFERRED_STAGES" if deferred else "VALID")
