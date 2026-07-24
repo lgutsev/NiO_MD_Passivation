@@ -462,8 +462,10 @@ lying above another SAM. A separate interfacial module therefore reports:
 
 - exposed-Ni site ownership by primary and secondary components;
 - molecule and phosphonate-terminal anchoring populations;
+- a fixed 3.25 Å contact definition with 3.0/3.25/3.5 Å sensitivity;
 - persistent contacts and residence episodes;
-- molecular tilt, graph-derived core height, and orientational `P2`;
+- bound/unbound heights, molecular-plane orientation, multi-anchor geometry,
+  conventional molecular tilt, and orientational `P2`;
 - component-resolved local-height density profiles;
 - lateral same-component and cross-component two-dimensional RDFs; and
 - matched compressed-hold versus decompressed-relaxation changes.
@@ -493,9 +495,27 @@ prepared/interface_structure_summary.xlsx
 For DCZ-4P, its `Terminal States` sheet directly reports zero-, one-, and
 two-terminal anchoring populations. The `Hold vs Relax` sheet makes it
 possible to identify structures maintained only by the compressed upper wall.
+All systems use the same 600 canonical exposed-Ni atom identities mapped from
+the authoritative pristine corrugated surface, including sequential systems
+whose NiO coordinates have already evolved during stage 1.
+
+Two additional independent 300 K deposition seeds are provided for the
+Me-4PACz baseline, DCZ-4P and MeO-2PACz CoSAM systems, and their corresponding
+sequential systems. Each sequential replicate uses its own independently
+deposited Me-4PACz substrate:
+
+```bash
+sbatch scripts/build_replicate_primary_cosam.sbatch
+sbatch scripts/run_replicate_primary_deposition.sbatch
+sbatch scripts/run_replicate_primary_hold_300K.sbatch
+sbatch scripts/build_replicate_sequential.sbatch
+sbatch scripts/run_replicate_sequential_deposition.sbatch
+sbatch scripts/run_replicate_sequential_hold_300K.sbatch
+```
 
 See [`docs/interfacial-analysis.md`](docs/interfacial-analysis.md) for the
-definitions, cutoff policy, output sheets, and interpretation limits.
+definitions, cutoff policy, replicate layout, output sheets, and
+interpretation limits.
 
 ## Repository map
 
