@@ -44,7 +44,15 @@ name="${systems[${system_index}]}"
 output="prepared/replicates/seed-${seed_label}/${name}"
 
 if [[ -e "${output}" ]]; then
-    echo "ERROR: ${output} already exists; refusing to overwrite it." >&2
+    if [[ -s "${output}/topology_output.lmp" ]]; then
+        echo "RECOVERING: ${output} is already assembled."
+        echo "Rerunning validation through a one-rank Slurm job step."
+        nio-md-prep validate "${output}"
+        echo "VALIDATED: ${output}"
+        exit 0
+    fi
+    echo "ERROR: ${output} exists but has no completed topology." >&2
+    echo "Inspect it and move it aside before rebuilding; it will not be overwritten." >&2
     exit 1
 fi
 
