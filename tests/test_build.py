@@ -1,5 +1,5 @@
 from pathlib import Path
-import hashlib, json, shutil, subprocess
+import hashlib, json, shutil, subprocess, tomllib
 import pytest
 from nio_md_prep.build import build, refresh_inputs
 from nio_md_prep.geometry import elements
@@ -7,6 +7,13 @@ from nio_md_prep.lammps import Record, parse, write
 from nio_md_prep.validate import _wall_result
 
 ROOT=Path(__file__).parents[1]
+
+
+def test_all_production_studies_use_safe_communication_cutoff():
+    for path in sorted((ROOT/"studies").glob("*.toml")):
+        config=tomllib.loads(path.read_text())
+        assert config["protocol"]["communication_cutoff"] >= 20.0, path.name
+
 
 def packed_fixture(tmp_path, shift=(15.0,10.0,62.0), swap=False):
     tmp_path.mkdir(parents=True,exist_ok=True)
