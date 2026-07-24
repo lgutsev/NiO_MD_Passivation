@@ -11,6 +11,7 @@ hold_400K_steps = 1000000
 hold_400K_timestep = 0.5
 heat_400K_steps = 400000
 heat_400K_timestep = 0.5
+communication_cutoff = 20.0
 wall_clearance = 30.0
 deposition_lower_wall = "EDGE"
 production_lower_wall_300 = "EDGE"
