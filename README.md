@@ -294,9 +294,10 @@ Every completed build writes `deposition.in`, `hold-300K.in`,
 | Optional long 300 K continuation | `held-300K.data` | 5,000,000 steps | `equilibrated-300K.data` |
 | Optional long 400 K continuation | `equilibrated-300K.data` | 3,000,000 steps | `annealed-400K.data` |
 
-Primary and CoSAM depositions use FIRE relaxation. Sequential depositions use
-the more conservative SD/CG sequence described above while the completed first
-layer is fixed. Both write `optimized.data`, `optimized.restart`,
+Primary and CoSAM depositions use the established displacement-limited CG
+relaxation. Sequential depositions use the more conservative SD/CG sequence
+described above while the completed first layer is fixed. Both write
+`optimized.data`, `optimized.restart`,
 `optimized.lammpstrj`, and `optimization-summary.txt` before dynamics begins.
 
 The moving upper wall ends 30 Å above the NiO reference surface:

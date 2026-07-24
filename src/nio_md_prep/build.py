@@ -403,9 +403,9 @@ minimize 0.0 1.0 20000 200000
         stage2_groups=""
         minimization_lock=""
         minimization_unlock=""
-        minimization_protocol="""min_style fire
-min_modify dmax 0.05
-minimize 0.0 1.0 20000 200000
+        minimization_protocol="""min_style cg
+min_modify dmax 0.05 line quadratic
+minimize 0.0 1.0 10000 100000
 """
         velocity_initialization=f"velocity all create 5.0 {velocity_seed} mom yes rot yes dist gaussian"
         deposition_temperature_start=5.0
