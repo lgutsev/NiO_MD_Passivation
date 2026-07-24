@@ -1,138 +1,422 @@
-## LAMMPS simulations of a  passivated NiO corrugated surface
-This code is present as-is with the goal of replicating the data presented in [doi/10.1002/aenm.202405367](https://onlinelibrary.wiley.com/doi/10.1002/aenm.202405367).  It can be modified to change the surface or the passivants used to suit the user’s task. 
+# LAMMPS simulations of passivated corrugated NiO surfaces
 
-This code has also been utilized in: [doi.org/10.1039/D6EE00231E](https://pubs.rsc.org/ee/article-abstract/19/6/2069/1232999/Multiphosphorylated-molecules-for-buried-interface?redirectedFrom=fulltext) 
+This repository began as a practical companion to the LAMMPS calculations
+reported in
+[Advanced Energy Materials, 2024, 2405367](https://onlinelibrary.wiley.com/doi/10.1002/aenm.202405367).
+The original task was straightforward in concept: prepare a corrugated NiO
+surface, place Me-4PACz or a Me-4PACz/MPTMS-OH mixture above it, bring those
+molecules down with a moving wall, and follow the resulting film at 300 and
+400 K. The same code base has also been used in
+[Energy & Environmental Science, 2026, D6EE00231E](https://pubs.rsc.org/ee/article-abstract/19/6/2069/1232999/Multiphosphorylated-molecules-for-buried-interface?redirectedFrom=fulltext).
 
+The project has since grown into a reproducible workflow for comparing pure
+SAMs, simultaneously deposited CoSAMs, and sequential second-layer
+depositions. It retains the physical picture and force-field choices of the
+original work, but replaces the historical spreadsheet assembly with a
+configuration-driven Python package, validated LAMMPS inputs, staged Slurm
+launchers, and coordinate-based coverage analysis.
 
-For this project, the goal of the LAMMPs portion of the paper was to create a corrugated NiO-surface and passivate it with either just Me-4PACz or copassivate it with Me-4PACz and MPTMS-OH. After  applying the passivants to the surface via a moving wall potential we  ran it as a LAMMPS production run at 300K and 400K .  The features of the LAMMPs calculation are discussed more thoroughly in the draft. We will focus on file preparation here.
+The repository is provided as-is so that the published calculations can be
+reproduced and the surface, passivants, loading, or protocol can be adapted to
+new tasks.
 
-## Overall Workflow
-The overall work process is shown in a diagram below:
-![Plan](images/workflow.jpg)
+## Scientific picture
 
-## Corrugated Surface Preparation
+The corrugated NiO surface was constructed from the NiO(110) model with Atomic
+Simulation Environment tools and is stored as an authoritative LAMMPS data
+file. Ligands are placed relatively loosely in the vacuum above it with
+Packmol. We deliberately do not ask Packmol to create an already dense
+monolayer: Me-4PACz aggregates experimentally, and the simulation is intended
+to let the film form dynamically rather than assume its final packing.
 
-In this module we will be focused on preparing the files to prepare the calculation. Some notes and details: 
+After a restrained relaxation, a repulsive 12-6 Lennard-Jones upper wall
+moves toward the surface while the lower wall prevents atoms from leaving the
+bottom of the nonperiodic cell. The wall collects the initially dispersed
+ligands and creates the compressed film. The deposited state then becomes the
+common starting point for independent 300 and 400 K branches.
 
-The corrugated surface, with (011) & (011) cuts,  was prepared with Atomic Simulation Environment (ASE) tools. The passivant was added above the corrugated surface via PackMol. We didn’t attempt to use PackMol to pack the passivant tightly since there is experimental data indicating that  Me4PAcZ agglomerates. As such, we used a large vacuum above the surface and placed passivant relatively loosely. Afterwards, it was collected and applied to the surface during the LAMMPs simulation via a 12-6 LJ moving wall potential which ultimately replicated the agglomerating behavior seen in experiment.
+Three related questions can therefore be separated:
 
-## Forcefield Parameter Preparation
-The OPLS-AA parameters and charges of the passivants  were generated with the LigParGen server:  <https://traken.chem.yale.edu/ligpargen/>  we want the .lmp format which we use as ligand.lmp
+- **Pure SAM:** what film does Me-4PACz form by itself?
+- **CoSAM:** what happens when Me-4PACz and a secondary ligand compete for the
+  surface during the same deposition?
+- **Sequential deposition:** what happens when the secondary ligand is added
+  only after a Me-4PACz film has already formed?
 
-Now about the preparation of the files:
+The high-dose pure Me-4PACz system controls for the possibility that an
+apparent coverage improvement is caused simply by supplying more molecules.
 
-force\_field\_settings.lmp : which defines the pair, bond, angle, dihedral, improper force field coefficients.  The OPLS-AA parameters are generated as described above, note that they are LJ-style. For NiO we used OPENKim Buckingham parameters; however, the geometric mixing rule for generating mixed pair coefficients requires a 3-parameter forcefield (LJ). Thus, we had to generate our own NiO LJ parameters by fitting to experimental data & DFT calculations (110 slab, 8 layers deep). So the mixed parameters were LJ while the NiO parameters were Buckingham. Modifications to the OPLS-AA parameters also needed to be further modified in our case, the default phosphanate groups are too adhesive towards one another.  
+## Workflow at a glance
 
-### Header Preparation
-We add this header manually:
-\# Include the force field settings here
+```mermaid
+flowchart TD
+    A["LigParGen files + study TOML"] --> B["Loose Packmol placement"]
+    S["Corrugated NiO surface"] --> C["Programmatic assembly and validation"]
+    B --> C
+    C --> D["Moving-wall deposition"]
+    D --> E["Compressed 300 K hold"]
+    D --> F["300→400 K heating + 400 K hold"]
+    E --> G["Coverage and morphology analysis"]
+    F --> G
+    E --> H["Sequential layer-2 build"]
+    H --> I["Sequential moving-wall deposition"]
+    I --> J["Independent 300/400 K branches"]
+    J --> G
+```
 
-bond\_style      harmonic
+The original workflow sketch is retained as part of the repository's
+scientific history:
 
-angle\_style     harmonic
+![Original workflow plan](images/workflow.jpg)
 
-dihedral\_style  opls  
+## Systems supplied with the repository
 
-improper\_style  harmonic
+The base system contains 180 Me-4PACz molecules on the 21,060-atom NiO
+surface. Secondary counts are derived from the stated equal-stock-volume
+assumption using
 
-pair\_style      lj/cut/coul/long 10.0 8.0 
+```text
+Nsecondary / Nprimary =
+    (Csecondary / MWsecondary) / (Cprimary / MWprimary)
+```
 
-kspace\_style    pppm 1e-4
+with 0.5 mg/mL Me-4PACz and 0.3 mg/mL secondary stock concentrations.
+Molecular weights are calculated from the imported LigParGen mass inventory,
+and the unrounded ratio and rounding decision are written to
+`ratio_report.json`.
 
-kspace\_modify   slab 3.0
+| System | Ligand inventory | Total ligands | Final atoms | Purpose |
+|---|---:|---:|---:|---|
+| Me-4PACz | 180 Me-4PACz | 180 | 29,160 | Experimental baseline |
+| Me-4PACz/MeO-2PACz | 180 + 107 | 287 | 33,547 | CoSAM or inventory-matched sequential pair |
+| Me-4PACz/MeO-4PADBC | 180 + 77 | 257 | 33,703 | CoSAM or inventory-matched sequential pair |
+| Me-4PACz/DCZ-4P | 180 + 59 | 239 | 33,644 | CoSAM or inventory-matched sequential pair |
+| High-dose Me-4PACz | 261 Me-4PACz | 261 | 32,805 | Mean-molecule-count loading control |
 
-This is done because we need to manually modify the phosphanate groups anyways. 
+The CoSAM and corresponding completed sequential system contain exactly the
+same molecular inventory. Their difference is deposition history, not total
+loading. The 261-molecule control is the arithmetic mean of the three mixed
+totals (239, 257, and 287); it is a molecule-count control, not an exact
+anchor-count control, because DCZ-4P has two phosphonic-acid anchors.
 
-## Topology and input file. 
+An experimental 1:1 solution-mixing statement does not by itself establish
+equal molecular counts. All production counts therefore remain explicit in
+the study TOML files. A molar 1:1 alternative can be represented by setting
+both ligand counts to 180 and using
+`composition.basis = "molar_1_to_1"`.
 
-topology\_output.lmp given the corrugated NiO.xyz file and the generated .lmp parameter file this is straightforward to generate. The masses list has to be modified afterwards since the surface atoms are not included, but they are included in the atoms list so it’s a small modification.
+## Force field
 
-lammps.in prepared via the typical manner described in the manual of the program.
+Passivant charges and bonded OPLS-AA parameters are generated independently
+with the [LigParGen server](https://traken.chem.yale.edu/ligpargen/) and stored
+in LAMMPS `.lmp` format. The package does not contact LigParGen, run BOSS, or
+invent missing parameters.
 
-## Libraries Used
+The model preserves the hybrid treatment developed for the original work:
 
-Atomic Simulation Environment (ASE) , along with its dependencies, and pandas.
+- ligand-ligand nonbonded interactions use Lennard-Jones plus long-range
+  Coulomb terms;
+- NiO self-interactions use the OPENKIM Buckingham parameters from the
+  reviewed surface model;
+- ligand/NiO cross interactions use pseudo-LJ Ni/O values fitted against
+  experiment and DFT calculations for an eight-layer NiO(110) slab, followed
+  by geometric mixing;
+- phosphonate LJ terms and selected torsions are corrected because the
+  unmodified LigParGen phosphonate groups are too adhesive toward one another;
+- electrostatics use PPPM with slab correction.
 
-## Conclusion
+The generated force-field header is equivalent to:
 
-If there’s any problems or errors please report them to me @ <lgutsev@outlook.com>
+```lammps
+bond_style      harmonic
+angle_style     harmonic
+dihedral_style  hybrid opls charmm
+improper_style  cvff
+pair_style      hybrid lj/cut/coul/long 10.0 8.0 buck/coul/long 10.0 8.0
+pair_modify     pair lj/cut/coul/long mix geometric
+kspace_style    pppm 1e-4
+kspace_modify   slab 3.0
+special_bonds   amber
+```
 
-Hope this code is helpful. 
+Force-field coefficients remain in
+`force_field_settings_lammps_with_header.lmp`. Generated state files use
+`write_data ... nocoeff`, which prevents stale coefficients from being copied
+into intermediate structures.
 
-## Reproducible preparation package
+## Installation
 
-The notebook workflow is retained as a legacy reference. New builds use the offline, configuration-driven `nio-md-prep` package. Install it from this checkout with `python -m pip install -e .`. LigParGen and Codex are not expected to run on LONI; prepare and validate locally, then copy the completed build to LONI manually.
+Python 3.11 or newer and Packmol are required for building systems. LAMMPS is
+required only for validation smoke tests and simulation.
 
-### Add a new molecule
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e .
+```
 
-1. Run LigParGen independently and download its LAMMPS `.lmp` output. This package does not contact LigParGen, invoke BOSS, or invent parameters.
-2. Run `nio-md-prep init-molecule NAME`.
-3. Put the downloaded file at the exact displayed path, named `ligpargen.lmp`.
-4. Review the generated `molecule.toml`, including expected charge, role, anchors, and any reviewed override.
-5. Run `nio-md-prep inspect-molecule NAME`.
-6. Reference the slug in a study TOML and supply every molecule count explicitly.
-7. Run `nio-md-prep build studies/your-study.toml --output builds/your-study`, then `nio-md-prep validate builds/your-study`.
-8. Copy the completed directory to LONI manually.
-
-The experimental 1:1 solution-mixing ratio does not by itself establish equal molecular counts in a simulation. The supplied study templates therefore contain no invented production counts. DCZ-4P is recorded as a two-phosphonic-acid-anchor molecule.
-
-For CoSAM, both species are packed together and undergo one moving-wall protocol. Sequential preparation is genuinely two-stage. First deposit Me-4PACz and complete its compressed 300 K hold. Then use that exact result as the primary component, for example: `nio-md-prep prepare-sequential-stage2 studies/me-4pacz-then-dcz-4p.toml --primary-final prepared/me-4pacz-alone/held-300K.data --output prepared/me-4pacz-then-dcz-4p`. Do not use the later expanded-box `equilibrated-300K.data`: the compressed `held-300K.data` preserves the deposited Me-4PACz film while retaining the vacuum needed to pack layer 2. During the stage-2 FIRE relaxation, stage 1 is fixed and only the newly packed molecules can move. The lock is then removed, only the new molecules receive fresh 300 K velocities, and the complete system evolves together during the 300 K moving-wall deposition and compressed hold. The two species are never approximated as a common initial packing.
-
-The Cao2025 inventory uses 180 Me-4PACz molecules. Under the provisional equal-stock-volume basis, the primary stock is 0.5 mg/mL and every secondary is 0.3 mg/mL. The generator records the equation `Nsecondary/Nprimary = (Csecondary/MWsecondary)/(Cprimary/MWprimary)`, molecular weights calculated directly from the imported LigParGen atom/mass inventory, and nearest-integer rounding in `ratio_report.json`. The resolved secondary counts are 107 MeO-2PACz, 77 MeO-4PADBC, and 59 DCZ-4P. A molar 1:1 alternative is supported by setting both explicit counts to 180 and `composition.basis = "molar_1_to_1"`.
-
-With the authoritative 21,060-atom corrugated NiO surface, final assembled atom counts are 29,160 for Me-4PACz alone, 33,547 for Me-4PACz/MeO-2PACz, 33,703 for Me-4PACz/MeO-4PADBC, and 33,644 for Me-4PACz/DCZ-4P. CoSAM and corresponding completed sequential preparations have the same inventory totals.
-
-`studies/me-4pacz-high-dose.toml` is a pure-ligand loading control containing 261 Me-4PACz molecules: the exact arithmetic mean of the three mixed-system ligand totals (239, 257, and 287). Its assembled system contains 32,805 atoms. It uses the same deposition, compressed 300 K hold, and gradual-heating 400 K branch as the primary-deposition studies. The control is intended to distinguish an effect of supplying more ligand molecules from an effect of secondary-ligand chemistry or deposition order; it is not a literal solution-volume or exact anchor-count model because DCZ-4P has two phosphonic-acid anchors. It is array index 4 in the primary-deposition launchers.
-
-Complete builds write `deposition.in`, independent `hold-300K.in` and `hold-400K.in` branches, `equilibrate-300K.in`, and `anneal-400K.in`. They preserve the corrected hybrid LJ/Buckingham styles, geometric pseudo-LJ mixing, PPPM 1e-4 slab treatment, moving wall, and long 300/400 K continuations. Deposition keeps a lower recoil wall at the box floor active during minimization, writes `optimized.data`, `optimized.restart`, `optimized.lammpstrj`, and `optimization-summary.txt`, then heats and lowers the upper wall continuously for 600,000 steps at 0.5 fs (300 ps). Primary depositions retain FIRE minimization; sequential stage-2 depositions hold the completed first layer fixed and use a conservative steepest-descent pre-relaxation followed by conjugate gradient. The wall height is included in every thermo record. Both compressed-temperature branches read the same `deposited.data` and keep the upper wall fixed at the deposition endpoint, 69.615 Å. The 300 K branch holds for 500 ps. The 400 K branch heats gradually from 300 to 400 K over 400,000 steps at 0.5 fs (200 ps), writes `heated-400K.*`, and then holds at 400 K for 1,000,000 steps (500 ps), writing separate `held-400K.*` results. Either temperature can therefore be run without altering the other. The subsequent 5 ns 300 K production stage starts from `held-300K.data` and releases that compressed-wall constraint according to the automatic production-wall policy. `protocol_notes.txt` documents that the established executable decks use 500 fs pressure damping although the prose value is 1000 fs.
-
-The deposition wall ends 30 Å above the surface (`69.615 Å` for this surface). Each continuation stage reads its real predecessor, then freezes an automatic upper wall at the next 10 Å increment above `max(120 Å, max_atom_z + 30 Å)` and expands only the nonperiodic box ceiling to retain a 5 Å margin. A numeric `production_upper_wall` is a manual override. Missing predecessor states defer their stage validation. Lower recoil walls use LAMMPS `EDGE`, which is the current lower box boundary (`-15 Å` for the supplied surface), in minimization and every dynamics stage. Generated text data outputs use `write_data ... nocoeff`; force-field coefficients remain exclusively in the separately included force-field file.
-
-Run `nio-md-prep validate BUILD_DIRECTORY` after `deposited.data` becomes available to smoke-test both compressed-temperature branches, after `held-300K.data` becomes available to resolve and smoke-test the long 300 K stage, and again after `equilibrated-300K.data` becomes available to resolve and smoke-test the 400 K stage. Validation refreshes the manifest’s output hashes after all reports and resolution metadata have reached their final state. On LONI, `scripts/run_hold_array.sbatch` and `scripts/run_hold_400K_array.sbatch` launch the independent 300 and 400 K holds with the same array indices used by the deposition job.
-
-Sequential second-layer jobs deliberately use the same manual stage structure as the primary systems. Submit only the three-task builder array first with `sbatch scripts/build_sequential_systems.sbatch`. Array indices are identical in every stage: `0` is DCZ-4P, `1` is MeO-2PACz, and `2` is MeO-4PADBC. After all three prepared directories exist, submit `sbatch scripts/run_sequential_deposition_array.sbatch`. Only after all three depositions finish successfully should you submit `sbatch scripts/run_sequential_hold_array.sbatch`. Each builder task invokes only Python and Packmol for one system: it does not run LAMMPS validation and does not submit deposition or hold jobs.
-
-For an existing prepared directory that already contains deposition or hold results, run `nio-md-prep refresh-inputs STUDY_CONFIG --output PREPARED_DIRECTORY`. This regenerates only the LAMMPS stage inputs and protocol notes; it does not run Packmol, rebuild topology, or modify simulation data, restarts, logs, or trajectories.
-
-If Packmol is on `PATH`, a build runs it. Otherwise `packmol.inp` is retained and validation reports the exact offline command `packmol < packmol.inp`. The corrected examples are authoritative: hybrid LJ/Buckingham, geometric ligand/surface mixing, PPPM `1e-4`, slab correction `3.0`, `special_bonds amber`, `units real`, `atom_style full`, and `boundary p p f` are preserved.
-
-## Why Excel is no longer required
-
-The historical spreadsheet step pasted Packmol coordinates into replicated LigParGen atom records, shifted atom, molecule, and topology IDs, appended the shifted NiO atoms, and manually corrected LAMMPS header counts and box bounds. That was a manual data join, not part of the scientific method.
-
-`nio-md-prep` now performs that join programmatically. Packmol supplies only coordinates and element labels; LigParGen supplies atom order, charges, types, masses, coefficients, and bonded topology; the packaged NiO file supplies the unchanged surface. The assembler checks the element sequence of every packed molecule, gives every physical ligand a unique positive molecule ID, remaps all topology and type namespaces from one authoritative mapping, assigns surface molecule ID 0, and calculates counts, bounds, and charge from the assembled records. Excel and manual pasting are no longer supported or required.
-
-The component order for a CoSAM is study-manifest species order, then copies in Packmol order, then NiO. Sequential stage 2 preserves the stage-1 records and appends only the secondary ligand; it does not repack the established primary layer.
-
-The user workflow is:
-
-1. Obtain each LigParGen `.lmp` file manually.
-2. Place it at `inputs/molecules/<molecule-name>/ligpargen.lmp`.
-3. Run `nio-md-prep inspect-molecule <molecule-name>`.
-4. Build the selected study.
-5. If Packmol was unavailable, run `packmol < packmol.inp`, then rerun the build with `--packed-xyz packed.xyz`.
-6. Run `nio-md-prep validate <build-directory>`.
-7. Transfer the completed calculation files to LONI manually.
-8. Run LAMMPS on LONI; neither Codex nor LigParGen is installed or run there.
-
-LigParGen remains a manual external step. The legacy notebooks, historical examples, and paper Figure S27 are retained only as scientific provenance.
-
-## Coordinate-based coverage analysis
-
-Completed LAMMPS trajectories can be analyzed without OVITO screenshots or
-color-pixel counting:
+Install the optional analysis dependencies when coverage analysis is needed:
 
 ```bash
 python -m pip install -e '.[analysis]'
-nio-md-prep analyze-coverage prepared/me-4pacz-alone \
-  --trajectory equilibration-300K.lammpstrj \
-  --last-frames 100 \
-  --timestep-fs 1.0
 ```
 
-The analyzer calculates the periodic projected van der Waals footprint of all
-ligands and reports total, uncovered, component-resolved, and overlapping
-coverage with block-based uncertainty. See
-[`docs/coverage-analysis.md`](docs/coverage-analysis.md) for the method,
-outputs, numerical-convergence check, and trajectory-specific timestep
-options.
+On QBD, the supplied launchers load the current Python and LAMMPS modules.
+The build jobs use the `single` partition. Molecular-dynamics jobs use one
+complete 64-core `workq` node with one MPI rank per core.
+
+## Building a primary or CoSAM system
+
+Each study is defined in `studies/*.toml`. The configuration records the
+molecule identities and counts, deposition and hold lengths, wall policy, and
+composition basis.
+
+A single system can be prepared manually:
+
+```bash
+nio-md-prep build studies/me-4pacz-alone.toml \
+    --output prepared/me-4pacz-alone
+
+nio-md-prep validate prepared/me-4pacz-alone
+```
+
+On QBD, the primary builder prepares and validates the five primary-deposition
+systems:
+
+```bash
+sbatch scripts/build_real_systems.sbatch
+```
+
+The corresponding array order is fixed across build-independent simulation
+stages:
+
+| Array index | Prepared system |
+|---:|---|
+| 0 | `me-4pacz-alone` |
+| 1 | `me-4pacz-meo-2pacz-cosam` |
+| 2 | `me-4pacz-meo-4padbc-cosam` |
+| 3 | `me-4pacz-dcz-4p-cosam` |
+| 4 | `me-4pacz-high-dose` |
+
+The jobs are intentionally manual stages rather than an automatic dependency
+chain. After checking that the build finished, submit deposition:
+
+```bash
+sbatch scripts/run_deposition_array.sbatch
+```
+
+After every required `deposited.data` exists, the temperature branches can be
+submitted independently, including at the same time:
+
+```bash
+sbatch scripts/run_hold_array.sbatch
+sbatch scripts/run_hold_400K_array.sbatch
+```
+
+The 400 K branch does not consume or modify `held-300K.data`; both branches
+read the same `deposited.data`.
+
+## Sequential second-layer deposition
+
+Sequential preparation is not a differently labeled CoSAM. It is a genuine
+two-stage experiment.
+
+First, Me-4PACz is deposited by itself and its compressed 300 K hold is
+completed. The exact
+`prepared/me-4pacz-alone/held-300K.data` state becomes the substrate for all
+three sequential systems. We use this compressed state rather than the later
+expanded-box `equilibrated-300K.data` so that the established film is
+preserved while sufficient vacuum remains above it for packing layer 2.
+
+During stage-2 preparation:
+
+1. every stage-1 coordinate, topology record, velocity, and box bound is
+   preserved;
+2. Packmol places only the secondary molecules above the existing film;
+3. the completed Me-4PACz layer is fixed during a conservative
+   steepest-descent/conjugate-gradient relaxation;
+4. only the newly added molecules receive fresh 300 K velocities;
+5. the lock is removed and the complete system evolves together during
+   moving-wall deposition.
+
+Build the three systems only after the Me-4PACz 300 K hold is available:
+
+```bash
+sbatch scripts/build_sequential_systems.sbatch
+```
+
+Sequential array indices remain identical in every later stage:
+
+| Array index | Prepared system |
+|---:|---|
+| 0 | `me-4pacz-then-dcz-4p` |
+| 1 | `me-4pacz-then-meo-2pacz` |
+| 2 | `me-4pacz-then-meo-4padbc` |
+
+After all three builds finish, run deposition:
+
+```bash
+sbatch scripts/run_sequential_deposition_array.sbatch
+```
+
+After all three depositions finish, launch either or both independent
+temperature branches:
+
+```bash
+sbatch scripts/run_sequential_hold_array.sbatch
+sbatch scripts/run_sequential_hold_400K_array.sbatch
+```
+
+No builder submits a simulation job, and no deposition job submits a hold job.
+Each stage stops after its own work so that the outputs can be inspected before
+the next scientific step.
+
+## Simulation stages and wall policy
+
+Every completed build writes `deposition.in`, `hold-300K.in`,
+`hold-400K.in`, `equilibrate-300K.in`, and `anneal-400K.in`.
+
+| Stage | Source | Default duration | Main output |
+|---|---|---:|---|
+| Moving-wall deposition | `topology_output.lmp` | 600,000 × 0.5 fs = 300 ps | `deposited.data` |
+| Compressed 300 K hold | `deposited.data` | 1,000,000 × 0.5 fs = 500 ps | `held-300K.data` |
+| Gradual heating | `deposited.data` | 400,000 × 0.5 fs = 200 ps | `heated-400K.data` |
+| Compressed 400 K hold | heated 400 K state | 1,000,000 × 0.5 fs = 500 ps | `held-400K.data` |
+| Optional long 300 K continuation | `held-300K.data` | 5,000,000 steps | `equilibrated-300K.data` |
+| Optional long 400 K continuation | `equilibrated-300K.data` | 3,000,000 steps | `annealed-400K.data` |
+
+Primary and CoSAM depositions use FIRE relaxation. Sequential depositions use
+the more conservative SD/CG sequence described above while the completed first
+layer is fixed. Both write `optimized.data`, `optimized.restart`,
+`optimized.lammpstrj`, and `optimization-summary.txt` before dynamics begins.
+
+The moving upper wall ends 30 Å above the NiO reference surface:
+`69.615 Å` for the supplied model. Its instantaneous location is written as
+`v_zwall` in the deposition thermo output. The compressed hold stages keep the
+upper wall fixed at that endpoint. Lower recoil walls use LAMMPS `EDGE`, the
+current lower boundary (`-15 Å` in the supplied surface).
+
+The optional long continuations resolve a less restrictive upper wall from
+the actual preceding structure:
+
+```text
+ceil(max(120 Å, max_atom_z + 30 Å) / 10 Å) × 10 Å
+```
+
+Only the nonperiodic cell ceiling is expanded, retaining a 5 Å margin. A
+numeric `production_upper_wall` in the study file overrides this automatic
+policy.
+
+## Validation and safe input refresh
+
+`nio-md-prep` checks atom and topology counts, type remapping, charge,
+coordinate bounds, molecule identities, force-field coverage, surface
+provenance, wall placement, stage ordering, and—when LAMMPS is available—
+zero-step executable inputs. Build provenance and hashes are recorded in
+`assembly_manifest.json` and `input_hashes.json`.
+
+Validation can be rerun as real predecessor files become available:
+
+```bash
+nio-md-prep validate prepared/SYSTEM_NAME
+```
+
+If the topology is already prepared and only the generated LAMMPS inputs need
+an update, use:
+
+```bash
+nio-md-prep refresh-inputs studies/STUDY_NAME.toml \
+    --output prepared/SYSTEM_NAME
+```
+
+This command regenerates stage inputs and protocol notes only. It does not run
+Packmol, rebuild topology, or modify simulation data, restarts, logs, or
+trajectories.
+
+## Adding another passivant
+
+1. Generate and download the LigParGen LAMMPS file independently.
+2. Run `nio-md-prep init-molecule NAME`.
+3. Place the downloaded file at the displayed path as `ligpargen.lmp`.
+4. Review `molecule.toml`, especially expected charge, role, and number of
+   phosphonic-acid anchors.
+5. Run `nio-md-prep inspect-molecule NAME`.
+6. Add a study TOML with explicit molecule counts.
+7. Build and validate the study.
+
+If Packmol is unavailable during a local build, the package retains
+`packmol.inp`. Run `packmol < packmol.inp`, then repeat the build with
+`--packed-xyz packed.xyz`.
+
+## Why Excel is no longer part of system preparation
+
+The historical workflow used a spreadsheet to paste Packmol coordinates into
+replicated LigParGen atom records, shift atom/molecule/topology IDs, append the
+NiO surface, and repair the LAMMPS header manually. This was a data-joining
+step rather than part of the scientific method.
+
+The current assembler performs that operation programmatically:
+
+- Packmol supplies coordinates and element order;
+- LigParGen supplies charges, atom types, masses, coefficients, and bonded
+  topology;
+- the packaged NiO file supplies the unchanged surface;
+- `nio-md-prep` verifies element order, remaps every namespace, assigns unique
+  molecule IDs, and calculates counts, bounds, and total charge.
+
+The legacy notebooks and historical examples remain in the repository as
+scientific provenance and as a record of how the original calculation was
+constructed. They are not required for new builds.
+
+## Coordinate-based coverage analysis
+
+Coverage no longer depends on coloring an OVITO image and counting pixels.
+The analysis module reads the actual LAMMPS coordinates and assembly manifest,
+projects ligand van der Waals footprints into the periodic surface plane, and
+reports total, uncovered, component-resolved, and overlapping coverage with
+block-based uncertainty.
+
+Analyze one trajectory with:
+
+```bash
+nio-md-prep analyze-coverage prepared/me-4pacz-alone \
+    --trajectory hold-300K.lammpstrj \
+    --last-frames 100 \
+    --timestep-fs 0.5
+```
+
+On QBD, the batch launcher finds every available `hold-300K.lammpstrj` and
+`hold-400K.lammpstrj`, analyzes them on the `single` partition, and builds one
+consolidated workbook:
+
+```bash
+sbatch scripts/analyze_coverage_holds.sbatch
+```
+
+The final workbook is written to:
+
+```text
+prepared/coverage_summary.xlsx
+```
+
+See [`docs/coverage-analysis.md`](docs/coverage-analysis.md) for the numerical
+method, output columns, convergence controls, and per-study files.
+
+## Repository map
+
+| Path | Contents |
+|---|---|
+| `inputs/molecules/` | Reviewed LigParGen files and molecule manifests |
+| `inputs/surfaces/` | Authoritative corrugated NiO surface |
+| `studies/` | Explicit study compositions and protocols |
+| `src/nio_md_prep/` | Assembly, validation, input generation, and analysis code |
+| `scripts/` | QBD build, simulation, and analysis launchers |
+| `prepared/` | Generated systems and simulation results; not source data |
+| `examples/` | Historical calculations retained for provenance |
+
+## Contact
+
+Problems, corrections, and useful extensions are welcome at
+<lgutsev@outlook.com>.
+
+I hope this code is helpful.
