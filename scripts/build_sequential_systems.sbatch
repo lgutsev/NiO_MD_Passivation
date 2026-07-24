@@ -24,7 +24,8 @@ for executable in python packmol nio-md-prep; do
     fi
 done
 
-primary="prepared/me-4pacz-alone/held-300K.data"
+prepared_root="${PREPARED_ROOT:-prepared}"
+primary="${prepared_root}/me-4pacz-alone/held-300K.data"
 if [[ ! -s "${primary}" ]]; then
     echo "ERROR: ${primary} is missing; finish the Me-4PACz 300 K hold first." >&2
     exit 1
@@ -37,9 +38,9 @@ systems=(
 )
 
 name="${systems[${SLURM_ARRAY_TASK_ID}]}"
-output="prepared/${name}"
+output="${prepared_root}/${name}"
 
-mkdir -p prepared
+mkdir -p "${prepared_root}"
 
 if [[ -e "${output}" ]]; then
     echo "ERROR: ${output} already exists; remove or archive it before rebuilding." >&2
@@ -47,9 +48,18 @@ if [[ -e "${output}" ]]; then
 fi
 
 echo "BUILDING SEQUENTIAL STAGE 2: ${name} (array index ${SLURM_ARRAY_TASK_ID})"
-nio-md-prep prepare-sequential-stage2 "studies/${name}.toml" \
-    --primary-final "${primary}" \
+build_args=(
+    "studies/${name}.toml"
+    --primary-final "${primary}"
     --output "${output}"
+)
+if [[ -n "${PACKMOL_SEED:-}" ]]; then
+    build_args+=(--packmol-seed "${PACKMOL_SEED}")
+fi
+if [[ -n "${VELOCITY_SEED:-}" ]]; then
+    build_args+=(--velocity-seed "${VELOCITY_SEED}")
+fi
+nio-md-prep prepare-sequential-stage2 "${build_args[@]}"
 
 for required in topology_output.lmp force_field_settings.lmp deposition.in hold-300K.in; do
     if [[ ! -s "${output}/${required}" ]]; then
