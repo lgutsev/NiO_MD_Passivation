@@ -41,11 +41,12 @@ if [[ ! -d "${prepared_root}" ]]; then
 fi
 
 # Submission-time overrides:
-# sbatch --export=ALL,LAST_FRAMES=0,CONTACT_CUTOFF=auto \
+# sbatch --export=ALL,LAST_FRAMES=0,CONTACT_CUTOFF=3.25 \
 #   scripts/analyze_interface_holds.sbatch
 last_frames="${LAST_FRAMES:-100}"
 blocks="${BLOCKS:-5}"
-contact_cutoff="${CONTACT_CUTOFF:-auto}"
+contact_cutoff="${CONTACT_CUTOFF:-3.25}"
+sensitivity_cutoffs="${SENSITIVITY_CUTOFFS:-3.0,3.25,3.5}"
 surface_coordination_cutoff="${SURFACE_COORDINATION_CUTOFF:-2.8}"
 persistence_threshold="${PERSISTENCE_THRESHOLD:-0.50}"
 rdf_rmax="${RDF_RMAX:-15.0}"
@@ -61,6 +62,7 @@ echo "Python: $(python --version 2>&1)"
 echo "LAST_FRAMES: ${last_frames} (0 means all frames)"
 echo "BLOCKS: ${blocks}"
 echo "CONTACT_CUTOFF: ${contact_cutoff} A"
+echo "SENSITIVITY_CUTOFFS: ${sensitivity_cutoffs} A"
 echo "SURFACE_COORDINATION_CUTOFF: ${surface_coordination_cutoff} A"
 echo "PERSISTENCE_THRESHOLD: ${persistence_threshold}"
 echo "RDF_RMAX: ${rdf_rmax} A"
@@ -75,7 +77,7 @@ while IFS= read -r -d '' trajectory; do
     run_directory="$(dirname "${trajectory}")"
     trajectory_name="$(basename "${trajectory}")"
     stage="${trajectory_name%.lammpstrj}"
-    system_name="$(basename "${run_directory}")"
+    system_name="${run_directory#${prepared_root}/}"
     output_directory="${run_directory}/interface-analysis-${stage}"
 
     echo
@@ -101,6 +103,7 @@ while IFS= read -r -d '' trajectory; do
         --last-frames "${last_frames}" \
         --blocks "${blocks}" \
         --contact-cutoff "${contact_cutoff}" \
+        --sensitivity-cutoffs "${sensitivity_cutoffs}" \
         --surface-coordination-cutoff "${surface_coordination_cutoff}" \
         --persistence-threshold "${persistence_threshold}" \
         --rdf-rmax "${rdf_rmax}" \
@@ -116,7 +119,7 @@ while IFS= read -r -d '' trajectory; do
         echo "FAILED: ${system_name}/${stage} after ${elapsed} seconds" >&2
     fi
 done < <(
-    find "${prepared_root}" -mindepth 2 -maxdepth 2 -type f \
+    find "${prepared_root}" -mindepth 2 -type f \
         \( -name 'hold-300K.lammpstrj' -o -name 'hold-400K.lammpstrj' \
            -o -name 'relax-300K.lammpstrj' -o -name 'relax-400K.lammpstrj' \) \
         -size +0c -print0 | sort -z
