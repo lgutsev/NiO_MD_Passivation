@@ -12,7 +12,7 @@
 set -euo pipefail
 
 module purge
-module load lammps/22Jul2025-r9.7-cpu
+module load lammps/22Jul2025-r9.3-cpu
 
 export OMP_NUM_THREADS=1
 export SINGULARITYENV_OMP_NUM_THREADS=1
