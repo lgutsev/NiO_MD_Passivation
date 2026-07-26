@@ -386,6 +386,40 @@ This command regenerates stage inputs and protocol notes only. It does not run
 Packmol, rebuild topology, or modify simulation data, restarts, logs, or
 trajectories.
 
+## Archiving completed and restartable runs
+
+The generated `prepared/` trees are not stored in Git. To retain every LAMMPS
+`.data` state and the small inputs needed to rerun it, create a ZIP archive:
+
+```bash
+nio-md-prep archive-runs prepared prepared-rerun prepared-rerun2 \
+    --output archives/nio-md-rerun-files.zip
+```
+
+On QBD, the single-core archive launcher automatically includes every
+top-level directory matching `prepared*`:
+
+```bash
+sbatch scripts/archive_prepared_runs.sbatch
+```
+
+To select roots or the output filename explicitly:
+
+```bash
+sbatch --export=ALL,\
+ARCHIVE_ROOTS="prepared-rerun prepared-rerun2",\
+ARCHIVE_OUTPUT=archives/cosam-reruns.zip \
+scripts/archive_prepared_runs.sbatch
+```
+
+The ZIP preserves the prepared-root and system-directory layout. It contains
+all `.data`, `.in`, `.lmp`, `.inp`, `.toml`, `.json`, `.txt`, and `.xyz`
+files, but excludes trajectories, logs, Slurm output, restart binaries, and
+analysis workbooks. `ARCHIVE_MANIFEST.json` records the repository commit and
+SHA-256 checksum of every collected file. `README_RERUN.txt` gives the minimal
+extraction and LAMMPS rerun instructions. Existing archives are never
+overwritten unless the direct CLI is given `--force`.
+
 ## Adding another passivant
 
 1. Generate and download the LigParGen LAMMPS file independently.
