@@ -16,6 +16,10 @@ def main(argv=None)->int:
     i=sub.add_parser("build"); i.add_argument("config",type=Path); i.add_argument("--output",type=Path,required=True); i.add_argument("--packed-xyz",type=Path); i.add_argument("--packmol-seed",type=int); i.add_argument("--velocity-seed",type=int)
     i=sub.add_parser("refresh-inputs"); i.add_argument("config",type=Path); i.add_argument("--output",type=Path,required=True)
     i=sub.add_parser("validate"); i.add_argument("output",type=Path)
+    i=sub.add_parser("archive-runs")
+    i.add_argument("roots",nargs="+",type=Path,help="prepared/work roots to archive")
+    i.add_argument("--output",type=Path,required=True)
+    i.add_argument("--force",action="store_true",help="replace an existing archive")
     i=sub.add_parser("prepare-sequential-stage2"); i.add_argument("config",type=Path); i.add_argument("--primary-final",type=Path,required=True); i.add_argument("--output",type=Path,required=True); i.add_argument("--packed-xyz",type=Path); i.add_argument("--packmol-seed",type=int); i.add_argument("--velocity-seed",type=int)
     i=sub.add_parser("analyze-coverage")
     i.add_argument("build_directory",type=Path)
@@ -65,6 +69,11 @@ def main(argv=None)->int:
         elif a.command=="build": build(a.config,a.output,packed_xyz=a.packed_xyz,packmol_seed=a.packmol_seed,velocity_seed=a.velocity_seed); print(f"Build plan written to {a.output}")
         elif a.command=="refresh-inputs": refresh_inputs(a.config,a.output); print(f"Stage inputs refreshed in {a.output}; simulation data were not modified")
         elif a.command=="validate": validate(a.output); print((a.output/"validation_report.txt").read_text(),end="")
+        elif a.command=="archive-runs":
+            from .archive import create_run_archive
+            result=create_run_archive(a.roots,a.output,force=a.force)
+            size_mib=result.uncompressed_bytes/(1024*1024)
+            print(f"Rerun archive written to {result.path} ({result.file_count} files, {size_mib:.1f} MiB uncompressed)")
         elif a.command=="analyze-coverage":
             from .analysis.coverage import analyze_coverage
             summary=analyze_coverage(
@@ -125,6 +134,6 @@ def main(argv=None)->int:
         else:
             build(a.config,a.output,primary_final=a.primary_final,packed_xyz=a.packed_xyz,packmol_seed=a.packmol_seed,velocity_seed=a.velocity_seed)
             print(f"Sequential stage 2 written to {a.output}")
-    except (ValueError,FileNotFoundError,RuntimeError) as e:
+    except (ValueError,FileNotFoundError,FileExistsError,RuntimeError) as e:
         p.exit(2,f"error: {e}\n")
     return 0
