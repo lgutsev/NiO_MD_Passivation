@@ -55,6 +55,9 @@ def main(argv=None)->int:
     i=sub.add_parser("summarize-interface")
     i.add_argument("prepared_root",type=Path)
     i.add_argument("--output",type=Path,required=True)
+    i=sub.add_parser("summarize-publication")
+    i.add_argument("prepared_root",type=Path)
+    i.add_argument("--output",type=Path,required=True)
     a=p.parse_args(argv)
     try:
         if a.command=="init-molecule":
@@ -131,6 +134,10 @@ def main(argv=None)->int:
             from .analysis.interfacial_report import create_interfacial_workbook
             workbook=create_interfacial_workbook(a.prepared_root,a.output)
             print(f"Interfacial workbook written to {workbook}")
+        elif a.command=="summarize-publication":
+            from .analysis.publication_report import create_publication_workbook
+            workbook=create_publication_workbook(a.prepared_root,a.output)
+            print(f"Publication workbook written to {workbook}")
         else:
             build(a.config,a.output,primary_final=a.primary_final,packed_xyz=a.packed_xyz,packmol_seed=a.packmol_seed,velocity_seed=a.velocity_seed)
             print(f"Sequential stage 2 written to {a.output}")

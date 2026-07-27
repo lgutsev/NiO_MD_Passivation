@@ -486,6 +486,9 @@ The final workbook is written to:
 prepared/coverage_summary.xlsx
 ```
 
+Run this job before the interfacial batch when rebuilding the complete draft
+tables, because the compact publication workbook joins both analyses.
+
 See [`docs/coverage-analysis.md`](docs/coverage-analysis.md) for the numerical
 method, output columns, convergence controls, and per-study files.
 
@@ -525,11 +528,18 @@ The workbook is written to:
 
 ```text
 prepared/interface_structure_summary.xlsx
+prepared/publication_summary.xlsx
 ```
 
 For DCZ-4P, its `Terminal States` sheet directly reports zero-, one-, and
 two-terminal anchoring populations. The `Hold vs Relax` sheet makes it
 possible to identify structures maintained only by the compressed upper wall.
+The separate `publication_summary.xlsx` contains a compact `Draft Summary`
+sheet with copy-ready mean ± block-SEM fields, a matched
+`CoSAM vs Sequential` sheet whose deltas are always sequential minus CoSAM,
+and an `All Metrics` audit sheet. It is intended for copying into a
+preliminary manuscript while the detailed workbooks remain the full audit
+trail.
 All systems use the same 600 canonical exposed-Ni atom identities mapped from
 the authoritative pristine corrugated surface, including sequential systems
 whose NiO coordinates have already evolved during stage 1.

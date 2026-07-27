@@ -181,10 +181,12 @@ sbatch scripts/analyze_interface_holds.sbatch
 ```
 
 It analyzes every available compressed `hold-300K/400K` and decompressed
-`relax-300K/400K` trajectory, then writes:
+`relax-300K/400K` trajectory, then writes both the detailed and compact
+draft-facing workbooks:
 
 ```text
 prepared/interface_structure_summary.xlsx
+prepared/publication_summary.xlsx
 ```
 
 The workbook contains:
@@ -201,12 +203,40 @@ The workbook contains:
   and 3.5 Å contact definitions;
 - `Methods`: definitions and interpretation limits.
 
+The publication workbook contains:
+
+- `Draft Summary`: one compact row per system, temperature, and film state,
+  joining projected coverage with anchor-resolved interface statistics and
+  combining each reported mean with its block SEM for direct manuscript use;
+- `CoSAM vs Sequential`: matched comparisons for each secondary molecule,
+  temperature, and film state, with every delta defined as sequential minus
+  CoSAM;
+- `All Metrics`: the complete numeric fields, random seeds, and source run
+  directories behind the compact table;
+- `Methods`: concise metric definitions and the explicit limitation that
+  block SEM is temporal sampling uncertainty within one trajectory, not
+  independent-deposition-seed uncertainty.
+
+Run the coverage batch first so the publication workbook can join both result
+sets:
+
+```bash
+sbatch --export=ALL,LAST_FRAMES=100,BLOCKS=5 \
+    scripts/analyze_coverage_holds.sbatch
+# After that job finishes:
+sbatch --export=ALL,LAST_FRAMES=100,BLOCKS=5,CONTACT_CUTOFF=3.25 \
+    scripts/analyze_interface_holds.sbatch
+```
+
 Rebuild the workbook from completed result directories without rereading the
 trajectories:
 
 ```bash
 nio-md-prep summarize-interface prepared \
     --output prepared/interface_structure_summary.xlsx
+
+nio-md-prep summarize-publication prepared \
+    --output prepared/publication_summary.xlsx
 ```
 
 Submission-time controls use environment variables:

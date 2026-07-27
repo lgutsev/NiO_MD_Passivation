@@ -140,6 +140,18 @@ else
     echo "FAILED: consolidated interfacial workbook" >&2
 fi
 
+publication_workbook="${prepared_root}/publication_summary.xlsx"
+echo
+echo "Creating publication-ready workbook: ${publication_workbook}"
+if nio-md-prep summarize-publication "${prepared_root}" \
+    --output "${publication_workbook}"; then
+    echo "PUBLICATION WORKBOOK: ${publication_workbook}"
+else
+    failed=$((failed + 1))
+    echo "FAILED: publication-ready workbook" >&2
+    echo "Run scripts/analyze_coverage_holds.sbatch first so both analyses are available." >&2
+fi
+
 echo
 echo "Interfacial-analysis batch finished."
 echo "Found: ${found}"
