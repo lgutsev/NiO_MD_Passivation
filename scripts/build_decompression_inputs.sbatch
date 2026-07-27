@@ -34,7 +34,8 @@ systems=(
 )
 
 name="${systems[${SLURM_ARRAY_TASK_ID}]}"
-output="prepared/${name}"
+prepared_root="${PREPARED_ROOT:-prepared}"
+output="${prepared_root}/${name}"
 
 if [[ ! -s "${output}/topology_output.lmp" ]]; then
     echo "ERROR: ${output}/topology_output.lmp is missing; this system has not been built." >&2

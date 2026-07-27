@@ -34,7 +34,8 @@ systems=(
 )
 
 name="${systems[${SLURM_ARRAY_TASK_ID}]}"
-run_directory="${SLURM_SUBMIT_DIR}/prepared/${name}"
+prepared_root="${PREPARED_ROOT:-prepared}"
+run_directory="${SLURM_SUBMIT_DIR}/${prepared_root}/${name}"
 
 if [[ ! -s "${run_directory}/held-400K.data" ]]; then
     echo "ERROR: ${run_directory}/held-400K.data is missing; finish the compressed 400 K hold first." >&2

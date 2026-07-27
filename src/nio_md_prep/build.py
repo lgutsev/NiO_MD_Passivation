@@ -482,9 +482,9 @@ fix_modify lego_wall energy yes
         stage2_groups=""
         minimization_lock=""
         minimization_unlock=""
-        minimization_protocol="""min_style cg
-min_modify dmax 0.05 line quadratic
-minimize 0.0 1.0 10000 100000
+        minimization_protocol="""# Brief legacy overlap-removal minimization
+min_style cg
+minimize 1.0e-4 1.0e-6 1000 10000
 """
         velocity_initialization=f"velocity all create 5.0 {velocity_seed} mom yes rot yes dist gaussian"
         deposition_temperature_start=5.0
