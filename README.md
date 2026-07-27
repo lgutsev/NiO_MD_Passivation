@@ -275,6 +275,39 @@ No builder submits a simulation job, and no deposition job submits a hold job.
 Each stage stops after its own work so that the outputs can be inspected before
 the next scientific step.
 
+### Experimental coverage-guided “lego” deposition
+
+The optional lego-style control tests whether a secondary molecule can fill a
+persistent lateral gap when it is deliberately delivered above that gap. It
+does not replace the unbiased sequential calculation.
+
+The builder reads the numerical Me-4PACz `coverage_probability.npz`, finds the
+widest periodic low-occupancy channel in `x`, shifts the periodic origin so
+that the channel is centered, and packs layer 2 inside it. A weak harmonic
+side wall acts on **stage-2 atoms only** during the conservative minimization
+and moving-wall deposition. The side wall is removed before `deposited.data`
+is written; every hold and relaxation is unbiased.
+
+The default batch submission builds only the DCZ-4P test (array index 0):
+
+```bash
+sbatch scripts/build_lego_systems.sbatch
+```
+
+Review `prepared-lego/me-4pacz-then-dcz-4p-lego/lego_plan.json`, then submit:
+
+```bash
+sbatch --array=0 \
+  --export=ALL,PREPARED_ROOT=prepared-lego,SYSTEM_SUFFIX=-lego \
+  scripts/run_sequential_deposition_array.sbatch
+```
+
+This is a deliberately biased geometric-control experiment. A favorable
+result would show that DCZ-4P *can* occupy the gap when delivered there; it
+would not demonstrate that unbiased DCZ-4P spontaneously finds the gap.
+See [`docs/lego-deposition.md`](docs/lego-deposition.md) for the method,
+controls, outputs, and commands for extending the test.
+
 ## Simulation stages and wall policy
 
 Every completed build writes `deposition.in`, `hold-300K.in`,

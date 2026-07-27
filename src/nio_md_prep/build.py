@@ -1,5 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
+from typing import Any
 import math
 from copy import deepcopy
 import hashlib, json, re, shutil, subprocess
@@ -156,6 +157,26 @@ def _surface(data: DataFile, offsets: dict[str,int], ids: dict[str,int], molecul
         f=r.fields.copy(); f[0]=str(ids["atom"]+i+1); f[1]=str(molecule); f[2]=str(type_map[int(f[2])]); rows["Atoms"].append(Record(f,r.comment))
     return rows,{"atom":len(data.sections["Atoms"]),"molecule":0}
 
+def _shift_periodic_x(data: DataFile, shift_fraction: float) -> None:
+    """Shift a periodic x origin while preserving unwrapped coordinates."""
+    xlo,xhi=data.bounds["x"]; lx=xhi-xlo
+    if lx<=0.0: raise ValueError("cannot shift a non-positive x cell")
+    widths={len(atom.fields) for atom in data.sections["Atoms"]}
+    if not widths<= {7,10}:
+        raise ValueError("periodic x shift requires 7- or 10-field Atoms records")
+    if 7 in widths:
+        for atom in data.sections["Atoms"]:
+            if len(atom.fields)==7: atom.fields.extend(("0","0","0"))
+    displacement=shift_fraction*lx
+    for atom in data.sections["Atoms"]:
+        raw=float(atom.fields[4])+displacement
+        wraps=math.floor((raw-xlo)/lx)
+        wrapped=raw-wraps*lx
+        if wrapped>=xhi:
+            wrapped-=lx; wraps+=1
+        atom.fields[4]=f"{wrapped:.8f}"
+        atom.fields[7]=str(int(atom.fields[7])+wraps)
+
 def build(
     config_path: Path,
     output: Path,
@@ -163,6 +184,7 @@ def build(
     packed_xyz: Path | None = None,
     packmol_seed: int | None = None,
     velocity_seed: int | None = None,
+    deposition_guidance: dict[str,Any] | None = None,
 ) -> Path:
     cfg=load(config_path); output.mkdir(parents=True,exist_ok=True)
     configured_random=cfg.get("random",{})
@@ -188,10 +210,20 @@ def build(
     species=cfg.get("molecules",[])
     if not species or any("count" not in x for x in species): raise ValueError("every study molecule requires an explicit resolved count")
     templates=[]; manifests=[]
-    sequential_bounds=None; existing_max_z=None
+    sequential_bounds=None; existing_max_z=None; shifted_primary_reference=None
     if primary_final:
         if not primary_final.exists(): raise FileNotFoundError(primary_final)
         existing=parse(primary_final); sequential_bounds=existing.bounds.copy()
+        if deposition_guidance is not None:
+            if deposition_guidance.get("method")!="periodic_x_gap_tunnel":
+                raise ValueError("unsupported deposition guidance method")
+            shift_fraction=float(
+                deposition_guidance["coordinate_shift_fraction_x"]
+            )
+            _shift_periodic_x(existing,shift_fraction)
+            shifted_primary_reference=output/"lego-stage1-shifted.data"
+            write(existing,shifted_primary_reference)
+            cfg["_deposition_guidance"]=deposition_guidance
         existing_max_z=max(float(a.fields[6]) for a in existing.sections["Atoms"])
         cfg["_sequential_primary_atom_count"]=existing.count("Atoms")
     for spec in species:
@@ -212,7 +244,15 @@ def build(
             xlo,xhi=sequential_bounds["x"]; ylo,yhi=sequential_bounds["y"]; _,zhi=sequential_bounds["z"]
             zlo=existing_max_z+2.5
             if zlo>=zhi-5.0: raise ValueError("stage-1 box has insufficient space above the film for stage-2 packing")
-            region=f"{xlo+2:.6f} {ylo+2:.6f} {zlo:.6f} {xhi-2:.6f} {yhi-2:.6f} {zhi-5:.6f}"
+            if deposition_guidance is None:
+                pack_xlo=xlo+2.0; pack_xhi=xhi-2.0
+            else:
+                pack_lo,pack_hi=deposition_guidance[
+                    "shifted_packing_x_fraction"
+                ]
+                pack_xlo=xlo+float(pack_lo)*(xhi-xlo)
+                pack_xhi=xlo+float(pack_hi)*(xhi-xlo)
+            region=f"{pack_xlo:.6f} {ylo+2:.6f} {zlo:.6f} {pack_xhi:.6f} {yhi-2:.6f} {zhi-5:.6f}"
         templates.append({"slug":spec["slug"],"data":data,"xyz":xyz,"count":int(spec["count"]),"atoms":data.count("Atoms"),"mw":molecular_weight(data),"region":region,"folder":folder,"manifest":manifest})
         manifests.append(manifest)
     packed,coords,packed_ok=_packmol(cfg,templates,output,packed_xyz)
@@ -222,7 +262,7 @@ def build(
         (output/"validation_report.txt").write_text("INCOMPLETE\nPackmol has not run; no scientifically usable topology was produced.\nRun: packmol < packmol.inp\n",encoding="utf-8")
         return output
     if primary_final:
-        result=parse(primary_final)
+        result=deepcopy(existing)
         primary_atom_widths={len(atom.fields) for atom in result.sections["Atoms"]}
         if len(primary_atom_widths)!=1 or next(iter(primary_atom_widths)) not in (7,10):
             raise ValueError("stage-1 data has inconsistent or unsupported Atoms records")
@@ -334,7 +374,7 @@ def build(
     validate(
         output,
         packmol_ran=packed_ok,
-        primary_final=primary_final,
+        primary_final=shifted_primary_reference or primary_final,
         run_lammps=primary_final is None,
     )
     return output
@@ -381,6 +421,11 @@ def _write_input(output: Path,cfg:dict,data:DataFile)->None:
         raise ValueError("LAMMPS velocity seed must be between 1 and 899999999")
     primary_atom_count=cfg.get("_sequential_primary_atom_count")
     sequential=primary_atom_count is not None
+    guidance=cfg.get("_deposition_guidance")
+    guidance_setup=""
+    guidance_release=""
+    guidance_thermo=""
+    guidance_note=""
     if sequential:
         primary_atom_count=int(primary_atom_count)
         if not 0 < primary_atom_count < data.count("Atoms"):
@@ -399,7 +444,41 @@ minimize 0.0 1.0 20000 200000
         deposition_temperature_start=temp
         deposition_label="Sequential stage-2 deposition onto equilibrated Me-4PACz"
         deposition_thermal_note=f"Stage 1 is fixed during conservative SD/CG minimization; only stage-2 atoms receive new {temp:g} K velocities, and the full system then deposits at constant {temp:g} K."
+        if guidance is not None:
+            if guidance.get("method")!="periodic_x_gap_tunnel":
+                raise ValueError("unsupported deposition guidance method")
+            wall_lo,wall_hi=map(
+                float,guidance["shifted_wall_x_fraction"]
+            )
+            wall_strength=float(
+                guidance["wall_strength_kcal_per_mol_angstrom2"]
+            )
+            wall_cutoff=float(guidance["wall_cutoff_angstrom"])
+            if not 0.0<wall_lo<wall_hi<1.0:
+                raise ValueError("lego tunnel must lie inside the periodic x cell")
+            guidance_setup=f"""variable lego_xlo equal "xlo+{wall_lo:.12f}*lx"
+variable lego_xhi equal "xlo+{wall_hi:.12f}*lx"
+region lego_tunnel block v_lego_xlo v_lego_xhi INF INF INF INF side in open 3 open 4 open 5 open 6 units box
+fix lego_wall stage2 wall/region lego_tunnel harmonic {wall_strength:.8f} 0.0 {wall_cutoff:.8f}
+fix_modify lego_wall energy yes
+"""
+            guidance_release="unfix lego_wall\n"
+            guidance_thermo=" f_lego_wall"
+            deposition_label=(
+                "Coverage-guided lego-style sequential stage-2 deposition"
+            )
+            guidance_note=(
+                f" Stage-2 atoms alone are confined within the centered "
+                f"periodic x tunnel ({wall_hi-wall_lo:.6f} of Lx) by a "
+                f"harmonic wall with K={wall_strength:g} kcal mol^-1 A^-2 "
+                f"and cutoff={wall_cutoff:g} A. The tunnel is removed after "
+                "the moving-wall deposition; all hold stages are unbiased."
+            )
     else:
+        if guidance is not None:
+            raise ValueError(
+                "coverage-guided deposition is only valid for sequential stage 2"
+            )
         stage2_groups=""
         minimization_lock=""
         minimization_unlock=""
@@ -446,7 +525,7 @@ print "Resolved production wall: ${{resolved_wall_hi}}"
 print "Final box zhi: $(zhi)"
 """
     text=f"""# {deposition_label}; safely rerun only when deposited.data is absent
-{init('topology_output.lmp')}{stage2_groups}fix walllo all wall/lj93 zlo {deposition_lower} ${{epsilon}} ${{sigma}} ${{cutoff}} units box
+{init('topology_output.lmp')}{stage2_groups}{guidance_setup}fix walllo all wall/lj93 zlo {deposition_lower} ${{epsilon}} ${{sigma}} ${{cutoff}} units box
 fix_modify walllo energy yes
 timestep {deposition_timestep}
 {minimization_lock}{minimization_protocol}
@@ -464,7 +543,7 @@ reset_timestep 0
 variable zstart equal {zstart}
 variable zend equal {zend}
 variable zwall equal \"v_zstart - (v_zstart-v_zend)*(step/{steps}.0)\"
-thermo_style custom step temp pe ke etotal press pxx pyy lx ly lz v_zwall fnorm fmax
+thermo_style custom step temp pe ke etotal press pxx pyy lx ly lz v_zwall fnorm fmax{guidance_thermo}
 variable epsilon equal 1.0
 variable sigma equal 1.0
 variable cutoff equal 2.5
@@ -477,7 +556,7 @@ timestep {deposition_timestep}
 run {steps} start 0 stop {steps}
 unfix deposit
 unfix wall
-unfix walllo
+{guidance_release}unfix walllo
 undump trajectory
 write_data deposited.data nocoeff
 write_restart deposited.restart
@@ -576,7 +655,7 @@ write_restart relaxed-{suffix}.restart
         (output/f"validate-{name}.in").write_text("# Temporary-directory smoke form of the real stage\n"+check,encoding="utf-8")
     mode=f"manual override {float(manual_upper):g} A" if manual_upper is not None else f"automatic: ceil(max({wall_min:g}, max_atom_z+{wall_clearance:g})/{wall_rounding:g})*{wall_rounding:g} A"
     duration_ps=steps*deposition_timestep/1000.0; hold_duration_ps=hold_steps*hold_timestep/1000.0; heat_400_duration_ps=heat_400_steps*heat_400_timestep/1000.0; hold_400_duration_ps=hold_400_steps*hold_400_timestep/1000.0; decompression_duration_ps=decompression_steps*decompression_timestep/1000.0; relaxed_hold_duration_ps=relaxed_hold_steps*relaxed_hold_timestep/1000.0
-    (output/"protocol_notes.txt").write_text(f"Deposition endpoint: {zend:.3f} A. Deposition uses {steps} steps at a continuous {deposition_timestep:g} fs timestep ({duration_ps:g} ps total), with a continuous upper-wall ramp and no timestep transition. {deposition_thermal_note} The minimized structure and force summary are written before deposition dynamics. Independent compressed-film temperature branches both start from deposited.data and keep zhi={zend:.3f} A. The 300 K branch holds for {hold_steps} steps at {hold_timestep:g} fs ({hold_duration_ps:g} ps). The 400 K branch first heats from {temp:g} to 400 K for {heat_400_steps} steps at {heat_400_timestep:g} fs ({heat_400_duration_ps:g} ps), writes heated-400K.data, then holds at 400 K for {hold_400_steps} steps at {hold_400_timestep:g} fs ({hold_400_duration_ps:g} ps). Independent decompression branches read held-300K.data and held-400K.data, retract the upper wall from {zend:.3f} A to the resolved production height over {decompression_steps} steps at {decompression_timestep:g} fs ({decompression_duration_ps:g} ps), then hold the relaxed film for {relaxed_hold_steps} steps at {relaxed_hold_timestep:g} fs ({relaxed_hold_duration_ps:g} ps). Production wall policy: {mode}; box margin {box_margin:g} A. Long 300 K source: held-300K.data (DEFERRED until present), zlo={lower_300}. 400 K source: equilibrated-300K.data (DEFERRED until present), zlo={lower_400}. Each resolved production wall is frozen before dynamics and zhi alone is expanded if required.\n",encoding="utf-8")
+    (output/"protocol_notes.txt").write_text(f"Deposition endpoint: {zend:.3f} A. Deposition uses {steps} steps at a continuous {deposition_timestep:g} fs timestep ({duration_ps:g} ps total), with a continuous upper-wall ramp and no timestep transition. {deposition_thermal_note}{guidance_note} The minimized structure and force summary are written before deposition dynamics. Independent compressed-film temperature branches both start from deposited.data and keep zhi={zend:.3f} A. The 300 K branch holds for {hold_steps} steps at {hold_timestep:g} fs ({hold_duration_ps:g} ps). The 400 K branch first heats from {temp:g} to 400 K for {heat_400_steps} steps at {heat_400_timestep:g} fs ({heat_400_duration_ps:g} ps), writes heated-400K.data, then holds at 400 K for {hold_400_steps} steps at {hold_400_timestep:g} fs ({hold_400_duration_ps:g} ps). Independent decompression branches read held-300K.data and held-400K.data, retract the upper wall from {zend:.3f} A to the resolved production height over {decompression_steps} steps at {decompression_timestep:g} fs ({decompression_duration_ps:g} ps), then hold the relaxed film for {relaxed_hold_steps} steps at {relaxed_hold_timestep:g} fs ({relaxed_hold_duration_ps:g} ps). Production wall policy: {mode}; box margin {box_margin:g} A. Long 300 K source: held-300K.data (DEFERRED until present), zlo={lower_300}. 400 K source: equilibrated-300K.data (DEFERRED until present), zlo={lower_400}. Each resolved production wall is frozen before dynamics and zhi alone is expanded if required.\n",encoding="utf-8")
 
 def refresh_inputs(config_path: Path, output: Path) -> Path:
     """Regenerate stage inputs without rebuilding or modifying simulation data."""

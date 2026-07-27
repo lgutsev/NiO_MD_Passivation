@@ -21,6 +21,20 @@ def main(argv=None)->int:
     i.add_argument("--output",type=Path,required=True)
     i.add_argument("--force",action="store_true",help="replace an existing archive")
     i=sub.add_parser("prepare-sequential-stage2"); i.add_argument("config",type=Path); i.add_argument("--primary-final",type=Path,required=True); i.add_argument("--output",type=Path,required=True); i.add_argument("--packed-xyz",type=Path); i.add_argument("--packmol-seed",type=int); i.add_argument("--velocity-seed",type=int)
+    i=sub.add_parser("prepare-lego-stage2")
+    i.add_argument("config",type=Path)
+    i.add_argument("--primary-final",type=Path,required=True)
+    i.add_argument("--coverage-map",type=Path,required=True)
+    i.add_argument("--output",type=Path,required=True)
+    i.add_argument("--packed-xyz",type=Path)
+    i.add_argument("--packmol-seed",type=int)
+    i.add_argument("--velocity-seed",type=int)
+    i.add_argument("--occupancy-threshold",type=float,default=0.20)
+    i.add_argument("--packing-inset",type=float,default=4.0)
+    i.add_argument("--minimum-gap-fraction",type=float,default=0.12)
+    i.add_argument("--minimum-tunnel-width",type=float,default=12.0)
+    i.add_argument("--wall-strength",type=float,default=0.50)
+    i.add_argument("--wall-cutoff",type=float,default=3.0)
     i=sub.add_parser("analyze-coverage")
     i.add_argument("build_directory",type=Path)
     i.add_argument("--trajectory",type=Path)
@@ -138,6 +152,24 @@ def main(argv=None)->int:
             from .analysis.publication_report import create_publication_workbook
             workbook=create_publication_workbook(a.prepared_root,a.output)
             print(f"Publication workbook written to {workbook}")
+        elif a.command=="prepare-lego-stage2":
+            from .lego import prepare_lego_stage2
+            prepare_lego_stage2(
+                a.config,
+                a.primary_final,
+                a.coverage_map,
+                a.output,
+                occupancy_threshold=a.occupancy_threshold,
+                packing_inset_angstrom=a.packing_inset,
+                minimum_gap_fraction=a.minimum_gap_fraction,
+                minimum_tunnel_width_angstrom=a.minimum_tunnel_width,
+                wall_strength=a.wall_strength,
+                wall_cutoff_angstrom=a.wall_cutoff,
+                packed_xyz=a.packed_xyz,
+                packmol_seed=a.packmol_seed,
+                velocity_seed=a.velocity_seed,
+            )
+            print(f"Lego-style sequential stage 2 written to {a.output}")
         else:
             build(a.config,a.output,primary_final=a.primary_final,packed_xyz=a.packed_xyz,packmol_seed=a.packmol_seed,velocity_seed=a.velocity_seed)
             print(f"Sequential stage 2 written to {a.output}")
