@@ -155,7 +155,13 @@ def validate(
     resolved=tomllib.loads((folder/"resolved_config.toml").read_text())
     protocol=resolved.get("protocol",{})
     target_temp=float(protocol.get("temperature",300.0))
-    expected_endpoint=float(protocol.get("deposition_wall_endpoint",69.615))
+    guidance=manifest.get("deposition_guidance",{})
+    expected_endpoint=float(
+        guidance.get(
+            "deposition_wall_endpoint_angstrom",
+            protocol.get("deposition_wall_endpoint",69.615),
+        )
+    )
     primary=next((component for component in manifest.get("components",[]) if component.get("component")=="stage1_primary"),None)
     if primary:
         primary_last=int(primary["atom_ids"][1]); final_atom=max(ids)

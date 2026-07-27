@@ -45,7 +45,8 @@ systems=(
 )
 
 base_name="${systems[${SLURM_ARRAY_TASK_ID}]}"
-name="${base_name}-lego"
+lego_suffix="${LEGO_SUFFIX:--lego-seeded}"
+name="${base_name}${lego_suffix}"
 output="${prepared_root}/${name}"
 
 mkdir -p "${prepared_root}"
@@ -55,9 +56,10 @@ if [[ -e "${output}" ]]; then
     exit 1
 fi
 
-echo "BUILDING LEGO-STYLE SEQUENTIAL STAGE 2: ${name}"
+echo "BUILDING GAP-SEEDED SEQUENTIAL STAGE 2: ${name}"
 echo "Stage-1 source: ${primary}"
 echo "Coverage map: ${coverage_map}"
+echo "Lateral confinement: ${LEGO_LATERAL_WALL:-0}"
 
 build_args=(
     "studies/${base_name}.toml"
@@ -68,9 +70,13 @@ build_args=(
     --packing-inset "${PACKING_INSET:-4.0}"
     --minimum-gap-fraction "${MINIMUM_GAP_FRACTION:-0.12}"
     --minimum-tunnel-width "${MINIMUM_TUNNEL_WIDTH:-12.0}"
+    --deposition-clearance "${LEGO_DEPOSITION_CLEARANCE:-30.0}"
     --wall-strength "${LEGO_WALL_STRENGTH:-0.50}"
     --wall-cutoff "${LEGO_WALL_CUTOFF:-3.0}"
 )
+if [[ "${LEGO_LATERAL_WALL:-0}" == "1" ]]; then
+    build_args+=(--lateral-wall)
+fi
 if [[ -n "${PACKMOL_SEED:-}" ]]; then
     build_args+=(--packmol-seed "${PACKMOL_SEED}")
 fi

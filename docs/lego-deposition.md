@@ -1,4 +1,4 @@
-# Coverage-guided “lego” deposition
+# Coverage-guided, laterally free “lego” deposition
 
 ## Scientific purpose
 
@@ -31,22 +31,16 @@ The builder consumes the numerical
    unwrapped coordinates remain consistent.
 5. Pack only the secondary molecules inside the centered channel, with a
    4 Å inset from each side.
-6. During the usual stage-2 SD/CG minimization and moving-upper-wall
-   deposition, apply a harmonic `fix wall/region` side wall to the `stage2`
-   group only. NiO and Me-4PACz receive no lateral guiding force.
-7. Remove the lateral wall after deposition and before writing
-   `deposited.data`. Compressed holds, decompression, and relaxed holds use the
-   ordinary unbiased inputs.
+6. Apply no lateral wall during minimization or dynamics. The coverage map
+   biases only the initial Packmol placement; stage 2 can spread freely in
+   periodic x/y throughout deposition and all later stages.
+7. Move the upper z-wall down only to 30 Å above the maximum z of the completed
+   Me-4PACz film. This replaces the former fixed 69.615 Å endpoint referenced
+   to bare NiO, which could leave stage 2 insufficient headroom.
 
-The default harmonic wall is 0.50 kcal mol⁻¹ Å⁻² with a 3 Å cutoff. Packmol's
-4 Å inset ensures that the initial layer-2 coordinates start outside the
-wall-force zone. The lower recoil wall remains active exactly as in the
-standard sequential workflow.
-
-The generated syntax follows the LAMMPS
-[`fix wall/region`](https://docs.lammps.org/fix_wall_region.html) and
-[`region`](https://docs.lammps.org/region.html) definitions. The `y` and `z`
-block faces are open, leaving only the two lateral `x` faces active.
+The lower recoil wall remains active exactly as in the standard sequential
+workflow. The former harmonic tunnel remains reproducible as an explicit
+confined control using `--lateral-wall`, but it is no longer the default.
 
 ## Build the first DCZ-4P control
 
@@ -66,25 +60,26 @@ sbatch scripts/build_lego_systems.sbatch
 The script defaults to array index 0, DCZ-4P, and writes:
 
 ```text
-prepared-lego/me-4pacz-then-dcz-4p-lego/
+prepared-lego/me-4pacz-then-dcz-4p-lego-seeded/
 ```
 
 No simulation is submitted automatically. Before deposition, inspect:
 
-- `lego_plan.json`: detected gap, periodic shift, tunnel bounds, wall
-  parameters, and source-map hash;
+- `lego_plan.json`: detected gap, periodic shift, packing bounds, stage-1
+  maximum z, resolved deposition endpoint, and source-map hash;
 - `lego_tunnel_profile.csv`: mean occupancy for every `x` column and the
   columns selected as the periodic gap;
 - `packmol.inp`: the restricted stage-2 packing box;
 - `lego-stage1-shifted.data`: the periodically translated stage-1 reference;
-- `deposition.in`: the stage2-only tunnel and its removal after deposition;
+- `deposition.in`: laterally free stage-2 deposition and the gentler resolved
+  upper-wall endpoint;
 - `validation_report.txt`: normal assembly validation.
 
 Launch only the DCZ-4P deposition:
 
 ```bash
 sbatch --array=0 \
-  --export=ALL,PREPARED_ROOT=prepared-lego,SYSTEM_SUFFIX=-lego \
+  --export=ALL,PREPARED_ROOT=prepared-lego,SYSTEM_SUFFIX=-lego-seeded \
   scripts/run_sequential_deposition_array.sbatch
 ```
 
@@ -93,11 +88,11 @@ the same suffix mechanism:
 
 ```bash
 sbatch --array=0 \
-  --export=ALL,PREPARED_ROOT=prepared-lego,SYSTEM_SUFFIX=-lego \
+  --export=ALL,PREPARED_ROOT=prepared-lego,SYSTEM_SUFFIX=-lego-seeded \
   scripts/run_sequential_hold_array.sbatch
 
 sbatch --array=0 \
-  --export=ALL,PREPARED_ROOT=prepared-lego,SYSTEM_SUFFIX=-lego \
+  --export=ALL,PREPARED_ROOT=prepared-lego,SYSTEM_SUFFIX=-lego-seeded \
   scripts/run_sequential_hold_400K_array.sbatch
 ```
 
@@ -109,7 +104,7 @@ inventory, Packmol seed, LAMMPS velocity seed, and downstream protocol:
 | Calculation | Lateral delivery | Question answered |
 |---|---|---|
 | Standard sequential DCZ-4P | Unbiased full `x/y` region | Does DCZ-4P find and occupy gaps spontaneously in this model? |
-| Lego-style sequential DCZ-4P | Coverage-guided `x` channel | Can DCZ-4P occupy the gap when it is delivered there? |
+| Lego-style sequential DCZ-4P | Coverage-guided initial `x` placement, laterally free dynamics | Can DCZ-4P occupy the gap when initially delivered there? |
 
 Interpret the paired outcomes conservatively:
 
@@ -141,7 +136,7 @@ sbatch --array=0-2 scripts/build_lego_systems.sbatch
 ```
 
 Use the same `--array=0-2`, `PREPARED_ROOT=prepared-lego`, and
-`SYSTEM_SUFFIX=-lego` arguments for each later sequential runner.
+`SYSTEM_SUFFIX=-lego-seeded` arguments for each later sequential runner.
 
 ## Parameter overrides
 
@@ -149,12 +144,14 @@ The builder accepts environment overrides without changing the study TOML:
 
 ```bash
 sbatch --array=0 \
-  --export=ALL,OCCUPANCY_THRESHOLD=0.20,PACKING_INSET=4.0,LEGO_WALL_STRENGTH=0.50,LEGO_WALL_CUTOFF=3.0 \
+  --export=ALL,OCCUPANCY_THRESHOLD=0.20,PACKING_INSET=4.0,LEGO_DEPOSITION_CLEARANCE=30.0 \
   scripts/build_lego_systems.sbatch
 ```
 
 Other available controls are `COVERAGE_MAP`, `SOURCE_ROOT`, `PREPARED_ROOT`,
-`MINIMUM_GAP_FRACTION`, `MINIMUM_TUNNEL_WIDTH`, `PACKMOL_SEED`, and
-`VELOCITY_SEED`. Record any non-default values in the methods and treat
-threshold or wall-strength scans as sensitivity tests rather than independent
-replicates.
+`LEGO_SUFFIX`, `MINIMUM_GAP_FRACTION`, `MINIMUM_TUNNEL_WIDTH`,
+`PACKMOL_SEED`, and `VELOCITY_SEED`. Set `LEGO_LATERAL_WALL=1` only to
+reproduce the former confined control; `LEGO_WALL_STRENGTH` and
+`LEGO_WALL_CUTOFF` then set that optional wall. Record any non-default values
+in the methods and treat threshold, clearance, or wall-strength scans as
+sensitivity tests rather than independent replicates.

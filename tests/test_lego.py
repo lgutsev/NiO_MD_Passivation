@@ -91,7 +91,7 @@ def test_identify_x_tunnel_rejects_nonlocalized_maps(tmp_path):
             identify_x_tunnel(path, primary)
 
 
-def test_lego_build_confines_only_stage2_and_releases_tunnel(tmp_path):
+def test_lego_build_seeds_gap_without_lateral_confinement(tmp_path):
     primary = primary_fixture(tmp_path)
     coverage = coverage_fixture(tmp_path)
     secondary = packed_fixture(
@@ -118,6 +118,15 @@ def test_lego_build_confines_only_stage2_and_releases_tunnel(tmp_path):
     topology = parse(output / "topology_output.lmp")
     lx = original.bounds["x"][1] - original.bounds["x"][0]
     dx = plan["coordinate_shift_fraction_x"] * lx
+    primary_max_z = max(
+        float(atom.fields[6]) for atom in original.sections["Atoms"]
+    )
+    expected_endpoint = primary_max_z + 30.0
+    assert plan["stage1_max_z_angstrom"] == pytest.approx(primary_max_z)
+    assert plan["deposition_wall_endpoint_angstrom"] == pytest.approx(
+        expected_endpoint
+    )
+    assert plan["lateral_confinement"] is False
     for before, after in zip(
         original.sections["Atoms"], shifted.sections["Atoms"]
     ):
@@ -137,21 +146,10 @@ def test_lego_build_confines_only_stage2_and_releases_tunnel(tmp_path):
     assert "83.570000 39.700000" in packmol
 
     deposition = (output / "deposition.in").read_text()
-    assert "region lego_tunnel block" in deposition
-    assert (
-        "fix lego_wall stage2 wall/region lego_tunnel harmonic "
-        "0.50000000 0.0 3.00000000"
-    ) in deposition
-    assert "fix lego_wall all " not in deposition
-    assert deposition.index("fix lego_wall stage2") < deposition.index(
-        "min_style sd"
-    )
-    assert deposition.index("run 10 start 0 stop 10") < deposition.index(
-        "unfix lego_wall"
-    )
-    assert deposition.index("unfix lego_wall") < deposition.index(
-        "write_data deposited.data"
-    )
+    assert "region lego_tunnel block" not in deposition
+    assert "fix lego_wall" not in deposition
+    assert "unfix lego_wall" not in deposition
+    assert f"variable zend equal {expected_endpoint}" in deposition
     for name in (
         "hold-300K.in",
         "hold-400K.in",
@@ -163,6 +161,34 @@ def test_lego_build_confines_only_stage2_and_releases_tunnel(tmp_path):
     manifest = json.loads((output / "assembly_manifest.json").read_text())
     assert (
         manifest["deposition_guidance"]["method"]
-        == "periodic_x_gap_tunnel"
+        == "periodic_x_gap_seeded"
     )
-    assert "deliberately coverage-guided" in plan["bias_warning"]
+    assert "laterally unconstrained" in plan["bias_warning"]
+
+
+def test_lego_can_reproduce_confined_tunnel_control(tmp_path):
+    primary = primary_fixture(tmp_path)
+    coverage = coverage_fixture(tmp_path)
+    secondary = packed_fixture(
+        tmp_path / "secondary-packed",
+        shift=(50.0, 20.0, 100.0),
+    )
+
+    output = prepare_lego_stage2(
+        ROOT / "tests/data/small-study.toml",
+        primary,
+        coverage,
+        tmp_path / "lego-confined",
+        lateral_confinement=True,
+        packed_xyz=secondary,
+    )
+
+    plan = json.loads((output / "lego_plan.json").read_text())
+    deposition = (output / "deposition.in").read_text()
+    assert plan["method"] == "periodic_x_gap_tunnel"
+    assert plan["lateral_confinement"] is True
+    assert "region lego_tunnel block" in deposition
+    assert "fix lego_wall stage2 wall/region lego_tunnel harmonic" in deposition
+    assert deposition.index("unfix lego_wall") < deposition.index(
+        "write_data deposited.data"
+    )

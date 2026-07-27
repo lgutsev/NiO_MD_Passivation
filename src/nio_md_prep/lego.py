@@ -1,4 +1,4 @@
-"""Coverage-guided lateral confinement for experimental stage-2 deposition."""
+"""Coverage-guided initial placement for experimental stage-2 deposition."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -62,22 +62,30 @@ def identify_x_tunnel(
     packing_inset_angstrom: float = 4.0,
     minimum_gap_fraction: float = 0.12,
     minimum_tunnel_width_angstrom: float = 12.0,
+    deposition_clearance_above_stage1_angstrom: float = 30.0,
+    lateral_confinement: bool = False,
     wall_strength: float = 0.50,
     wall_cutoff_angstrom: float = 3.0,
 ) -> dict[str, Any]:
-    """Identify and center the widest periodic low-occupancy x channel."""
+    """Identify and center the widest periodic low-occupancy x gap."""
     if not 0.0 <= occupancy_threshold < 1.0:
         raise ValueError("occupancy threshold must be in [0, 1)")
     if not 0.0 < minimum_gap_fraction < 1.0:
         raise ValueError("minimum gap fraction must be in (0, 1)")
-    if packing_inset_angstrom <= wall_cutoff_angstrom:
+    if packing_inset_angstrom <= 0.0:
+        raise ValueError("packing inset must be positive")
+    if lateral_confinement and packing_inset_angstrom <= wall_cutoff_angstrom:
         raise ValueError(
             "packing inset must exceed the tunnel-wall cutoff so Packmol "
             "starts every atom outside the wall-force zone"
         )
     if minimum_tunnel_width_angstrom <= 0.0:
         raise ValueError("minimum tunnel width must be positive")
-    if wall_strength <= 0.0 or wall_cutoff_angstrom <= 0.0:
+    if deposition_clearance_above_stage1_angstrom <= 0.0:
+        raise ValueError("deposition clearance above stage 1 must be positive")
+    if lateral_confinement and (
+        wall_strength <= 0.0 or wall_cutoff_angstrom <= 0.0
+    ):
         raise ValueError("tunnel-wall strength and cutoff must be positive")
 
     np = _numpy()
@@ -114,6 +122,12 @@ def identify_x_tunnel(
     lx = xhi - xlo
     if lx <= 0.0:
         raise ValueError(f"{primary_final}: invalid x cell bounds")
+    primary_max_z = max(
+        float(atom.fields[6]) for atom in primary.sections["Atoms"]
+    )
+    deposition_endpoint = (
+        primary_max_z + deposition_clearance_above_stage1_angstrom
+    )
     gap_width = gap_fraction * lx
     packing_width = gap_width - 2.0 * packing_inset_angstrom
     if packing_width < minimum_tunnel_width_angstrom:
@@ -141,7 +155,11 @@ def identify_x_tunnel(
     pack_hi_fraction = wall_hi_fraction - inset_fraction
 
     return {
-        "method": "periodic_x_gap_tunnel",
+        "method": (
+            "periodic_x_gap_tunnel"
+            if lateral_confinement
+            else "periodic_x_gap_seeded"
+        ),
         "coverage_map": str(coverage_map.resolve()),
         "coverage_map_sha256": hashlib.sha256(
             coverage_map.read_bytes()
@@ -175,14 +193,32 @@ def identify_x_tunnel(
         "packing_width_angstrom": packing_width,
         "minimum_gap_fraction": minimum_gap_fraction,
         "minimum_tunnel_width_angstrom": minimum_tunnel_width_angstrom,
-        "wall_style": "harmonic",
-        "wall_strength_kcal_per_mol_angstrom2": wall_strength,
-        "wall_cutoff_angstrom": wall_cutoff_angstrom,
-        "wall_applies_to": "stage2 atoms only",
-        "wall_lifetime": "minimization and moving-wall deposition only",
+        "stage1_max_z_angstrom": primary_max_z,
+        "deposition_clearance_above_stage1_angstrom": (
+            deposition_clearance_above_stage1_angstrom
+        ),
+        "deposition_wall_endpoint_angstrom": deposition_endpoint,
+        "lateral_confinement": bool(lateral_confinement),
+        "wall_style": "harmonic" if lateral_confinement else "none",
+        "wall_strength_kcal_per_mol_angstrom2": (
+            wall_strength if lateral_confinement else None
+        ),
+        "wall_cutoff_angstrom": (
+            wall_cutoff_angstrom if lateral_confinement else None
+        ),
+        "wall_applies_to": (
+            "stage2 atoms only" if lateral_confinement else "none"
+        ),
+        "wall_lifetime": (
+            "minimization and moving-wall deposition only"
+            if lateral_confinement
+            else "no lateral wall is applied"
+        ),
         "bias_warning": (
-            "This is a deliberately coverage-guided deposition control, not "
-            "an unbiased model of spontaneous sequential assembly."
+            "Stage-2 placement is deliberately coverage-guided, but all "
+            "subsequent minimization and dynamics are laterally unconstrained. "
+            "This remains a seeded control rather than an unbiased model of "
+            "spontaneous gap finding."
         ),
     }
 
@@ -247,13 +283,15 @@ def prepare_lego_stage2(
     packing_inset_angstrom: float = 4.0,
     minimum_gap_fraction: float = 0.12,
     minimum_tunnel_width_angstrom: float = 12.0,
+    deposition_clearance_above_stage1_angstrom: float = 30.0,
+    lateral_confinement: bool = False,
     wall_strength: float = 0.50,
     wall_cutoff_angstrom: float = 3.0,
     packed_xyz: Path | None = None,
     packmol_seed: int | None = None,
     velocity_seed: int | None = None,
 ) -> Path:
-    """Build a normal sequential system with a coverage-guided x tunnel."""
+    """Build sequential stage 2 with coverage-guided initial x placement."""
     plan = identify_x_tunnel(
         coverage_map,
         primary_final,
@@ -261,6 +299,10 @@ def prepare_lego_stage2(
         packing_inset_angstrom=packing_inset_angstrom,
         minimum_gap_fraction=minimum_gap_fraction,
         minimum_tunnel_width_angstrom=minimum_tunnel_width_angstrom,
+        deposition_clearance_above_stage1_angstrom=(
+            deposition_clearance_above_stage1_angstrom
+        ),
+        lateral_confinement=lateral_confinement,
         wall_strength=wall_strength,
         wall_cutoff_angstrom=wall_cutoff_angstrom,
     )

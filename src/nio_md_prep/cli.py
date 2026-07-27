@@ -33,6 +33,8 @@ def main(argv=None)->int:
     i.add_argument("--packing-inset",type=float,default=4.0)
     i.add_argument("--minimum-gap-fraction",type=float,default=0.12)
     i.add_argument("--minimum-tunnel-width",type=float,default=12.0)
+    i.add_argument("--deposition-clearance",type=float,default=30.0)
+    i.add_argument("--lateral-wall",action="store_true")
     i.add_argument("--wall-strength",type=float,default=0.50)
     i.add_argument("--wall-cutoff",type=float,default=3.0)
     i=sub.add_parser("analyze-coverage")
@@ -163,6 +165,10 @@ def main(argv=None)->int:
                 packing_inset_angstrom=a.packing_inset,
                 minimum_gap_fraction=a.minimum_gap_fraction,
                 minimum_tunnel_width_angstrom=a.minimum_tunnel_width,
+                deposition_clearance_above_stage1_angstrom=(
+                    a.deposition_clearance
+                ),
+                lateral_confinement=a.lateral_wall,
                 wall_strength=a.wall_strength,
                 wall_cutoff_angstrom=a.wall_cutoff,
                 packed_xyz=a.packed_xyz,

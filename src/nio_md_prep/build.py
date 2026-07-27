@@ -215,7 +215,10 @@ def build(
         if not primary_final.exists(): raise FileNotFoundError(primary_final)
         existing=parse(primary_final); sequential_bounds=existing.bounds.copy()
         if deposition_guidance is not None:
-            if deposition_guidance.get("method")!="periodic_x_gap_tunnel":
+            if deposition_guidance.get("method") not in {
+                "periodic_x_gap_seeded",
+                "periodic_x_gap_tunnel",
+            }:
                 raise ValueError("unsupported deposition guidance method")
             shift_fraction=float(
                 deposition_guidance["coordinate_shift_fraction_x"]
@@ -369,6 +372,10 @@ def build(
     hashes[str(provenance_surface.relative_to(ROOT)) if provenance_surface.is_relative_to(ROOT) else str(provenance_surface)]=hashlib.sha256(provenance_surface.read_bytes()).hexdigest()
     (output/"input_hashes.json").write_text(json.dumps(hashes,indent=2)+"\n",encoding="utf-8")
     type_map.update({"status":"assembled","source_hashes":hashes,"output_hashes":{},"total_charge":charge(result),"molecule_count":max(int(r.fields[1]) for r in result.sections["Atoms"]),"counts":{sec.lower():result.count(sec) for sec in ("Atoms","Bonds","Angles","Dihedrals","Impropers")},"box":result.bounds})
+    if deposition_guidance is not None:
+        # Validation runs before prepare_lego_stage2() returns, so retain the
+        # resolved guidance plan in the manifest at build time.
+        type_map["deposition_guidance"]=deposition_guidance
     (output/"assembly_manifest.json").write_text(json.dumps(type_map,indent=2)+"\n",encoding="utf-8")
     from .validate import validate
     validate(
@@ -408,9 +415,14 @@ def _write_input(output: Path,cfg:dict,data:DataFile)->None:
     lower_300=lower_wall(p.get("production_lower_wall_300","EDGE")); lower_400=lower_wall(p.get("production_lower_wall_400","EDGE"))
     communication_cutoff=p.get("communication_cutoff")
     communication_line=f"comm_modify cutoff {float(communication_cutoff)}\n" if communication_cutoff is not None else ""
+    guidance=cfg.get("_deposition_guidance")
     manual_upper=p.get("production_upper_wall"); wall_min=float(p.get("production_upper_wall_min",120.0)); wall_clearance=float(p.get("production_wall_clearance",30.0)); wall_rounding=float(p.get("production_wall_rounding",10.0)); box_margin=float(p.get("production_box_margin",5.0))
     surface_top=max(float(a.fields[6]) for a in data.sections["Atoms"] if abs(abs(float(a.fields[3]))-2.0)<1e-8)
-    configured_endpoint=p.get("deposition_wall_endpoint")
+    configured_endpoint=(
+        guidance.get("deposition_wall_endpoint_angstrom")
+        if guidance is not None
+        else p.get("deposition_wall_endpoint")
+    )
     zend=float(configured_endpoint) if configured_endpoint is not None else surface_top+float(p.get("wall_clearance",30.0))
     zstart=max(zend+100.0,data.bounds["z"][1]-5.0)
     velocity_seed=int(
@@ -421,7 +433,6 @@ def _write_input(output: Path,cfg:dict,data:DataFile)->None:
         raise ValueError("LAMMPS velocity seed must be between 1 and 899999999")
     primary_atom_count=cfg.get("_sequential_primary_atom_count")
     sequential=primary_atom_count is not None
-    guidance=cfg.get("_deposition_guidance")
     guidance_setup=""
     guidance_release=""
     guidance_thermo=""
@@ -444,9 +455,7 @@ minimize 0.0 1.0 20000 200000
         deposition_temperature_start=temp
         deposition_label="Sequential stage-2 deposition onto equilibrated Me-4PACz"
         deposition_thermal_note=f"Stage 1 is fixed during conservative SD/CG minimization; only stage-2 atoms receive new {temp:g} K velocities, and the full system then deposits at constant {temp:g} K."
-        if guidance is not None:
-            if guidance.get("method")!="periodic_x_gap_tunnel":
-                raise ValueError("unsupported deposition guidance method")
+        if guidance is not None and guidance.get("method")=="periodic_x_gap_tunnel":
             wall_lo,wall_hi=map(
                 float,guidance["shifted_wall_x_fraction"]
             )
@@ -473,6 +482,14 @@ fix_modify lego_wall energy yes
                 f"harmonic wall with K={wall_strength:g} kcal mol^-1 A^-2 "
                 f"and cutoff={wall_cutoff:g} A. The tunnel is removed after "
                 "the moving-wall deposition; all hold stages are unbiased."
+            )
+        elif guidance is not None:
+            guidance_note=(
+                " Stage-2 molecules are initially packed over the centered "
+                "coverage gap and are laterally unconstrained throughout "
+                "minimization, moving-wall deposition, and every hold stage. "
+                f"The upper wall stops {float(guidance['deposition_clearance_above_stage1_angstrom']):g} A "
+                "above the maximum z of the completed stage-1 film."
             )
     else:
         if guidance is not None:
