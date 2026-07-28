@@ -615,6 +615,17 @@ Analyze every available compressed and relaxed 300/400 K trajectory on the
 sbatch scripts/analyze_interface_holds.sbatch
 ```
 
+Analyze the complete original deposition trajectories separately to measure
+normalized cross-component site-exchange kinetics:
+
+```bash
+sbatch scripts/analyze_interface_depositions.sbatch
+```
+
+Both analysis launchers accept `PREPARED_ROOT`. Set `EXPERIMENTAL_CSV` on
+either interfacial launcher to regenerate the publication workbook with the
+private JV-data correlation sheet.
+
 The workbook is written to:
 
 ```text
@@ -640,17 +651,28 @@ whose NiO coordinates have already evolved during stage 1.
 `nio-md-prep summarize-publication` accepts an optional `--experimental
 PATH` pointing at a CSV of measured device results (columns: `secondary`,
 `assembly`, `voc_v`, `jsc_ma_cm2`, `ff_percent`, `pce_percent`, plus optional
-`batch`/`scan_direction` provenance columns). When supplied, it adds a
-`Structure-Property Correlation` sheet to `publication_summary.xlsx` joining
-projected coverage, bound fraction, tilt, unbound-anchor density, and void
-patch metrics (all at the 300 K compressed hold) against the pooled mean ±
-sample SD of the experimental values for each secondary molecule and
-CoSAM/Sequential assembly, plus two scatter plots against PCE.
+`batch`/`device_id`/`scan_direction` provenance columns). When supplied, it
+adds a `Structure-Property Correlation` sheet joining coverage, roughness,
+bound fraction, persistence, tilt, unbound-anchor density, void topology,
+dipole-potential, and deposition-exchange metrics for every available
+300/400 K compressed/relaxed state against the experimental results.
+Forward/reverse scans are collapsed within a device, devices are averaged
+within each batch, and batch means receive equal weight. The sheet retains MD
+seed count plus experimental batch, independent-unit, and raw-measurement
+counts, and its scatter plots point to numeric PCE cells.
+
+If a batch contains scans from more than one device, supply `device_id`.
+Without it, scan-direction rows in the same condition and batch are
+conservatively interpreted as one forward/reverse device pair.
 
 ```bash
 nio-md-prep summarize-publication prepared --output prepared/publication_summary.xlsx \
     --experimental /path/to/device_results.csv
 ```
+
+The experimental 100 °C anneal is intentionally not hard-mapped to the
+artificially compressed 300 K simulation hold; the workbook leaves all MD
+states visible for transparent comparison.
 
 **Keep unpublished device data out of this repository.** Point
 `--experimental` at a CSV stored somewhere private (outside the repo
