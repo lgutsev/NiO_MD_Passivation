@@ -20,6 +20,7 @@ DRAFT_HEADERS = [
     "Film State",
     "Projected Coverage, Mean ± Block SEM (%)",
     "Uncovered Area (%)",
+    "Roughness RMS (Å)",
     "Empty Exposed-Ni Sites (%)",
     "Primary Bound, Mean ± Block SEM (%)",
     "Secondary Bound, Mean ± Block SEM (%)",
@@ -27,11 +28,14 @@ DRAFT_HEADERS = [
     "Secondary P Height (Å)",
     "Secondary Tilt (deg)",
     "DCZ-4P Terminals 0 / 1 / 2 (%)",
+    "Approx. Potential Step (V)",
+    "Deposition Exchange Rate (events/site/ns)",
     "QC Status",
 ]
 
 ALL_METRICS_HEADERS = [
     "System",
+    "Replicate Cohort",
     "Assembly",
     "Secondary Molecule",
     "Temperature (K)",
@@ -45,7 +49,14 @@ ALL_METRICS_HEADERS = [
     "Void Patch Count",
     "Largest Void Patch (% of cell)",
     "Mean Void Patch (% of cell)",
+    "Roughness RMS (Å)",
+    "Roughness Mean Absolute (Å)",
+    "Roughness Peak-to-Valley (Å)",
     "Empty Exposed-Ni Sites (%)",
+    "Z Dipole Moment (e·Å)",
+    "Approx. Potential Step (V)",
+    "Deposition Exchange Events",
+    "Deposition Exchange Rate (events/site/ns)",
     "Primary Bound Molecules (%)",
     "Primary Bound Block SEM (%)",
     "Primary Unbound Anchor Density (per nm²)",
@@ -68,6 +79,7 @@ ALL_METRICS_HEADERS = [
 SUMMARY_HEADERS = DRAFT_HEADERS
 
 COMPARISON_HEADERS = [
+    "Replicate Cohort",
     "Secondary Molecule",
     "Temperature (K)",
     "Film State",
@@ -95,24 +107,45 @@ COMPARISON_HEADERS = [
     "CoSAM Largest Void Patch (% of cell)",
     "Sequential Largest Void Patch (% of cell)",
     "Δ Largest Void Patch: Seq-CoSAM (% of cell)",
+    "CoSAM Roughness RMS (Å)",
+    "Sequential Roughness RMS (Å)",
+    "Δ Roughness RMS: Seq-CoSAM (Å)",
+    "CoSAM Approx. Potential Step (V)",
+    "Sequential Approx. Potential Step (V)",
+    "Δ Potential Step: Seq-CoSAM (V)",
+    "CoSAM Deposition Exchange Rate (events/site/ns)",
+    "Sequential Deposition Exchange Rate (events/site/ns)",
+    "Δ Exchange Rate: Seq-CoSAM (events/site/ns)",
     "QC Status",
 ]
 
 CORRELATION_HEADERS = [
     "Secondary Molecule",
     "Assembly",
-    "Projected Coverage (%)",
-    "Secondary Bound (%)",
-    "Secondary Persistent Bound (%)",
-    "Secondary Tilt (deg)",
-    "Secondary Unbound Anchor Density (per nm²)",
-    "Largest Void Patch (% of cell)",
-    "Void Patch Count",
-    "Voc, Mean ± SD (V)",
-    "Jsc, Mean ± SD (mA/cm²)",
-    "FF, Mean ± SD (%)",
-    "PCE, Mean ± SD (%)",
-    "N Devices",
+    "Temperature (K)",
+    "Film State",
+    "N MD Seeds",
+    "Projected Coverage, MD Mean (%)",
+    "Roughness RMS, MD Mean (Å)",
+    "Secondary Bound, MD Mean (%)",
+    "Secondary Persistent Bound, MD Mean (%)",
+    "Secondary Tilt, MD Mean (deg)",
+    "Secondary Unbound Anchor Density, MD Mean (per nm²)",
+    "Largest Void Patch, MD Mean (% of cell)",
+    "Void Patch Count, MD Mean",
+    "Approx. Potential Step, MD Mean (V)",
+    "Deposition Exchange Rate, MD Mean (events/site/ns)",
+    "Voc Mean (V)",
+    "Voc SD (V)",
+    "Jsc Mean (mA/cm²)",
+    "Jsc SD (mA/cm²)",
+    "FF Mean (%)",
+    "FF SD (%)",
+    "PCE Mean (%)",
+    "PCE SD (%)",
+    "N Experimental Batches",
+    "N Independent Units",
+    "N Measurements",
 ]
 
 
@@ -160,6 +193,24 @@ def _film_state(stage: str) -> str:
     return stage
 
 
+def _run_key(row: dict[str, Any]) -> str:
+    return str(row.get("run_directory") or row["system"])
+
+
+def _replicate_cohort(run_directory: str) -> str:
+    parent = str(Path(run_directory).parent)
+    return "primary" if parent == "." else parent
+
+
+def _mean_available(rows: list[dict[str, Any]], field: str) -> float | None:
+    values = [
+        float(row[field])
+        for row in rows
+        if row.get(field) is not None
+    ]
+    return sum(values) / len(values) if values else None
+
+
 def _delta(left: float | None, right: float | None) -> float | None:
     if left is None or right is None:
         return None
@@ -191,20 +242,32 @@ def build_publication_rows(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Join detailed outputs into draft-summary and paired-comparison rows."""
     coverage_by_key = {
-        (row["system"], row["temperature"], row["stage"]): row
+        (_run_key(row), row["temperature"], row["stage"]): row
         for row in coverage_results
     }
-    interface_by_key = {
-        (row["system"], row["temperature"], row["stage"]): row
+    deposition_interface_by_run = {
+        _run_key(row): row
         for row in interface_results
+        if row["stage"] == "deposition"
+    }
+    interface_by_key = {
+        (_run_key(row), row["temperature"], row["stage"]): row
+        for row in interface_results
+        if row["stage"] != "deposition"
     }
     component_by_key = {
-        (row["system"], row["temperature"], row["stage"], row["name"]): row
+        (
+            _run_key(row),
+            row["temperature"],
+            row["stage"],
+            row["name"],
+        ): row
         for row in interface_components
+        if row["stage"] != "deposition"
     }
     terminal_by_key = {
         (
-            row["system"],
+            _run_key(row),
             row["temperature"],
             row["stage"],
             row["component"],
@@ -226,7 +289,12 @@ def build_publication_rows(
     for key in keys:
         coverage = coverage_by_key.get(key)
         interface = interface_by_key.get(key)
-        system, temperature, stage = key
+        run_directory, temperature, stage = key
+        source_row = interface or coverage
+        if source_row is None:
+            continue
+        system = source_row["system"]
+        deposition_interface = deposition_interface_by_run.get(run_directory)
         secondary_raw = (
             interface.get("secondary_name")
             if interface is not None
@@ -236,17 +304,23 @@ def build_publication_rows(
         assembly = _assembly(system)
         primary_name = interface.get("primary_name") if interface else None
         primary_component = component_by_key.get(
-            (system, temperature, stage, primary_name)
+            (run_directory, temperature, stage, primary_name)
         )
         secondary_component = component_by_key.get(
-            (system, temperature, stage, secondary_raw)
+            (run_directory, temperature, stage, secondary_raw)
         )
 
         terminal_populations = {0: None, 1: None, 2: None}
         if secondary_raw == "dcz-4p":
             for count in terminal_populations:
                 terminal = terminal_by_key.get(
-                    (system, temperature, stage, secondary_raw, count)
+                    (
+                        run_directory,
+                        temperature,
+                        stage,
+                        secondary_raw,
+                        count,
+                    )
                 )
                 if terminal is not None:
                     terminal_populations[count] = terminal["population"]
@@ -264,6 +338,7 @@ def build_publication_rows(
             {
                 "system": _system_label(system, assembly, secondary),
                 "system_key": system,
+                "replicate_cohort": _replicate_cohort(run_directory),
                 "assembly": assembly,
                 "secondary": secondary,
                 "temperature": temperature,
@@ -288,7 +363,44 @@ def build_publication_rows(
                 "void_mean_patch": (
                     coverage.get("void_mean_patch") if coverage else None
                 ),
+                "roughness_rms": (
+                    coverage.get("roughness_rms") if coverage else None
+                ),
+                "roughness_mean_absolute": (
+                    coverage.get("roughness_mean_absolute")
+                    if coverage
+                    else None
+                ),
+                "roughness_peak_to_valley": (
+                    coverage.get("roughness_peak_to_valley")
+                    if coverage
+                    else None
+                ),
                 "empty_sites": interface.get("empty") if interface else None,
+                "z_dipole_moment": (
+                    interface.get("z_dipole_moment")
+                    if interface
+                    else None
+                ),
+                "z_dipole_potential_step_volts": (
+                    interface.get("z_dipole_potential_step_volts")
+                    if interface
+                    else None
+                ),
+                "deposition_exchange_events": (
+                    deposition_interface.get(
+                        "cross_component_exchange_events"
+                    )
+                    if deposition_interface
+                    else None
+                ),
+                "deposition_exchange_rate": (
+                    deposition_interface.get(
+                        "exchange_rate_per_site_per_ns"
+                    )
+                    if deposition_interface
+                    else None
+                ),
                 "primary_bound": (
                     interface.get("primary_bound") if interface else None
                 ),
@@ -337,29 +449,35 @@ def build_publication_rows(
                 ),
                 "status": status,
                 "run_directory": (
-                    interface.get("run_directory") if interface else system
+                    run_directory
                 ),
             }
         )
 
     paired: dict[
-        tuple[str, int | None, str], dict[str, dict[str, Any]]
+        tuple[str, str, int | None, str], dict[str, dict[str, Any]]
     ] = {}
     for row in summary_rows:
         if row["assembly"] not in ("CoSAM", "Sequential"):
             continue
         paired.setdefault(
-            (row["secondary"], row["temperature"], row["film_state"]),
+            (
+                row["replicate_cohort"],
+                row["secondary"],
+                row["temperature"],
+                row["film_state"],
+            ),
             {},
         )[row["assembly"]] = row
 
     comparison_rows: list[dict[str, Any]] = []
-    for (secondary, temperature, film_state), pair in sorted(
+    for (cohort, secondary, temperature, film_state), pair in sorted(
         paired.items(),
         key=lambda item: (
             item[0][0],
-            math.inf if item[0][1] is None else item[0][1],
-            0 if item[0][2] == "Compressed" else 1,
+            item[0][1],
+            math.inf if item[0][2] is None else item[0][2],
+            0 if item[0][3] == "Compressed" else 1,
         ),
     ):
         if "CoSAM" not in pair or "Sequential" not in pair:
@@ -373,6 +491,7 @@ def build_publication_rows(
         )
         comparison_rows.append(
             {
+                "replicate_cohort": cohort,
                 "secondary": secondary,
                 "temperature": temperature,
                 "film_state": film_state,
@@ -433,6 +552,34 @@ def build_publication_rows(
                     cosam["void_largest_patch"],
                     sequential["void_largest_patch"],
                 ),
+                "cosam_roughness_rms": cosam["roughness_rms"],
+                "sequential_roughness_rms": sequential[
+                    "roughness_rms"
+                ],
+                "delta_roughness_rms": _delta(
+                    cosam["roughness_rms"],
+                    sequential["roughness_rms"],
+                ),
+                "cosam_z_dipole_potential_step_volts": cosam[
+                    "z_dipole_potential_step_volts"
+                ],
+                "sequential_z_dipole_potential_step_volts": sequential[
+                    "z_dipole_potential_step_volts"
+                ],
+                "delta_z_dipole_potential_step_volts": _delta(
+                    cosam["z_dipole_potential_step_volts"],
+                    sequential["z_dipole_potential_step_volts"],
+                ),
+                "cosam_deposition_exchange_rate": cosam[
+                    "deposition_exchange_rate"
+                ],
+                "sequential_deposition_exchange_rate": sequential[
+                    "deposition_exchange_rate"
+                ],
+                "delta_deposition_exchange_rate": _delta(
+                    cosam["deposition_exchange_rate"],
+                    sequential["deposition_exchange_rate"],
+                ),
                 "status": status,
             }
         )
@@ -464,41 +611,88 @@ def build_correlation_rows(
     summary_rows: list[dict[str, Any]],
     aggregated_experimental: dict[tuple[str, str], dict[str, Any]],
     *,
-    temperature: int = 300,
-    film_state: str = "Compressed",
+    temperature: int | None = None,
+    film_state: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Join MD structural metrics against aggregated experimental JV data.
+    """Join seed-averaged MD states against batch-aware experimental JV data.
 
-    Matches at the 300 K compressed-hold condition by default -- the
-    as-deposited film state closest to how these devices are actually
-    fabricated and measured (room temperature, no post-deposition thermal
-    relaxation step).
+    By default every available compressed/relaxed 300/400 K state is retained
+    so the artificial compressed wall and the experimental 100 C anneal are
+    not silently mapped onto one preferred simulation state. Optional filters
+    are retained for callers that need one explicit state.
     """
-    md_by_key = {
-        (row["secondary"], row["assembly"]): row
-        for row in summary_rows
-        if row["assembly"] in ("CoSAM", "Sequential")
-        and row["temperature"] == temperature
-        and row["film_state"] == film_state
-    }
+    md_groups: dict[
+        tuple[str, str, int | None, str], list[dict[str, Any]]
+    ] = {}
+    for row in summary_rows:
+        if row["assembly"] not in ("CoSAM", "Sequential"):
+            continue
+        if row["status"] != "OK":
+            continue
+        if temperature is not None and row["temperature"] != temperature:
+            continue
+        if film_state is not None and row["film_state"] != film_state:
+            continue
+        md_groups.setdefault(
+            (
+                row["secondary"],
+                row["assembly"],
+                row["temperature"],
+                row["film_state"],
+            ),
+            [],
+        ).append(row)
+
     rows = []
-    for key in sorted(set(md_by_key) & set(aggregated_experimental)):
-        secondary, assembly = key
-        md = md_by_key[key]
-        device = aggregated_experimental[key]
+    for md_key, md_rows in sorted(
+        md_groups.items(),
+        key=lambda item: (
+            math.inf if item[0][2] is None else item[0][2],
+            0 if item[0][3] == "Compressed" else 1,
+            item[0][0],
+            item[0][1],
+        ),
+    ):
+        secondary, assembly, md_temperature, md_film_state = md_key
+        experimental_key = (secondary, assembly)
+        if experimental_key not in aggregated_experimental:
+            continue
+        device = aggregated_experimental[experimental_key]
         rows.append(
             {
                 "secondary": secondary,
                 "assembly": assembly,
-                "coverage": md["coverage"],
-                "secondary_bound": md["secondary_bound"],
-                "secondary_persistent": md["secondary_persistent"],
-                "secondary_tilt": md["secondary_tilt"],
-                "secondary_unbound_anchor_density": md[
-                    "secondary_unbound_anchor_density"
-                ],
-                "void_largest_patch": md["void_largest_patch"],
-                "void_patch_count": md["void_patch_count"],
+                "temperature": md_temperature,
+                "film_state": md_film_state,
+                "md_seed_count": len(md_rows),
+                "coverage": _mean_available(md_rows, "coverage"),
+                "roughness_rms": _mean_available(
+                    md_rows, "roughness_rms"
+                ),
+                "secondary_bound": _mean_available(
+                    md_rows, "secondary_bound"
+                ),
+                "secondary_persistent": _mean_available(
+                    md_rows, "secondary_persistent"
+                ),
+                "secondary_tilt": _mean_available(
+                    md_rows, "secondary_tilt"
+                ),
+                "secondary_unbound_anchor_density": _mean_available(
+                    md_rows, "secondary_unbound_anchor_density"
+                ),
+                "void_largest_patch": _mean_available(
+                    md_rows, "void_largest_patch"
+                ),
+                "void_patch_count": _mean_available(
+                    md_rows, "void_patch_count"
+                ),
+                "z_dipole_potential_step_volts": _mean_available(
+                    md_rows, "z_dipole_potential_step_volts"
+                ),
+                "deposition_exchange_rate": _mean_available(
+                    md_rows, "deposition_exchange_rate"
+                ),
                 "voc_mean": device["voc_v"]["mean"],
                 "voc_std": device["voc_v"]["std"],
                 "jsc_mean": device["jsc_ma_cm2"]["mean"],
@@ -508,6 +702,11 @@ def build_correlation_rows(
                 "pce_mean": device["pce_percent"]["mean"],
                 "pce_std": device["pce_percent"]["std"],
                 "n": device["n"],
+                "n_batches": device["n_batches"],
+                "n_independent_units": device[
+                    "n_independent_units"
+                ],
+                "n_measurements": device["n_measurements"],
             }
         )
     return rows
@@ -523,8 +722,7 @@ def create_publication_workbook(
 
     When ``experimental_csv`` is given, an additional "Structure-Property
     Correlation" sheet joins the MD metrics above against externally
-    supplied device Voc/Jsc/FF/PCE data (see analysis.experimental). Omitting
-    it leaves the workbook identical to today's shape.
+    supplied device Voc/Jsc/FF/PCE data (see analysis.experimental).
     """
     api = _openpyxl()
     Workbook = api["Workbook"]
@@ -562,6 +760,7 @@ def create_publication_workbook(
             row["film_state"],
             _mean_sem(row["coverage"], row["coverage_sem"]),
             row["uncovered"],
+            row["roughness_rms"],
             row["empty_sites"],
             _mean_sem(row["primary_bound"], row["primary_bound_sem"]),
             _mean_sem(row["secondary_bound"], row["secondary_bound_sem"]),
@@ -569,6 +768,8 @@ def create_publication_workbook(
             row["secondary_p_height"],
             row["secondary_tilt"],
             _terminal_populations(row),
+            row["z_dipole_potential_step_volts"],
+            row["deposition_exchange_rate"],
             row["status"],
         ]
         for row in summary_rows
@@ -581,7 +782,7 @@ def create_publication_workbook(
         api,
     )
     summary_sheet.freeze_panes = "B2"
-    for column_index in range(5, 12):
+    for column_index in (5, 6, 7, 10, 11, 12, 14, 15):
         for cell in summary_sheet.iter_cols(
             min_col=column_index,
             max_col=column_index,
@@ -589,12 +790,18 @@ def create_publication_workbook(
         ):
             for value_cell in cell:
                 value_cell.number_format = "0.00"
+    for value_cell in summary_sheet.iter_cols(
+        min_col=2, max_col=2, min_row=2
+    ):
+        for cell in value_cell:
+            cell.number_format = "#,##0"
     summary_widths = [
         32,
         15,
         16,
         31,
         18,
+        21,
         23,
         31,
         33,
@@ -602,6 +809,8 @@ def create_publication_workbook(
         22,
         20,
         31,
+        26,
+        32,
         18,
     ]
     for index, width in enumerate(summary_widths, 1):
@@ -619,6 +828,7 @@ def create_publication_workbook(
     all_metrics_values = [
         [
             row["system"],
+            row["replicate_cohort"],
             row["assembly"],
             row["secondary"],
             row["temperature"],
@@ -632,7 +842,14 @@ def create_publication_workbook(
             row["void_patch_count"],
             row["void_largest_patch"],
             row["void_mean_patch"],
+            row["roughness_rms"],
+            row["roughness_mean_absolute"],
+            row["roughness_peak_to_valley"],
             row["empty_sites"],
+            row["z_dipole_moment"],
+            row["z_dipole_potential_step_volts"],
+            row["deposition_exchange_events"],
+            row["deposition_exchange_rate"],
             row["primary_bound"],
             row["primary_bound_sem"],
             row["primary_unbound_anchor_density"],
@@ -659,8 +876,8 @@ def create_publication_workbook(
         "AllPublicationMetricsTable",
         api,
     )
-    all_metrics_sheet.freeze_panes = "F2"
-    for column_index in range(6, 28):
+    all_metrics_sheet.freeze_panes = "G2"
+    for column_index in range(7, 36):
         for cells in all_metrics_sheet.iter_cols(
             min_col=column_index,
             max_col=column_index,
@@ -668,7 +885,7 @@ def create_publication_workbook(
         ):
             for value_cell in cells:
                 value_cell.number_format = "0.00"
-    for column_index in (4, 28, 29):
+    for column_index in (5, 13, 22, 36, 37):
         for cells in all_metrics_sheet.iter_cols(
             min_col=column_index,
             max_col=column_index,
@@ -677,8 +894,9 @@ def create_publication_workbook(
             for value_cell in cells:
                 value_cell.number_format = "#,##0"
     all_metrics_widths = [
-        32, 19, 20, 15, 16, 22, 21, 18, 24, 26, 20, 18, 26, 26, 23, 23,
-        24, 30, 25, 26, 30, 27, 22, 20, 22, 22, 22, 17, 17, 18, 34,
+        32, 24, 19, 20, 15, 16, 22, 21, 18, 24, 26, 20, 18, 26, 26, 20,
+        27, 28, 23, 23, 25, 25, 33, 23, 24, 30, 25, 26, 30, 27, 22, 20,
+        22, 22, 22, 17, 17, 18, 34,
     ]
     for index, width in enumerate(all_metrics_widths, 1):
         all_metrics_sheet.column_dimensions[
@@ -690,18 +908,30 @@ def create_publication_workbook(
             [
                 row["secondary"],
                 row["assembly"],
+                row["temperature"],
+                row["film_state"],
+                row["md_seed_count"],
                 row["coverage"],
+                row["roughness_rms"],
                 row["secondary_bound"],
                 row["secondary_persistent"],
                 row["secondary_tilt"],
                 row["secondary_unbound_anchor_density"],
                 row["void_largest_patch"],
                 row["void_patch_count"],
-                _mean_sem(row["voc_mean"], row["voc_std"]),
-                _mean_sem(row["jsc_mean"], row["jsc_std"]),
-                _mean_sem(row["ff_mean"], row["ff_std"]),
-                _mean_sem(row["pce_mean"], row["pce_std"]),
-                row["n"],
+                row["z_dipole_potential_step_volts"],
+                row["deposition_exchange_rate"],
+                row["voc_mean"],
+                row["voc_std"],
+                row["jsc_mean"],
+                row["jsc_std"],
+                row["ff_mean"],
+                row["ff_std"],
+                row["pce_mean"],
+                row["pce_std"],
+                row["n_batches"],
+                row["n_independent_units"],
+                row["n_measurements"],
             ]
             for row in correlation_rows
         ]
@@ -712,8 +942,8 @@ def create_publication_workbook(
             "StructurePropertyCorrelationTable",
             api,
         )
-        correlation_sheet.freeze_panes = "C2"
-        for column_index in range(3, 9):
+        correlation_sheet.freeze_panes = "F2"
+        for column_index in range(6, 24):
             for cells in correlation_sheet.iter_cols(
                 min_col=column_index,
                 max_col=column_index,
@@ -721,7 +951,18 @@ def create_publication_workbook(
             ):
                 for value_cell in cells:
                     value_cell.number_format = "0.00"
-        correlation_widths = [20, 15, 22, 20, 26, 20, 32, 26, 16, 18, 22, 15, 18, 12]
+        for column_index in (3, 5, 24, 25, 26):
+            for cells in correlation_sheet.iter_cols(
+                min_col=column_index,
+                max_col=column_index,
+                min_row=2,
+            ):
+                for value_cell in cells:
+                    value_cell.number_format = "#,##0"
+        correlation_widths = [
+            20, 15, 15, 16, 13, 24, 24, 23, 28, 24, 34, 30, 23,
+            31, 36, 17, 15, 23, 21, 16, 14, 17, 15, 21, 20, 17,
+        ]
         for index, width in enumerate(correlation_widths, 1):
             correlation_sheet.column_dimensions[
                 correlation_sheet.cell(1, index).column_letter
@@ -736,16 +977,31 @@ def create_publication_workbook(
             Series = api["Series"]
             Reference = api["Reference"]
             last_row = len(correlation_rows) + 1
+            pce_column = CORRELATION_HEADERS.index("PCE Mean (%)") + 1
             pce_reference = Reference(
-                correlation_sheet, min_col=13, min_row=2, max_row=last_row
+                correlation_sheet,
+                min_col=pce_column,
+                min_row=2,
+                max_row=last_row,
             )
-            for chart_title, x_col, x_title, anchor in (
-                ("Coverage vs. PCE", 3, "Projected Coverage (%)", "P2"),
+            for chart_title, x_header, x_title, anchor in (
+                (
+                    "Coverage vs. PCE",
+                    "Projected Coverage, MD Mean (%)",
+                    "Projected Coverage (%)",
+                    "AB2",
+                ),
                 (
                     "Unbound Anchor Density vs. PCE",
-                    7,
+                    "Secondary Unbound Anchor Density, MD Mean (per nm²)",
                     "Secondary Unbound Anchor Density (per nm²)",
-                    "P20",
+                    "AB20",
+                ),
+                (
+                    "Roughness vs. PCE",
+                    "Roughness RMS, MD Mean (Å)",
+                    "Roughness RMS (Å)",
+                    "AB38",
                 ),
             ):
                 chart = ScatterChart()
@@ -753,6 +1009,7 @@ def create_publication_workbook(
                 chart.x_axis.title = x_title
                 chart.y_axis.title = "PCE, Mean (%)"
                 chart.style = 13
+                x_col = CORRELATION_HEADERS.index(x_header) + 1
                 x_reference = Reference(
                     correlation_sheet,
                     min_col=x_col,
@@ -765,10 +1022,12 @@ def create_publication_workbook(
                 series.marker.symbol = "circle"
                 series.graphicalProperties.line.noFill = True
                 chart.series.append(series)
+                chart.legend = None
                 correlation_sheet.add_chart(chart, anchor)
 
     comparison_values = [
         [
+            row["replicate_cohort"],
             row["secondary"],
             row["temperature"],
             row["film_state"],
@@ -796,6 +1055,15 @@ def create_publication_workbook(
             row["cosam_void_largest_patch"],
             row["sequential_void_largest_patch"],
             row["delta_void_largest_patch"],
+            row["cosam_roughness_rms"],
+            row["sequential_roughness_rms"],
+            row["delta_roughness_rms"],
+            row["cosam_z_dipole_potential_step_volts"],
+            row["sequential_z_dipole_potential_step_volts"],
+            row["delta_z_dipole_potential_step_volts"],
+            row["cosam_deposition_exchange_rate"],
+            row["sequential_deposition_exchange_rate"],
+            row["delta_deposition_exchange_rate"],
             row["status"],
         ]
         for row in comparison_rows
@@ -807,8 +1075,9 @@ def create_publication_workbook(
         "CoSAMSequentialComparisonTable",
         api,
     )
-    comparison_sheet.freeze_panes = "D2"
-    for column_index in range(4, 28):
+    comparison_sheet.freeze_panes = "E2"
+    delta_columns = {7, 10, 13, 16, 19, 22, 25, 28, 31, 34, 37}
+    for column_index in range(5, len(COMPARISON_HEADERS)):
         for cell in comparison_sheet.iter_cols(
             min_col=column_index,
             max_col=column_index,
@@ -817,28 +1086,34 @@ def create_publication_workbook(
             for value_cell in cell:
                 value_cell.number_format = (
                     "+0.00;-0.00;0.00"
-                    if column_index in (6, 9, 12, 15, 18, 21, 24, 27)
+                    if column_index in delta_columns
                     else "0.00"
                 )
-    comparison_sheet.column_dimensions["A"].width = 21
-    comparison_sheet.column_dimensions["B"].width = 15
-    comparison_sheet.column_dimensions["C"].width = 16
-    for index in range(4, 28):
+    comparison_sheet.column_dimensions["A"].width = 24
+    comparison_sheet.column_dimensions["B"].width = 21
+    comparison_sheet.column_dimensions["C"].width = 15
+    comparison_sheet.column_dimensions["D"].width = 16
+    for index in range(5, len(COMPARISON_HEADERS)):
         comparison_sheet.column_dimensions[
             comparison_sheet.cell(1, index).column_letter
         ].width = 24
-    comparison_sheet.column_dimensions["AB"].width = 18
+    comparison_sheet.column_dimensions[
+        comparison_sheet.cell(1, len(COMPARISON_HEADERS)).column_letter
+    ].width = 18
 
     ok_fill = PatternFill("solid", fgColor="C6EFCE")
     ok_font = Font(color="006100")
     check_fill = PatternFill("solid", fgColor="FFC7CE")
     check_font = Font(color="9C0006")
-    for sheet, column, row_count in (
-        (summary_sheet, "M", len(summary_rows)),
-        (all_metrics_sheet, "AD", len(summary_rows)),
-        (comparison_sheet, "AB", len(comparison_rows)),
+    for sheet, headers, row_count in (
+        (summary_sheet, DRAFT_HEADERS, len(summary_rows)),
+        (all_metrics_sheet, ALL_METRICS_HEADERS, len(summary_rows)),
+        (comparison_sheet, COMPARISON_HEADERS, len(comparison_rows)),
     ):
         if row_count:
+            column = sheet.cell(
+                1, headers.index("QC Status") + 1
+            ).column_letter
             sheet.conditional_formatting.add(
                 f"{column}2:{column}{row_count + 1}",
                 FormulaRule(
@@ -870,11 +1145,11 @@ def create_publication_workbook(
         ],
         [
             "Preliminary status",
-            "These rows describe a single assembly seed. Block SEM measures time-series sampling within one trajectory and is not independent-seed uncertainty. Revise inferential claims after the additional assembly seeds finish.",
+            "Each detailed row retains its run directory and assembly seeds. Block SEM measures time-series sampling within one trajectory and is not independent-seed uncertainty. Correlation rows average every available MD seed for the same assembly, molecule, temperature, and film state.",
         ],
         [
             "CoSAM vs Sequential deltas",
-            "Every delta is Sequential minus CoSAM at matched secondary molecule, temperature, and compressed/relaxed film state.",
+            "Every delta is Sequential minus CoSAM at matched replicate cohort, secondary molecule, temperature, and compressed/relaxed film state.",
         ],
         [
             "Projected coverage",
@@ -904,6 +1179,18 @@ def create_publication_workbook(
             "Unbound anchor density",
             "Areal density of phosphonate anchor groups (P + its 3 O neighbors) with no O atom within the contact cutoff of any exposed Ni site, per nm^2 of periodic x/y cell.",
         ],
+        [
+            "Surface roughness",
+            "RMS, mean-absolute, and peak-to-valley fluctuations of the sampled molecular surface-height field on the periodic projected-coverage grid.",
+        ],
+        [
+            "Z dipole and potential step",
+            "Charge-weighted z dipole per frame when trajectory charge data are available. The reported potential step is the corresponding slab-capacitor approximation and should be interpreted as a comparative descriptor, not a converged work-function calculation.",
+        ],
+        [
+            "Deposition site exchange",
+            "Confirmed handoffs between distinct molecular components at one canonical exposed-Ni site, normalized by analyzed deposition time and the number of canonical exposed sites. Empty or shared intermediate frames do not count as separate handoffs.",
+        ],
         ["Source root", str(Path(prepared_root).resolve())],
         ["Detailed coverage workbook", "coverage_summary.xlsx"],
         ["Detailed interface workbook", "interface_structure_summary.xlsx"],
@@ -914,12 +1201,20 @@ def create_publication_workbook(
         methods.append(
             [
                 "Structure-Property Correlation",
-                f"Joins MD metrics at the 300 K compressed hold against "
-                f"externally supplied device Voc/Jsc/FF/PCE data from "
-                f"{Path(experimental_csv).resolve()}. Experimental values are "
-                "pooled mean +/- sample SD across every supplied replicate/batch "
-                "for a given secondary molecule and assembly. Not derived from "
-                "this repository; supplied at run time.",
+                f"Joins every available MD temperature and compressed/relaxed "
+                f"state against externally supplied device Voc/Jsc/FF/PCE data "
+                f"from {Path(experimental_csv).resolve()}. MD values average "
+                "available assembly seeds within each state. Forward/reverse "
+                "scans are first collapsed within a device (or conservatively "
+                "within a batch when device_id is absent), independent units "
+                "are averaged within batch, and batch means receive equal "
+                "weight. Sample SD is across batch means when multiple batches "
+                "exist, otherwise across independent units. Experimental "
+                "batch, unit, and measurement counts are retained. The "
+                "experimental 100 °C anneal is not silently equated with the "
+                "artificially compressed 300 K hold; all states remain visible. "
+                "Device data are supplied at run time and are not derived from "
+                "this repository.",
             ]
         )
         methods.append(
@@ -934,6 +1229,10 @@ def create_publication_workbook(
     methods_sheet.column_dimensions["A"].width = 31
     methods_sheet.column_dimensions["B"].width = 115
     methods_sheet.freeze_panes = "A2"
+    methods_sheet.sheet_properties.pageSetUpPr.fitToPage = True
+    methods_sheet.page_setup.orientation = "landscape"
+    methods_sheet.page_setup.fitToWidth = 1
+    methods_sheet.page_setup.fitToHeight = 0
     for row_index, row in enumerate(methods_sheet.iter_rows(), 1):
         row[1].alignment = Alignment(wrap_text=True, vertical="top")
         if row_index > 1:
