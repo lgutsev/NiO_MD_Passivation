@@ -373,6 +373,10 @@ def prepare_lego_continuation(
     """Add a restart-safe final compression stage to an existing lego run."""
     output = Path(output)
     plan_path = output / "lego_plan.json"
+    if not plan_path.is_file():
+        lego2_plan_path = output / "lego2_plan.json"
+        if lego2_plan_path.is_file():
+            plan_path = lego2_plan_path
     manifest_path = output / "assembly_manifest.json"
     topology_path = output / "topology_output.lmp"
     for path in (plan_path, manifest_path, topology_path):
@@ -397,6 +401,7 @@ def prepare_lego_continuation(
     if plan.get("method") not in {
         "periodic_x_gap_seeded",
         "periodic_x_gap_tunnel",
+        "periodic_2d_void_seeded",
     }:
         raise ValueError("output is not a coverage-guided lego system")
     initial_endpoint = float(plan["deposition_wall_endpoint_angstrom"])
