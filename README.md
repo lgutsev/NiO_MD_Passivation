@@ -324,6 +324,29 @@ spontaneously finds the gap.
 See [`docs/lego-deposition.md`](docs/lego-deposition.md) for the method,
 controls, outputs, and commands for extending the test.
 
+### Experimental localized 2D-void “lego2” deposition
+
+The additive lego2 control addresses the main geometric limitation of the
+original lego method. Instead of averaging occupancy over `y` and treating a
+low-occupancy `x` interval as an empty stripe, it labels periodic 2D void
+components, centers the largest one in both lateral directions, and packs
+stage 2 inside the largest rectangle lying completely within that component.
+All later dynamics remain laterally unconstrained.
+
+It writes a separate tree and leaves every existing lego result untouched:
+
+```bash
+sbatch scripts/build_lego2_systems.sbatch
+```
+
+The default DCZ-4P pilot is written under
+`prepared-lego2/me-4pacz-then-dcz-4p-lego2-seeded/`. Review
+`lego2_plan.json` and `lego2_void_map.csv`, then use the ordinary sequential
+deposition/hold runners with `PREPARED_ROOT=prepared-lego2` and
+`SYSTEM_SUFFIX=-lego2-seeded`. This is still a seeded accessibility control,
+not an unbiased model of spontaneous gap finding. See
+[`docs/lego2-deposition.md`](docs/lego2-deposition.md).
+
 ## Simulation stages and wall policy
 
 Every completed build writes `deposition.in`, `hold-300K.in`,
