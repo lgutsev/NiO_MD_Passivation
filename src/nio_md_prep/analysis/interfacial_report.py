@@ -22,6 +22,8 @@ RESULT_HEADERS = [
     "Empty Sites (%)",
     "Shared Sites (%)",
     "Cross-Component Exchange Events",
+    "Exchange Analysis Time (ps)",
+    "Exchange Rate (events/site/ns)",
     "Z Dipole Moment (e·Å)",
     "Approx. Potential Step (V)",
     "Primary Component",
@@ -204,6 +206,11 @@ def collect_interfacial_results(
                 "interface-analysis-relax-*/interface_summary.json"
             )
         )
+        | set(
+            prepared_root.rglob(
+                "interface-analysis-deposition/interface_summary.json"
+            )
+        )
     )
     if not paths:
         raise FileNotFoundError(
@@ -287,11 +294,15 @@ def collect_interfacial_results(
             "surface_sites": int(summary["surface_site_count"]),
             "empty": empty,
             "shared": shared,
-            "cross_component_exchange_events": (
-                summary.get("site_competition", {}).get(
-                    "cross_component_exchange_event_count"
-                )
-            ),
+            "cross_component_exchange_events": summary.get(
+                "site_competition", {}
+            ).get("cross_component_exchange_event_count"),
+            "exchange_analysis_time_ps": summary.get(
+                "site_competition", {}
+            ).get("analyzed_time_ps"),
+            "exchange_rate_per_site_per_ns": summary.get(
+                "site_competition", {}
+            ).get("exchange_rate_per_site_per_ns"),
             "z_dipole_moment": (
                 summary.get("z_dipole", {})
                 .get("moment_e_angstrom", {})
@@ -474,6 +485,7 @@ def collect_interfacial_results(
                         "population": population["mean"],
                         "sem": population["block_sem"],
                         "std": population["frame_std"],
+                        "run_directory": run_directory,
                     }
                 )
 
@@ -539,6 +551,8 @@ def _stage_comparisons(results: list[dict]) -> list[list[Any]]:
     grouped: dict[tuple[str, int | None], dict[str, dict]] = {}
     for row in results:
         kind = row["stage"].split("-", 1)[0]
+        if kind not in {"hold", "relax"}:
+            continue
         grouped.setdefault(
             (row["run_directory"], row["temperature"]), {}
         )[kind] = row
@@ -611,6 +625,8 @@ def create_interfacial_workbook(prepared_root: Path, output: Path) -> Path:
             row["empty"],
             row["shared"],
             row["cross_component_exchange_events"],
+            row["exchange_analysis_time_ps"],
+            row["exchange_rate_per_site_per_ns"],
             row["z_dipole_moment"],
             row["z_dipole_potential_step_volts"],
             row["primary_name"],
@@ -647,30 +663,36 @@ def create_interfacial_workbook(prepared_root: Path, output: Path) -> Path:
         "InterfaceResultsTable",
         api,
     )
-    for column in (
-        "F",
-        "I",
-        "J",
-        "L",
-        "M",
-        "N",
-        "O",
-        "P",
-        "Q",
-        "R",
-        "T",
-        "U",
-        "V",
-        "W",
-        "X",
-        "Y",
-        "Z",
-        "AA",
-        "AB",
+    for column_index in (
+        6,
+        9,
+        10,
+        12,
+        13,
+        14,
+        15,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
     ):
+        column = results_sheet.cell(1, column_index).column_letter
         for cell in results_sheet[column][1:]:
             cell.number_format = "0.00"
-    for column in ("C", "E", "H"):
+    for column_index in (3, 5, 8, 11, 38, 39):
+        column = results_sheet.cell(1, column_index).column_letter
         for cell in results_sheet[column][1:]:
             cell.number_format = "#,##0"
     for index, width in enumerate(
@@ -687,23 +709,28 @@ def create_interfacial_workbook(prepared_root: Path, output: Path) -> Path:
             18,
             24,
             22,
-            19,
+            25,
+            23,
+            25,
             21,
             18,
-            13,
+            20,
+            20,
             19,
+            16,
             21,
-            24,
-            24,
-            21,
+            22,
             23,
             20,
-            15,
-            21,
-            23,
+            20,
+            20,
             19,
+            16,
+            21,
             22,
-            11,
+            18,
+            20,
+            12,
             48,
             48,
             44,
@@ -717,18 +744,21 @@ def create_interfacial_workbook(prepared_root: Path, output: Path) -> Path:
         ].width = width
     if results:
         last = len(results) + 1
+        status_column = results_sheet.cell(
+            1, RESULT_HEADERS.index("Status") + 1
+        ).column_letter
         results_sheet.conditional_formatting.add(
-            f"AC2:AC{last}",
+            f"{status_column}2:{status_column}{last}",
             FormulaRule(
-                formula=['$AC2="OK"'],
+                formula=[f'${status_column}2="OK"'],
                 fill=PatternFill("solid", fgColor="C6EFCE"),
                 font=Font(color="006100"),
             ),
         )
         results_sheet.conditional_formatting.add(
-            f"AC2:AC{last}",
+            f"{status_column}2:{status_column}{last}",
             FormulaRule(
-                formula=['$AC2="CHECK"'],
+                formula=[f'${status_column}2="CHECK"'],
                 fill=PatternFill("solid", fgColor="FFC7CE"),
                 font=Font(color="9C0006"),
             ),
@@ -741,15 +771,21 @@ def create_interfacial_workbook(prepared_root: Path, output: Path) -> Path:
         chart.y_axis.title = "System | stage"
         chart.height = max(7.0, min(16.0, 2.5 + 0.45 * len(results)))
         chart.width = 17.0
+        primary_bound_column = RESULT_HEADERS.index("Primary Bound (%)") + 1
         chart.add_data(
-            Reference(results_sheet, min_col=13, min_row=1, max_row=last),
+            Reference(
+                results_sheet,
+                min_col=primary_bound_column,
+                min_row=1,
+                max_row=last,
+            ),
             titles_from_data=True,
         )
         chart.set_categories(
             Reference(results_sheet, min_col=1, min_row=2, max_row=last)
         )
         chart.legend = None
-        results_sheet.add_chart(chart, "AF2")
+        results_sheet.add_chart(chart, "AO2")
 
     component_rows = [
         [
@@ -991,6 +1027,14 @@ def create_interfacial_workbook(prepared_root: Path, output: Path) -> Path:
         [
             "Lateral RDF",
             "Two-dimensional molecular-core pair distribution normalized by instantaneous lateral area.",
+        ],
+        [
+            "Site competition",
+            "Cross-component hand-offs of a canonical exposed-Ni site. The normalized rate is events per site per ns over the analyzed time span and is intended primarily for complete deposition trajectories.",
+        ],
+        [
+            "Z dipole",
+            "Fixed-charge Sum(q_i z_i) over the complete neutral system and its idealized dipole-sheet potential-step proxy. Use only for relative comparisons, not as an absolute work function.",
         ],
         [
             "Uncertainty",
