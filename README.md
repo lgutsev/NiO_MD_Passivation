@@ -510,7 +510,10 @@ Coverage no longer depends on coloring an OVITO image and counting pixels.
 The analysis module reads the actual LAMMPS coordinates and assembly manifest,
 projects ligand van der Waals footprints into the periodic surface plane, and
 reports total, uncovered, component-resolved, and overlapping coverage with
-block-based uncertainty.
+block-based uncertainty. It also labels the uncovered area into contiguous,
+periodically-wrapped void patches, reporting patch count and largest/mean
+patch size as a fraction of the cell — distinguishing a few large bare
+patches from many small pinholes, which a single "% uncovered" number cannot.
 
 Analyze one trajectory with:
 
@@ -553,6 +556,9 @@ lying above another SAM. A separate interfacial module therefore reports:
 - persistent contacts and residence episodes;
 - bound/unbound heights, molecular-plane orientation, multi-anchor geometry,
   conventional molecular tilt, and orientational `P2`;
+- areal density of anchor groups (phosphorus + its three oxygens) with no
+  Ni contact, i.e. dangling and available at the top of the film — a proxy
+  for how many Pb-coordinating sites a given SAM leaves exposed;
 - component-resolved local-height density profiles;
 - lateral same-component and cross-component two-dimensional RDFs; and
 - matched compressed-hold versus decompressed-relaxation changes.
@@ -592,6 +598,29 @@ trail.
 All systems use the same 600 canonical exposed-Ni atom identities mapped from
 the authoritative pristine corrugated surface, including sequential systems
 whose NiO coordinates have already evolved during stage 1.
+
+### Structure-property correlation against experimental device data
+
+`nio-md-prep summarize-publication` accepts an optional `--experimental
+PATH` pointing at a CSV of measured device results (columns: `secondary`,
+`assembly`, `voc_v`, `jsc_ma_cm2`, `ff_percent`, `pce_percent`, plus optional
+`batch`/`scan_direction` provenance columns). When supplied, it adds a
+`Structure-Property Correlation` sheet to `publication_summary.xlsx` joining
+projected coverage, bound fraction, tilt, unbound-anchor density, and void
+patch metrics (all at the 300 K compressed hold) against the pooled mean ±
+sample SD of the experimental values for each secondary molecule and
+CoSAM/Sequential assembly, plus two scatter plots against PCE.
+
+```bash
+nio-md-prep summarize-publication prepared --output prepared/publication_summary.xlsx \
+    --experimental /path/to/device_results.csv
+```
+
+**Keep unpublished device data out of this repository.** Point
+`--experimental` at a CSV stored somewhere private (outside the repo
+working tree); `/experimental/` and `*jv_results*.csv` are already
+`.gitignore`d as a defensive safety net, but the primary safeguard is simply
+never placing that file under version control here.
 
 The existing builders and runners can also write an independent replicate
 tree. Set `PREPARED_ROOT` on every stage and provide new random seeds only to

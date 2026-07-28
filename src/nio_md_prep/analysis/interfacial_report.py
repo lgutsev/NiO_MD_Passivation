@@ -293,6 +293,9 @@ def collect_interfacial_results(
                 else None
             ),
             "primary_bound": comp_metric(primary, "bound_fraction_percent"),
+            "primary_unbound_anchor_density": comp_metric(
+                primary, "unbound_anchor_density_per_nm2"
+            ),
             "primary_persistent": comp_value(
                 primary, "persistent_bound_molecules_percent"
             ),
@@ -313,6 +316,9 @@ def collect_interfacial_results(
                 else None
             ),
             "secondary_bound": comp_metric(secondary, "bound_fraction_percent"),
+            "secondary_unbound_anchor_density": comp_metric(
+                secondary, "unbound_anchor_density_per_nm2"
+            ),
             "secondary_persistent": comp_value(
                 secondary, "persistent_bound_molecules_percent"
             ),

@@ -723,6 +723,7 @@ def analyze_interfacial_structure(
     component_series: dict[str, dict[str, list[float]]] = {
         component.key: {
             "bound_fraction_percent": [],
+            "unbound_anchor_density_per_nm2": [],
             "mean_anchored_terminals": [],
             "tilt_degrees": [],
             "orientational_P2": [],
@@ -832,6 +833,7 @@ def analyze_interfacial_structure(
             p_heights = []
             core_heights = []
             relative_heights = []
+            unbound_anchor_count = 0
             molecules = molecules_by_component[component.key]
             for molecule in molecules:
                 terminal_contacts = 0
@@ -855,6 +857,8 @@ def analyze_interfacial_structure(
                     if sites:
                         terminal_contacts += 1
                         molecule_sites.update(sites)
+                    else:
+                        unbound_anchor_count += 1
                 for site_index in molecule_sites:
                     site_components[site_index].add(component.key)
                 bound = terminal_contacts > 0
@@ -945,8 +949,12 @@ def analyze_interfacial_structure(
                 if molecule_bound
                 else math.nan
             )
+            unbound_anchor_density_per_nm2 = (
+                100.0 * unbound_anchor_count / area if area > 0 else math.nan
+            )
             component_values = {
                 "bound_fraction_percent": bound_percent,
+                "unbound_anchor_density_per_nm2": unbound_anchor_density_per_nm2,
                 "mean_anchored_terminals": _mean_or_nan(np, terminal_counts),
                 "tilt_degrees": _mean_or_nan(np, tilts),
                 "orientational_P2": _mean_or_nan(np, p2_values),

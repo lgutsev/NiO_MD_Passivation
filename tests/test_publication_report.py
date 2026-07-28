@@ -6,6 +6,7 @@ from nio_md_prep.analysis import publication_report
 from nio_md_prep.analysis.publication_report import (
     ALL_METRICS_HEADERS,
     COMPARISON_HEADERS,
+    CORRELATION_HEADERS,
     SUMMARY_HEADERS,
     build_publication_rows,
     create_publication_workbook,
@@ -58,6 +59,9 @@ def _fixture_rows():
                 "secondary_name": "dcz-4p",
                 "secondary_mean": 18.0,
                 "overlap": 3.0,
+                "void_patch_count": 3 if index == 0 else 1,
+                "void_largest_patch": 12.0 if index == 0 else 4.0,
+                "void_mean_patch": 8.0 if index == 0 else 4.0,
                 "status": "OK",
             }
         )
@@ -70,7 +74,9 @@ def _fixture_rows():
                 "secondary_name": "dcz-4p",
                 "empty": uncovered,
                 "primary_bound": 82.0,
+                "primary_unbound_anchor_density": 0.0,
                 "secondary_bound": secondary_bound,
+                "secondary_unbound_anchor_density": 1.5 if index == 0 else 0.4,
                 "secondary_persistent": persistent,
                 "secondary_p_height": p_height,
                 "secondary_tilt": tilt,
@@ -160,3 +166,59 @@ def test_create_publication_workbook_has_draft_tables(tmp_path, monkeypatch):
     assert workbook["Draft Summary"]["M2"].value == "OK"
     assert workbook["CoSAM vs Sequential"]["F2"].value == pytest.approx(5.0)
     assert "single assembly seed" in workbook["Methods"]["B3"].value
+
+
+def test_create_publication_workbook_adds_correlation_sheet_when_experimental_csv_given(
+    tmp_path, monkeypatch
+):
+    openpyxl = pytest.importorskip("openpyxl")
+    coverage, interface, components, terminals = _fixture_rows()
+    monkeypatch.setattr(
+        publication_report,
+        "collect_coverage_results",
+        lambda _root: (coverage, []),
+    )
+    monkeypatch.setattr(
+        publication_report,
+        "collect_interfacial_results",
+        lambda _root: (interface, components, terminals, [], [], []),
+    )
+
+    # Synthetic placeholder JV numbers -- not real device data.
+    experimental_csv = tmp_path / "jv.csv"
+    experimental_csv.write_text(
+        "secondary,assembly,batch,scan_direction,voc_v,jsc_ma_cm2,ff_percent,pce_percent\n"
+        "DCZ-4P,CoSAM,synthetic,R,1.100,10.000,70.0,7.000\n"
+        "DCZ-4P,CoSAM,synthetic,F,1.100,10.000,72.0,7.500\n"
+        "DCZ-4P,Sequential,synthetic,R,1.200,12.000,80.0,9.500\n"
+        "DCZ-4P,Sequential,synthetic,F,1.200,12.000,82.0,10.000\n",
+        encoding="utf-8",
+    )
+
+    output = tmp_path / "publication_summary.xlsx"
+    assert (
+        create_publication_workbook(
+            Path("prepared"), output, experimental_csv=experimental_csv
+        )
+        == output
+    )
+
+    workbook = openpyxl.load_workbook(output)
+    assert workbook.sheetnames == [
+        "Draft Summary",
+        "CoSAM vs Sequential",
+        "All Metrics",
+        "Structure-Property Correlation",
+        "Methods",
+    ]
+    sheet = workbook["Structure-Property Correlation"]
+    assert [cell.value for cell in sheet[1]] == CORRELATION_HEADERS
+    assert "StructurePropertyCorrelationTable" in sheet.tables
+    rows = {row[1].value: row for row in sheet.iter_rows(min_row=2)}
+    assert set(rows) == {"CoSAM", "Sequential"}
+    assert rows["CoSAM"][0].value == "DCZ-4P"
+    assert rows["CoSAM"][12].value == "7.25 ± 0.35"
+    assert rows["CoSAM"][13].value == 2
+    assert rows["Sequential"][12].value == "9.75 ± 0.35"
+    assert len(sheet._charts) == 2
+    assert "Correlated rows" in {row[0].value for row in workbook["Methods"].iter_rows()}

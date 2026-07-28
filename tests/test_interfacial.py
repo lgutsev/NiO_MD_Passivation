@@ -199,6 +199,10 @@ def test_anchor_orientation_terminal_rdf_and_density_outputs(tmp_path):
     primary = summary["components"]["primary"]
     dcz = summary["components"]["dcz-4p"]
     assert primary["metrics"]["bound_fraction_percent"]["mean"] == 100.0
+    assert primary["metrics"]["unbound_anchor_density_per_nm2"]["mean"] == 0.0
+    # frame0: dcz-4p's second anchor is dangling (1 unbound anchor / 1 nm^2 cell);
+    # frame1 (second_terminal_bound=True): both anchors bound (0 unbound).
+    assert dcz["metrics"]["unbound_anchor_density_per_nm2"]["mean"] == pytest.approx(0.5)
     assert dcz["terminal_state_populations_percent"]["1"]["mean"] == 50.0
     assert dcz["terminal_state_populations_percent"]["2"]["mean"] == 50.0
     assert dcz["persistent_bound_molecules_percent"] == 100.0

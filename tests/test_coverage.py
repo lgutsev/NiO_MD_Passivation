@@ -6,6 +6,8 @@ import numpy as np
 import pytest
 
 from nio_md_prep.analysis.coverage import (
+    _label_dependency,
+    _periodic_patch_sizes,
     analyze_coverage,
     count_dump_frames,
     iter_dump_frames,
@@ -96,6 +98,27 @@ def test_periodic_disk_wraps_across_x_boundary():
     assert mask.mean() * 100.0 == pytest.approx(3.14, abs=0.2)
 
 
+def test_periodic_patch_sizes_merges_across_boundaries():
+    label = _label_dependency()
+
+    wrapping = np.zeros((6, 6), dtype=bool)
+    wrapping[:, 0] = True
+    wrapping[:, 5] = True
+    assert _periodic_patch_sizes(np, label, wrapping) == [12]
+
+    wrapping_y = np.zeros((6, 6), dtype=bool)
+    wrapping_y[0, :] = True
+    wrapping_y[5, :] = True
+    assert _periodic_patch_sizes(np, label, wrapping_y) == [12]
+
+    isolated = np.zeros((6, 6), dtype=bool)
+    isolated[0, 0] = True
+    isolated[3, 3] = True
+    assert sorted(_periodic_patch_sizes(np, label, isolated)) == [1, 1]
+
+    assert _periodic_patch_sizes(np, label, np.zeros((4, 4), dtype=bool)) == []
+
+
 def test_dump_stream_and_count(tmp_path):
     path = tmp_path / "trajectory.lammpstrj"
     path.write_text(
@@ -123,11 +146,16 @@ def test_analysis_uses_last_frames_and_reports_component_overlap(tmp_path):
     assert summary["analyzed_frame_indices"] == [1, 2]
     assert set(summary["components"]) == {"primary", "secondary"}
     assert summary["metrics"]["overlap"]["mean_percent"] > 0.0
+    assert summary["metrics"]["void_patch_count"]["mean"] >= 0.0
+    assert summary["metrics"]["void_largest_patch_percent"]["mean_percent"] >= 0.0
+    assert summary["metrics"]["void_mean_patch_percent"]["mean_percent"] >= 0.0
     assert (summary_path.parent / "coverage_probability.npz").is_file()
     with (summary_path.parent / "coverage_timeseries.csv").open() as handle:
         rows = list(csv.DictReader(handle))
     assert len(rows) == 2
     assert int(rows[0]["step"]) == 1000
+    assert "void_patch_count" in rows[0]
+    assert "void_largest_patch_percent" in rows[0]
     total = float(rows[-1]["coverage_total_percent"])
     primary = float(rows[-1]["coverage_primary_percent"])
     secondary = float(rows[-1]["coverage_secondary_percent"])

@@ -49,7 +49,7 @@ COMPONENT_HEADERS = [
 def _openpyxl():
     try:
         from openpyxl import Workbook
-        from openpyxl.chart import BarChart, Reference
+        from openpyxl.chart import BarChart, Reference, Series, ScatterChart
         from openpyxl.formatting.rule import ColorScaleRule, FormulaRule
         from openpyxl.styles import Alignment, Font, PatternFill
         from openpyxl.worksheet.table import Table, TableStyleInfo
@@ -61,7 +61,9 @@ def _openpyxl():
     return {
         "Workbook": Workbook,
         "BarChart": BarChart,
+        "ScatterChart": ScatterChart,
         "Reference": Reference,
+        "Series": Series,
         "ColorScaleRule": ColorScaleRule,
         "FormulaRule": FormulaRule,
         "Alignment": Alignment,
@@ -169,6 +171,21 @@ def collect_coverage_results(prepared_root: Path) -> tuple[list[dict], list[dict
                 "primary_mean": primary["mean"] if primary else None,
                 "secondary_name": secondary["name"] if secondary else None,
                 "secondary_mean": secondary["mean"] if secondary else None,
+                # .get(...) rather than _metric(...): older coverage_summary.json
+                # files predate these keys and must still load without error.
+                "void_patch_count": (
+                    summary.get("metrics", {}).get("void_patch_count", {}).get("mean")
+                ),
+                "void_largest_patch": (
+                    summary.get("metrics", {})
+                    .get("void_largest_patch_percent", {})
+                    .get("mean_percent")
+                ),
+                "void_mean_patch": (
+                    summary.get("metrics", {})
+                    .get("void_mean_patch_percent", {})
+                    .get("mean_percent")
+                ),
                 "grid": float(summary["grid_target_spacing_angstrom"]),
                 "radius_scale": float(summary["radius_scale"]),
                 "hydrogen_included": not bool(summary["exclude_hydrogen"]),

@@ -14,3 +14,9 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+
+# Unpublished experimental device data supplied via --experimental; this
+# data is not meant to leave the local machine before publication and
+# should never be committed to this repository.
+/experimental/
+*jv_results*.csv

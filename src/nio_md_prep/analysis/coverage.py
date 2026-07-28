@@ -358,7 +358,9 @@ def rasterize_periodic(
     return mask
 
 
-def _block_statistics(np, values, requested_blocks: int) -> dict[str, float | int]:
+def _block_average(
+    np, values, requested_blocks: int, suffix: str = "_percent"
+) -> dict[str, float | int]:
     array = np.asarray(values, dtype=float)
     block_count = min(max(1, requested_blocks), len(array))
     blocks = [part for part in np.array_split(array, block_count) if len(part)]
@@ -369,11 +371,65 @@ def _block_statistics(np, values, requested_blocks: int) -> dict[str, float | in
         else 0.0
     )
     return {
-        "mean_percent": float(array.mean()),
-        "frame_std_percent": float(array.std(ddof=1)) if len(array) > 1 else 0.0,
-        "block_sem_percent": block_sem,
+        f"mean{suffix}": float(array.mean()),
+        f"frame_std{suffix}": float(array.std(ddof=1)) if len(array) > 1 else 0.0,
+        f"block_sem{suffix}": block_sem,
         "block_count": len(blocks),
     }
+
+
+def _block_statistics(np, values, requested_blocks: int) -> dict[str, float | int]:
+    return _block_average(np, values, requested_blocks, suffix="_percent")
+
+
+def _label_dependency():
+    try:
+        from scipy.ndimage import label
+    except ImportError as exc:
+        raise RuntimeError(
+            "void patch analysis requires SciPy; "
+            "install with: python -m pip install -e '.[analysis]'"
+        ) from exc
+    return label
+
+
+def _periodic_patch_sizes(np, label, uncovered) -> list[int]:
+    """Cell-count sizes of connected uncovered regions on a periodic x/y grid.
+
+    scipy.ndimage.label does not wrap, so components are labeled normally
+    and then merged across the periodic x/y seams with a small union-find.
+    """
+    structure = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
+    labels, num_labels = label(uncovered, structure=structure)
+    if num_labels == 0:
+        return []
+    parent = list(range(num_labels + 1))
+
+    def find(a: int) -> int:
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    ny, nx = uncovered.shape
+    for i in range(ny):
+        a, b = int(labels[i, 0]), int(labels[i, nx - 1])
+        if a and b and a != b:
+            union(a, b)
+    for j in range(nx):
+        a, b = int(labels[0, j]), int(labels[ny - 1, j])
+        if a and b and a != b:
+            union(a, b)
+    roots = np.asarray([find(i) for i in range(num_labels + 1)])
+    flat_labels = roots[labels.ravel()]
+    flat_labels = flat_labels[flat_labels > 0]
+    counts = np.bincount(flat_labels)
+    return counts[counts > 0].tolist()
 
 
 def _write_plots(
@@ -509,6 +565,7 @@ def analyze_coverage(
         max(0, frame_count - last_frames) if last_frames is not None else 0
     )
 
+    label = _label_dependency()
     shape = None
     probability_sum = None
     rows: list[dict[str, float | int]] = []
@@ -570,6 +627,8 @@ def analyze_coverage(
         total_mask = occupancy_count > 0
         overlap_mask = occupancy_count > 1
         probability_sum += total_mask
+        patch_sizes = _periodic_patch_sizes(np, label, ~total_mask)
+        total_cells = total_mask.size
         row: dict[str, float | int] = {
             "frame_index": frame.index,
             "step": frame.step,
@@ -577,6 +636,15 @@ def analyze_coverage(
             "coverage_total_percent": float(total_mask.mean() * 100.0),
             "coverage_uncovered_percent": float((~total_mask).mean() * 100.0),
             "coverage_overlap_percent": float(overlap_mask.mean() * 100.0),
+            "void_patch_count": len(patch_sizes),
+            "void_largest_patch_percent": (
+                100.0 * max(patch_sizes) / total_cells if patch_sizes else 0.0
+            ),
+            "void_mean_patch_percent": (
+                100.0 * (sum(patch_sizes) / len(patch_sizes)) / total_cells
+                if patch_sizes
+                else 0.0
+            ),
         }
         for component, mask in zip(components, component_masks):
             row[f"coverage_{component.key}_percent"] = float(mask.mean() * 100.0)
@@ -610,6 +678,15 @@ def analyze_coverage(
         ),
         "overlap": _block_statistics(
             np, [row["coverage_overlap_percent"] for row in rows], blocks
+        ),
+        "void_patch_count": _block_average(
+            np, [row["void_patch_count"] for row in rows], blocks, suffix=""
+        ),
+        "void_largest_patch_percent": _block_statistics(
+            np, [row["void_largest_patch_percent"] for row in rows], blocks
+        ),
+        "void_mean_patch_percent": _block_statistics(
+            np, [row["void_mean_patch_percent"] for row in rows], blocks
         ),
     }
     component_metrics = {

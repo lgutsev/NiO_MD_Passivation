@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 import math
 
+from .experimental import aggregate_device_results, load_device_results
 from .interfacial_report import collect_interfacial_results
 from .report import (
     _openpyxl,
@@ -41,11 +42,16 @@ ALL_METRICS_HEADERS = [
     "Primary Projected Coverage (%)",
     "Secondary Projected Coverage (%)",
     "Component Overlap (%)",
+    "Void Patch Count",
+    "Largest Void Patch (% of cell)",
+    "Mean Void Patch (% of cell)",
     "Empty Exposed-Ni Sites (%)",
     "Primary Bound Molecules (%)",
     "Primary Bound Block SEM (%)",
+    "Primary Unbound Anchor Density (per nm²)",
     "Secondary Bound Molecules (%)",
     "Secondary Bound Block SEM (%)",
+    "Secondary Unbound Anchor Density (per nm²)",
     "Secondary Persistent Bound (%)",
     "Secondary P Height (Å)",
     "Secondary Tilt (deg)",
@@ -83,7 +89,30 @@ COMPARISON_HEADERS = [
     "CoSAM Secondary Tilt (deg)",
     "Sequential Secondary Tilt (deg)",
     "Δ Secondary Tilt: Seq-CoSAM (deg)",
+    "CoSAM Secondary Unbound Anchor Density (per nm²)",
+    "Sequential Secondary Unbound Anchor Density (per nm²)",
+    "Δ Unbound Anchor Density: Seq-CoSAM (per nm²)",
+    "CoSAM Largest Void Patch (% of cell)",
+    "Sequential Largest Void Patch (% of cell)",
+    "Δ Largest Void Patch: Seq-CoSAM (% of cell)",
     "QC Status",
+]
+
+CORRELATION_HEADERS = [
+    "Secondary Molecule",
+    "Assembly",
+    "Projected Coverage (%)",
+    "Secondary Bound (%)",
+    "Secondary Persistent Bound (%)",
+    "Secondary Tilt (deg)",
+    "Secondary Unbound Anchor Density (per nm²)",
+    "Largest Void Patch (% of cell)",
+    "Void Patch Count",
+    "Voc, Mean ± SD (V)",
+    "Jsc, Mean ± SD (mA/cm²)",
+    "FF, Mean ± SD (%)",
+    "PCE, Mean ± SD (%)",
+    "N Devices",
 ]
 
 
@@ -250,6 +279,15 @@ def build_publication_rows(
                     coverage.get("secondary_mean") if coverage else None
                 ),
                 "overlap": coverage.get("overlap") if coverage else None,
+                "void_patch_count": (
+                    coverage.get("void_patch_count") if coverage else None
+                ),
+                "void_largest_patch": (
+                    coverage.get("void_largest_patch") if coverage else None
+                ),
+                "void_mean_patch": (
+                    coverage.get("void_mean_patch") if coverage else None
+                ),
                 "empty_sites": interface.get("empty") if interface else None,
                 "primary_bound": (
                     interface.get("primary_bound") if interface else None
@@ -259,12 +297,22 @@ def build_publication_rows(
                     if primary_component
                     else None
                 ),
+                "primary_unbound_anchor_density": (
+                    interface.get("primary_unbound_anchor_density")
+                    if interface
+                    else None
+                ),
                 "secondary_bound": (
                     interface.get("secondary_bound") if interface else None
                 ),
                 "secondary_bound_sem": (
                     secondary_component.get("bound_sem")
                     if secondary_component
+                    else None
+                ),
+                "secondary_unbound_anchor_density": (
+                    interface.get("secondary_unbound_anchor_density")
+                    if interface
                     else None
                 ),
                 "secondary_persistent": (
@@ -367,6 +415,24 @@ def build_publication_rows(
                 "delta_secondary_tilt": _delta(
                     cosam["secondary_tilt"], sequential["secondary_tilt"]
                 ),
+                "cosam_secondary_unbound_anchor_density": cosam[
+                    "secondary_unbound_anchor_density"
+                ],
+                "sequential_secondary_unbound_anchor_density": sequential[
+                    "secondary_unbound_anchor_density"
+                ],
+                "delta_secondary_unbound_anchor_density": _delta(
+                    cosam["secondary_unbound_anchor_density"],
+                    sequential["secondary_unbound_anchor_density"],
+                ),
+                "cosam_void_largest_patch": cosam["void_largest_patch"],
+                "sequential_void_largest_patch": sequential[
+                    "void_largest_patch"
+                ],
+                "delta_void_largest_patch": _delta(
+                    cosam["void_largest_patch"],
+                    sequential["void_largest_patch"],
+                ),
                 "status": status,
             }
         )
@@ -394,8 +460,72 @@ def collect_publication_results(
     )
 
 
-def create_publication_workbook(prepared_root: Path, output: Path) -> Path:
-    """Write a compact draft table and direct CoSAM/sequential comparison."""
+def build_correlation_rows(
+    summary_rows: list[dict[str, Any]],
+    aggregated_experimental: dict[tuple[str, str], dict[str, Any]],
+    *,
+    temperature: int = 300,
+    film_state: str = "Compressed",
+) -> list[dict[str, Any]]:
+    """Join MD structural metrics against aggregated experimental JV data.
+
+    Matches at the 300 K compressed-hold condition by default -- the
+    as-deposited film state closest to how these devices are actually
+    fabricated and measured (room temperature, no post-deposition thermal
+    relaxation step).
+    """
+    md_by_key = {
+        (row["secondary"], row["assembly"]): row
+        for row in summary_rows
+        if row["assembly"] in ("CoSAM", "Sequential")
+        and row["temperature"] == temperature
+        and row["film_state"] == film_state
+    }
+    rows = []
+    for key in sorted(set(md_by_key) & set(aggregated_experimental)):
+        secondary, assembly = key
+        md = md_by_key[key]
+        device = aggregated_experimental[key]
+        rows.append(
+            {
+                "secondary": secondary,
+                "assembly": assembly,
+                "coverage": md["coverage"],
+                "secondary_bound": md["secondary_bound"],
+                "secondary_persistent": md["secondary_persistent"],
+                "secondary_tilt": md["secondary_tilt"],
+                "secondary_unbound_anchor_density": md[
+                    "secondary_unbound_anchor_density"
+                ],
+                "void_largest_patch": md["void_largest_patch"],
+                "void_patch_count": md["void_patch_count"],
+                "voc_mean": device["voc_v"]["mean"],
+                "voc_std": device["voc_v"]["std"],
+                "jsc_mean": device["jsc_ma_cm2"]["mean"],
+                "jsc_std": device["jsc_ma_cm2"]["std"],
+                "ff_mean": device["ff_percent"]["mean"],
+                "ff_std": device["ff_percent"]["std"],
+                "pce_mean": device["pce_percent"]["mean"],
+                "pce_std": device["pce_percent"]["std"],
+                "n": device["n"],
+            }
+        )
+    return rows
+
+
+def create_publication_workbook(
+    prepared_root: Path,
+    output: Path,
+    *,
+    experimental_csv: Path | None = None,
+) -> Path:
+    """Write a compact draft table and direct CoSAM/sequential comparison.
+
+    When ``experimental_csv`` is given, an additional "Structure-Property
+    Correlation" sheet joins the MD metrics above against externally
+    supplied device Voc/Jsc/FF/PCE data (see analysis.experimental). Omitting
+    it leaves the workbook identical to today's shape.
+    """
     api = _openpyxl()
     Workbook = api["Workbook"]
     FormulaRule = api["FormulaRule"]
@@ -411,6 +541,18 @@ def create_publication_workbook(prepared_root: Path, output: Path) -> Path:
     summary_sheet.title = "Draft Summary"
     comparison_sheet = workbook.create_sheet("CoSAM vs Sequential")
     all_metrics_sheet = workbook.create_sheet("All Metrics")
+    correlation_rows: list[dict[str, Any]] = []
+    correlation_sheet = None
+    if experimental_csv is not None:
+        aggregated_experimental = aggregate_device_results(
+            load_device_results(experimental_csv)
+        )
+        correlation_rows = build_correlation_rows(
+            summary_rows, aggregated_experimental
+        )
+        correlation_sheet = workbook.create_sheet(
+            "Structure-Property Correlation"
+        )
     methods_sheet = workbook.create_sheet("Methods")
 
     summary_values = [
@@ -487,11 +629,16 @@ def create_publication_workbook(prepared_root: Path, output: Path) -> Path:
             row["primary_coverage"],
             row["secondary_coverage"],
             row["overlap"],
+            row["void_patch_count"],
+            row["void_largest_patch"],
+            row["void_mean_patch"],
             row["empty_sites"],
             row["primary_bound"],
             row["primary_bound_sem"],
+            row["primary_unbound_anchor_density"],
             row["secondary_bound"],
             row["secondary_bound_sem"],
+            row["secondary_unbound_anchor_density"],
             row["secondary_persistent"],
             row["secondary_p_height"],
             row["secondary_tilt"],
@@ -513,7 +660,7 @@ def create_publication_workbook(prepared_root: Path, output: Path) -> Path:
         api,
     )
     all_metrics_sheet.freeze_panes = "F2"
-    for column_index in range(6, 23):
+    for column_index in range(6, 28):
         for cells in all_metrics_sheet.iter_cols(
             min_col=column_index,
             max_col=column_index,
@@ -521,7 +668,7 @@ def create_publication_workbook(prepared_root: Path, output: Path) -> Path:
         ):
             for value_cell in cells:
                 value_cell.number_format = "0.00"
-    for column_index in (4, 23, 24):
+    for column_index in (4, 28, 29):
         for cells in all_metrics_sheet.iter_cols(
             min_col=column_index,
             max_col=column_index,
@@ -530,13 +677,95 @@ def create_publication_workbook(prepared_root: Path, output: Path) -> Path:
             for value_cell in cells:
                 value_cell.number_format = "#,##0"
     all_metrics_widths = [
-        32, 19, 20, 15, 16, 22, 21, 18, 24, 26, 20, 23, 23,
-        24, 25, 26, 27, 22, 20, 22, 22, 22, 17, 17, 18, 34,
+        32, 19, 20, 15, 16, 22, 21, 18, 24, 26, 20, 18, 26, 26, 23, 23,
+        24, 30, 25, 26, 30, 27, 22, 20, 22, 22, 22, 17, 17, 18, 34,
     ]
     for index, width in enumerate(all_metrics_widths, 1):
         all_metrics_sheet.column_dimensions[
             all_metrics_sheet.cell(1, index).column_letter
         ].width = width
+
+    if correlation_sheet is not None:
+        correlation_values = [
+            [
+                row["secondary"],
+                row["assembly"],
+                row["coverage"],
+                row["secondary_bound"],
+                row["secondary_persistent"],
+                row["secondary_tilt"],
+                row["secondary_unbound_anchor_density"],
+                row["void_largest_patch"],
+                row["void_patch_count"],
+                _mean_sem(row["voc_mean"], row["voc_std"]),
+                _mean_sem(row["jsc_mean"], row["jsc_std"]),
+                _mean_sem(row["ff_mean"], row["ff_std"]),
+                _mean_sem(row["pce_mean"], row["pce_std"]),
+                row["n"],
+            ]
+            for row in correlation_rows
+        ]
+        _style_table_sheet(
+            correlation_sheet,
+            CORRELATION_HEADERS,
+            correlation_values,
+            "StructurePropertyCorrelationTable",
+            api,
+        )
+        correlation_sheet.freeze_panes = "C2"
+        for column_index in range(3, 9):
+            for cells in correlation_sheet.iter_cols(
+                min_col=column_index,
+                max_col=column_index,
+                min_row=2,
+            ):
+                for value_cell in cells:
+                    value_cell.number_format = "0.00"
+        correlation_widths = [20, 15, 22, 20, 26, 20, 32, 26, 16, 18, 22, 15, 18, 12]
+        for index, width in enumerate(correlation_widths, 1):
+            correlation_sheet.column_dimensions[
+                correlation_sheet.cell(1, index).column_letter
+            ].width = width
+        correlation_sheet.sheet_properties.pageSetUpPr.fitToPage = True
+        correlation_sheet.page_setup.orientation = "landscape"
+        correlation_sheet.page_setup.fitToWidth = 1
+        correlation_sheet.page_setup.fitToHeight = 0
+
+        if correlation_rows:
+            ScatterChart = api["ScatterChart"]
+            Series = api["Series"]
+            Reference = api["Reference"]
+            last_row = len(correlation_rows) + 1
+            pce_reference = Reference(
+                correlation_sheet, min_col=13, min_row=2, max_row=last_row
+            )
+            for chart_title, x_col, x_title, anchor in (
+                ("Coverage vs. PCE", 3, "Projected Coverage (%)", "P2"),
+                (
+                    "Unbound Anchor Density vs. PCE",
+                    7,
+                    "Secondary Unbound Anchor Density (per nm²)",
+                    "P20",
+                ),
+            ):
+                chart = ScatterChart()
+                chart.title = chart_title
+                chart.x_axis.title = x_title
+                chart.y_axis.title = "PCE, Mean (%)"
+                chart.style = 13
+                x_reference = Reference(
+                    correlation_sheet,
+                    min_col=x_col,
+                    min_row=2,
+                    max_row=last_row,
+                )
+                series = Series(
+                    pce_reference, x_reference, title_from_data=False
+                )
+                series.marker.symbol = "circle"
+                series.graphicalProperties.line.noFill = True
+                chart.series.append(series)
+                correlation_sheet.add_chart(chart, anchor)
 
     comparison_values = [
         [
@@ -561,6 +790,12 @@ def create_publication_workbook(prepared_root: Path, output: Path) -> Path:
             row["cosam_secondary_tilt"],
             row["sequential_secondary_tilt"],
             row["delta_secondary_tilt"],
+            row["cosam_secondary_unbound_anchor_density"],
+            row["sequential_secondary_unbound_anchor_density"],
+            row["delta_secondary_unbound_anchor_density"],
+            row["cosam_void_largest_patch"],
+            row["sequential_void_largest_patch"],
+            row["delta_void_largest_patch"],
             row["status"],
         ]
         for row in comparison_rows
@@ -573,7 +808,7 @@ def create_publication_workbook(prepared_root: Path, output: Path) -> Path:
         api,
     )
     comparison_sheet.freeze_panes = "D2"
-    for column_index in range(4, 22):
+    for column_index in range(4, 28):
         for cell in comparison_sheet.iter_cols(
             min_col=column_index,
             max_col=column_index,
@@ -582,17 +817,17 @@ def create_publication_workbook(prepared_root: Path, output: Path) -> Path:
             for value_cell in cell:
                 value_cell.number_format = (
                     "+0.00;-0.00;0.00"
-                    if column_index in (6, 9, 12, 15, 18, 21)
+                    if column_index in (6, 9, 12, 15, 18, 21, 24, 27)
                     else "0.00"
                 )
     comparison_sheet.column_dimensions["A"].width = 21
     comparison_sheet.column_dimensions["B"].width = 15
     comparison_sheet.column_dimensions["C"].width = 16
-    for index in range(4, 22):
+    for index in range(4, 28):
         comparison_sheet.column_dimensions[
             comparison_sheet.cell(1, index).column_letter
         ].width = 24
-    comparison_sheet.column_dimensions["V"].width = 18
+    comparison_sheet.column_dimensions["AB"].width = 18
 
     ok_fill = PatternFill("solid", fgColor="C6EFCE")
     ok_font = Font(color="006100")
@@ -600,8 +835,8 @@ def create_publication_workbook(prepared_root: Path, output: Path) -> Path:
     check_font = Font(color="9C0006")
     for sheet, column, row_count in (
         (summary_sheet, "M", len(summary_rows)),
-        (all_metrics_sheet, "Y", len(summary_rows)),
-        (comparison_sheet, "V", len(comparison_rows)),
+        (all_metrics_sheet, "AD", len(summary_rows)),
+        (comparison_sheet, "AB", len(comparison_rows)),
     ):
         if row_count:
             sheet.conditional_formatting.add(
@@ -661,12 +896,35 @@ def create_publication_workbook(prepared_root: Path, output: Path) -> Path:
             "Film state",
             "Compressed is the fixed low-wall hold. Relaxed is the final hold after gradual upper-wall retraction.",
         ],
+        [
+            "Void patches",
+            "Contiguous uncovered-cell regions on the same periodic projected-coverage grid (periodic in x and y); largest/mean size reported as a percent of the full cell area.",
+        ],
+        [
+            "Unbound anchor density",
+            "Areal density of phosphonate anchor groups (P + its 3 O neighbors) with no O atom within the contact cutoff of any exposed Ni site, per nm^2 of periodic x/y cell.",
+        ],
         ["Source root", str(Path(prepared_root).resolve())],
         ["Detailed coverage workbook", "coverage_summary.xlsx"],
         ["Detailed interface workbook", "interface_structure_summary.xlsx"],
         ["Summary rows", len(summary_rows)],
         ["Matched CoSAM/sequential rows", len(comparison_rows)],
     ]
+    if correlation_sheet is not None:
+        methods.append(
+            [
+                "Structure-Property Correlation",
+                f"Joins MD metrics at the 300 K compressed hold against "
+                f"externally supplied device Voc/Jsc/FF/PCE data from "
+                f"{Path(experimental_csv).resolve()}. Experimental values are "
+                "pooled mean +/- sample SD across every supplied replicate/batch "
+                "for a given secondary molecule and assembly. Not derived from "
+                "this repository; supplied at run time.",
+            ]
+        )
+        methods.append(
+            ["Correlated rows", len(correlation_rows)]
+        )
     for row in methods:
         methods_sheet.append(row)
     methods_sheet.sheet_view.showGridLines = False

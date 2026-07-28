@@ -81,6 +81,7 @@ def main(argv=None)->int:
     i=sub.add_parser("summarize-publication")
     i.add_argument("prepared_root",type=Path)
     i.add_argument("--output",type=Path,required=True)
+    i.add_argument("--experimental",type=Path,help="CSV of experimental device Voc/Jsc/FF/PCE results to correlate against MD metrics")
     a=p.parse_args(argv)
     try:
         if a.command=="init-molecule":
@@ -159,7 +160,7 @@ def main(argv=None)->int:
             print(f"Interfacial workbook written to {workbook}")
         elif a.command=="summarize-publication":
             from .analysis.publication_report import create_publication_workbook
-            workbook=create_publication_workbook(a.prepared_root,a.output)
+            workbook=create_publication_workbook(a.prepared_root,a.output,experimental_csv=a.experimental)
             print(f"Publication workbook written to {workbook}")
         elif a.command=="prepare-lego-stage2":
             from .lego import prepare_lego_stage2
