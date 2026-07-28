@@ -90,6 +90,7 @@ class DumpFrame:
     x: Any
     y: Any
     z: Any
+    charges: Any = None
 
 
 def _dependencies() -> tuple[Any, Any]:
@@ -196,6 +197,7 @@ def iter_dump_frames(path: Path) -> Iterator[DumpFrame]:
             if z_scaled:
                 zlo, zhi = bounds[2]
                 z = zlo + z * (zhi - zlo)
+            charges = values[:, columns.index("q")] if "q" in columns else None
             yield DumpFrame(
                 index=frame_index,
                 step=step,
@@ -206,6 +208,7 @@ def iter_dump_frames(path: Path) -> Iterator[DumpFrame]:
                 x=x,
                 y=y,
                 z=z,
+                charges=charges,
             )
             frame_index += 1
 
@@ -393,6 +396,45 @@ def _label_dependency():
     return label
 
 
+def _periodic_height_map(np, x, y, z, bounds, shape):
+    """Max z per periodic x/y grid cell -- a top-of-film topography map.
+
+    Uses every atom in the frame (ligands and substrate), so an uncovered
+    patch reads as the bare, lower substrate height rather than a gap in
+    the data; this is the height profile a nucleating perovskite layer
+    would actually see.
+    """
+    ny, nx = shape
+    xlo, xhi = bounds[0]
+    ylo, yhi = bounds[1]
+    lx, ly = xhi - xlo, yhi - ylo
+    wrapped_x = np.mod(x - xlo, lx)
+    wrapped_y = np.mod(y - ylo, ly)
+    ix = np.floor(wrapped_x / lx * nx).astype(np.int64) % nx
+    iy = np.floor(wrapped_y / ly * ny).astype(np.int64) % ny
+    flat_index = iy * nx + ix
+    heights = np.full(nx * ny, -np.inf)
+    np.maximum.at(heights, flat_index, z)
+    return heights.reshape(ny, nx)
+
+
+def _roughness_statistics(np, height_map) -> dict[str, float]:
+    valid = height_map[np.isfinite(height_map)]
+    if valid.size == 0:
+        return {
+            "rms_angstrom": math.nan,
+            "mean_absolute_angstrom": math.nan,
+            "peak_to_valley_angstrom": math.nan,
+        }
+    mean_height = float(valid.mean())
+    deviations = valid - mean_height
+    return {
+        "rms_angstrom": float(np.sqrt(np.mean(deviations**2))),
+        "mean_absolute_angstrom": float(np.mean(np.abs(deviations))),
+        "peak_to_valley_angstrom": float(valid.max() - valid.min()),
+    }
+
+
 def _periodic_patch_sizes(np, label, uncovered) -> list[int]:
     """Cell-count sizes of connected uncovered regions on a periodic x/y grid.
 
@@ -436,6 +478,7 @@ def _write_plots(
     output: Path,
     rows: list[dict[str, float | int]],
     probability,
+    height_map,
     component_keys: list[str],
     timestep_fs: float | None,
 ) -> list[str]:
@@ -496,7 +539,29 @@ def _write_plots(
     probability_name = "coverage_probability.png"
     figure.savefig(output / probability_name, dpi=200)
     plt.close(figure)
-    return [timeseries_name, probability_name]
+
+    import numpy as np
+
+    figure, axis = plt.subplots(figsize=(7.2, 3.2))
+    masked_height = np.ma.masked_invalid(height_map)
+    image = axis.imshow(
+        masked_height,
+        origin="lower",
+        extent=(0.0, 1.0, 0.0, 1.0),
+        aspect="auto",
+        cmap="magma",
+    )
+    axis.set(
+        xlabel="Fractional x",
+        ylabel="Fractional y",
+        title="Top-of-film height map (last analyzed frame)",
+    )
+    figure.colorbar(image, ax=axis, label="Height (Å)")
+    figure.tight_layout()
+    height_map_name = "height_map.png"
+    figure.savefig(output / height_map_name, dpi=200)
+    plt.close(figure)
+    return [timeseries_name, probability_name, height_map_name]
 
 
 def _resolve_trajectory(build_directory: Path, trajectory: Path | None) -> Path:
@@ -522,6 +587,7 @@ def analyze_coverage(
     *,
     grid_spacing: float = 0.20,
     radius_scale: float = 1.0,
+    roughness_grid_spacing: float = 2.0,
     last_frames: int | None = 100,
     stride: int = 1,
     blocks: int = 5,
@@ -535,6 +601,8 @@ def analyze_coverage(
         raise ValueError("grid_spacing must be positive")
     if radius_scale <= 0:
         raise ValueError("radius_scale must be positive")
+    if roughness_grid_spacing <= 0:
+        raise ValueError("roughness_grid_spacing must be positive")
     if stride <= 0:
         raise ValueError("stride must be positive")
     if blocks <= 0:
@@ -567,7 +635,9 @@ def analyze_coverage(
 
     label = _label_dependency()
     shape = None
+    roughness_shape = None
     probability_sum = None
+    last_height_map = None
     rows: list[dict[str, float | int]] = []
     analyzed_indices: list[int] = []
     for frame in iter_dump_frames(trajectory_path):
@@ -580,6 +650,9 @@ def analyze_coverage(
             ny = max(1, int(math.ceil((yhi - ylo) / grid_spacing)))
             shape = (ny, nx)
             probability_sum = np.zeros(shape, dtype=np.float64)
+            roughness_nx = max(1, int(math.ceil((xhi - xlo) / roughness_grid_spacing)))
+            roughness_ny = max(1, int(math.ceil((yhi - ylo) / roughness_grid_spacing)))
+            roughness_shape = (roughness_ny, roughness_nx)
 
         positive = frame.molecule_ids > 0
         mapped = np.zeros(len(frame.molecule_ids), dtype=bool)
@@ -629,6 +702,11 @@ def analyze_coverage(
         probability_sum += total_mask
         patch_sizes = _periodic_patch_sizes(np, label, ~total_mask)
         total_cells = total_mask.size
+        height_map = _periodic_height_map(
+            np, frame.x, frame.y, frame.z, frame.bounds, roughness_shape
+        )
+        roughness = _roughness_statistics(np, height_map)
+        last_height_map = height_map
         row: dict[str, float | int] = {
             "frame_index": frame.index,
             "step": frame.step,
@@ -645,6 +723,9 @@ def analyze_coverage(
                 if patch_sizes
                 else 0.0
             ),
+            "roughness_rms_angstrom": roughness["rms_angstrom"],
+            "roughness_mean_absolute_angstrom": roughness["mean_absolute_angstrom"],
+            "roughness_peak_to_valley_angstrom": roughness["peak_to_valley_angstrom"],
         }
         for component, mask in zip(components, component_masks):
             row[f"coverage_{component.key}_percent"] = float(mask.mean() * 100.0)
@@ -668,6 +749,12 @@ def analyze_coverage(
         fractional_x=(np.arange(shape[1]) + 0.5) / shape[1],
         fractional_y=(np.arange(shape[0]) + 0.5) / shape[0],
     )
+    np.savez_compressed(
+        output / "height_map.npz",
+        height_angstrom=last_height_map,
+        fractional_x=(np.arange(roughness_shape[1]) + 0.5) / roughness_shape[1],
+        fractional_y=(np.arange(roughness_shape[0]) + 0.5) / roughness_shape[0],
+    )
 
     metrics = {
         "total": _block_statistics(
@@ -687,6 +774,24 @@ def analyze_coverage(
         ),
         "void_mean_patch_percent": _block_statistics(
             np, [row["void_mean_patch_percent"] for row in rows], blocks
+        ),
+        "roughness_rms": _block_average(
+            np,
+            [row["roughness_rms_angstrom"] for row in rows],
+            blocks,
+            suffix="_angstrom",
+        ),
+        "roughness_mean_absolute": _block_average(
+            np,
+            [row["roughness_mean_absolute_angstrom"] for row in rows],
+            blocks,
+            suffix="_angstrom",
+        ),
+        "roughness_peak_to_valley": _block_average(
+            np,
+            [row["roughness_peak_to_valley_angstrom"] for row in rows],
+            blocks,
+            suffix="_angstrom",
         ),
     }
     component_metrics = {
@@ -708,6 +813,7 @@ def analyze_coverage(
         output,
         rows,
         probability,
+        last_height_map,
         [component.key for component in components],
         timestep_fs,
     )
@@ -720,6 +826,13 @@ def analyze_coverage(
         "analyzed_frame_indices": analyzed_indices,
         "grid_target_spacing_angstrom": grid_spacing,
         "grid_shape_yx": list(shape),
+        "roughness_grid_target_spacing_angstrom": roughness_grid_spacing,
+        "roughness_grid_shape_yx": list(roughness_shape),
+        "roughness_reference": (
+            "max z per periodic x/y cell over every atom (ligands and "
+            "substrate); RMS/mean-absolute/peak-to-valley computed over "
+            "the deviation from the frame mean, then block-averaged"
+        ),
         "radius_scale": radius_scale,
         "exclude_hydrogen": exclude_hydrogen,
         "vdw_radii_angstrom": VDW_RADII_ANGSTROM,
@@ -729,6 +842,7 @@ def analyze_coverage(
         "outputs": [
             timeseries_path.name,
             "coverage_probability.npz",
+            "height_map.npz",
             *plot_files,
         ],
     }

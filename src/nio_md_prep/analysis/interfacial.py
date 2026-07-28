@@ -53,6 +53,52 @@ class InterfacialTopology:
     surface_site_source: str
 
 
+# Surface-dipole potential-step approximation (Neugebauer-Scheffler-style):
+# a uniform parallel dipole sheet of areal density p [e/Angstrom] produces a
+# potential step Delta V = p / epsilon0. Derived directly from SI constants
+# (not a hardcoded literature number) so the conversion is auditable.
+_ELEMENTARY_CHARGE_COULOMB = 1.602176634e-19
+_VACUUM_PERMITTIVITY_F_PER_M = 8.8541878128e-12
+_ANGSTROM_METERS = 1e-10
+_DIPOLE_DENSITY_TO_VOLTS = _ELEMENTARY_CHARGE_COULOMB / (
+    _VACUUM_PERMITTIVITY_F_PER_M * _ANGSTROM_METERS
+)
+
+
+def _z_dipole_moment(np, charges, z) -> float:
+    """Net z-dipole moment (e*Angstrom) of a charge-neutral atom set.
+
+    Sum(q_i * z_i) is independent of the z origin only when total charge is
+    zero, which holds for a fully assembled system (validated elsewhere).
+    """
+    return float(np.sum(charges * z))
+
+
+def _update_site_exchange_tracking(
+    site_components: list[set[str]],
+    last_distinct_owner: list[str | None],
+    exchange_pair_counts: dict[str, int],
+) -> None:
+    """Record cross-component hand-offs of exposed-Ni sites for one frame.
+
+    A site with zero or 2+ simultaneous owners this frame is a pass-through
+    (neither confirms nor ends a prior tenant's occupancy). An exchange is
+    counted only when a site's sole owner is a different component than the
+    last distinct sole owner recorded for that site.
+    """
+    for site_index, owners in enumerate(site_components):
+        current_owner = next(iter(owners)) if len(owners) == 1 else None
+        if current_owner is None:
+            continue
+        previous_owner = last_distinct_owner[site_index]
+        if previous_owner is not None and previous_owner != current_owner:
+            pair_key = f"{previous_owner}->{current_owner}"
+            exchange_pair_counts[pair_key] = (
+                exchange_pair_counts.get(pair_key, 0) + 1
+            )
+        last_distinct_owner[site_index] = current_owner
+
+
 def _dependencies() -> tuple[Any, Any, Any]:
     try:
         import numpy as np
@@ -792,6 +838,13 @@ def analyze_interfacial_structure(
     rows: list[dict[str, float | int]] = []
     analyzed_indices = []
     analyzed_steps = []
+    dipole_moment_series: list[float] = []
+    dipole_density_series: list[float] = []
+    potential_step_series: list[float] = []
+    last_distinct_owner: list[str | None] = [
+        None for _ in topology.surface_site_ids
+    ]
+    exchange_pair_counts: dict[str, int] = {}
     for frame in _selected_frames(trajectory_path, first_index, stride):
         lookup = _index_by_atom_id(np, frame)
         (
@@ -818,6 +871,16 @@ def analyze_interfacial_structure(
             "step": frame.step,
             "surface_site_count": len(topology.surface_site_ids),
         }
+        if frame.charges is not None:
+            dipole_moment = _z_dipole_moment(np, frame.charges, frame.z)
+            dipole_density = dipole_moment / area if area > 0 else math.nan
+            potential_step = dipole_density * _DIPOLE_DENSITY_TO_VOLTS
+            dipole_moment_series.append(dipole_moment)
+            dipole_density_series.append(dipole_density)
+            potential_step_series.append(potential_step)
+            row["z_dipole_moment_e_angstrom"] = dipole_moment
+            row["z_dipole_areal_density_e_per_angstrom"] = dipole_density
+            row["approximate_potential_step_volts"] = potential_step
         for component in topology.components:
             molecule_bound = []
             terminal_counts = []
@@ -1093,6 +1156,13 @@ def analyze_interfacial_structure(
             site_series[f"{component.key}_only_percent"].append(value)
             row[f"site_{component.key}_only_percent"] = value
 
+        _update_site_exchange_tracking(
+            site_components, last_distinct_owner, exchange_pair_counts
+        )
+        row["site_competition_cumulative_exchange_events"] = sum(
+            exchange_pair_counts.values()
+        )
+
         shell_areas = math.pi * (rdf_edges[1:] ** 2 - rdf_edges[:-1] ** 2)
         for left, right in rdf_pairs:
             key = f"{left.key}--{right.key}"
@@ -1293,6 +1363,58 @@ def analyze_interfacial_structure(
         "site_ownership_metrics": {
             name: _statistics(np, values, blocks)
             for name, values in site_series.items()
+        },
+        "z_dipole": {
+            "available": bool(dipole_moment_series),
+            "reference": (
+                "Sum(q_i * z_i) over every atom in the frame (ligands and "
+                "substrate); translation-invariant because the assembled "
+                "system is charge-neutral. Requires the trajectory dump to "
+                "include a q (charge) column."
+            ),
+            "moment_e_angstrom": (
+                _statistics(np, dipole_moment_series, blocks)
+                if dipole_moment_series
+                else None
+            ),
+            "areal_density_e_per_angstrom": (
+                _statistics(np, dipole_density_series, blocks)
+                if dipole_density_series
+                else None
+            ),
+            "approximate_potential_step_volts": (
+                _statistics(np, potential_step_series, blocks)
+                if potential_step_series
+                else None
+            ),
+            "potential_step_method": (
+                "APPROXIMATE PROXY ONLY: assumes an idealized uniform "
+                "parallel dipole sheet (Delta V = areal dipole density / "
+                "epsilon0), ignoring lateral inhomogeneity and the real "
+                "corrugated charge distribution the PPPM/slab-corrected "
+                "force field actually uses. Treat as a qualitative, "
+                "relative indicator across systems -- not an absolute "
+                "work-function or UPS-comparable prediction."
+            ),
+        },
+        "site_competition": {
+            "method": (
+                "Counts transitions where an exposed-Ni site's sole "
+                "occupying component changes to a DIFFERENT component "
+                "between two analyzed frames. A site that is empty or "
+                "simultaneously shared by 2+ components is a pass-through, "
+                "not treated as ending the previous occupant's tenure. "
+                "Most informative when run over the deposition trajectory "
+                "(molecules still competing for sites), not an "
+                "already-settled compressed hold, where genuine exchange "
+                "should be rare."
+            ),
+            "cross_component_exchange_event_count": sum(
+                exchange_pair_counts.values()
+            ),
+            "exchange_events_by_component_pair": dict(
+                sorted(exchange_pair_counts.items())
+            ),
         },
         "components": component_summaries,
         "z_profile": {

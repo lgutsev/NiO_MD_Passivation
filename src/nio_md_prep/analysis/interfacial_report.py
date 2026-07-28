@@ -21,6 +21,9 @@ RESULT_HEADERS = [
     "Exposed Ni Sites",
     "Empty Sites (%)",
     "Shared Sites (%)",
+    "Cross-Component Exchange Events",
+    "Z Dipole Moment (e·Å)",
+    "Approx. Potential Step (V)",
     "Primary Component",
     "Primary-only Sites (%)",
     "Primary Bound (%)",
@@ -284,6 +287,25 @@ def collect_interfacial_results(
             "surface_sites": int(summary["surface_site_count"]),
             "empty": empty,
             "shared": shared,
+            "cross_component_exchange_events": (
+                summary.get("site_competition", {}).get(
+                    "cross_component_exchange_event_count"
+                )
+            ),
+            "z_dipole_moment": (
+                summary.get("z_dipole", {})
+                .get("moment_e_angstrom", {})
+                .get("mean")
+                if summary.get("z_dipole", {}).get("available")
+                else None
+            ),
+            "z_dipole_potential_step_volts": (
+                summary.get("z_dipole", {})
+                .get("approximate_potential_step_volts", {})
+                .get("mean")
+                if summary.get("z_dipole", {}).get("available")
+                else None
+            ),
             "primary_name": primary["name"] if primary else None,
             "primary_only": (
                 site_metrics.get(
@@ -588,6 +610,9 @@ def create_interfacial_workbook(prepared_root: Path, output: Path) -> Path:
             row["surface_sites"],
             row["empty"],
             row["shared"],
+            row["cross_component_exchange_events"],
+            row["z_dipole_moment"],
+            row["z_dipole_potential_step_volts"],
             row["primary_name"],
             row["primary_only"],
             row["primary_bound"],

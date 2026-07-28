@@ -515,6 +515,16 @@ periodically-wrapped void patches, reporting patch count and largest/mean
 patch size as a fraction of the cell — distinguishing a few large bare
 patches from many small pinholes, which a single "% uncovered" number cannot.
 
+**Experimental**: the same trajectory is used to build a top-of-film height
+map (max z per periodic x/y cell over every atom, ligand and substrate) and
+report its RMS, mean-absolute, and peak-to-valley roughness — an MD-side
+correlate for whether one deposition strategy nucleates a more uniform
+perovskite overlayer than another (matching an SEM/AFM grain-uniformity
+comparison). Grid resolution is controlled independently via
+`--roughness-grid-spacing` (default 2.0 Å); a snapshot of the last analyzed
+frame is written to `height_map.png`/`height_map.npz`. This metric is new and
+not yet validated against real morphology data — treat it as a first pass.
+
 Analyze one trajectory with:
 
 ```bash
@@ -562,6 +572,32 @@ lying above another SAM. A separate interfacial module therefore reports:
 - component-resolved local-height density profiles;
 - lateral same-component and cross-component two-dimensional RDFs; and
 - matched compressed-hold versus decompressed-relaxation changes.
+
+**Experimental additions** (new, not yet validated against real
+measurements — try them and judge for yourself):
+
+- **z-resolved dipole / potential-step proxy** (`z_dipole` in the summary
+  JSON): the net charge-weighted z-moment `Sum(q_i * z_i)` over every atom
+  in the frame (translation-invariant since the assembled system is
+  charge-neutral), reported as a raw moment, an areal density, and an
+  *approximate* potential-step in volts via the standard idealized-dipole-
+  sheet formula (`ΔV = areal density / ε0`). This is a coarse, qualitative
+  proxy for a UPS-measured work-function/hole-extraction-barrier shift —
+  it ignores lateral inhomogeneity and the real corrugated charge
+  distribution the PPPM/slab-corrected force field actually uses, so treat
+  it as relative across systems, not an absolute prediction. Requires the
+  trajectory dump to include a `q` column (every production `hold-*`/
+  `deposition` trajectory already does); reports `"available": false` and
+  skips the computation otherwise.
+- **Cross-component site-exchange kinetics** (`site_competition` in the
+  summary JSON): counts confirmed hand-offs of an exposed-Ni site's sole
+  occupant from one component to a different one (a site that goes briefly
+  empty or is momentarily shared by both is a pass-through, not a
+  hand-off) — direct kinetic evidence for or against the "CoSAM molecules
+  compete for surface sites" hypothesis, rather than inferring it from
+  lower final coverage alone. This is most informative run over
+  `deposition.lammpstrj` (molecules still actively competing for sites)
+  with `--last-frames 0`, not an already-settled compressed hold.
 
 Analyze one trajectory:
 

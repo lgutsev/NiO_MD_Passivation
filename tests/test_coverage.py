@@ -7,7 +7,9 @@ import pytest
 
 from nio_md_prep.analysis.coverage import (
     _label_dependency,
+    _periodic_height_map,
     _periodic_patch_sizes,
+    _roughness_statistics,
     analyze_coverage,
     count_dump_frames,
     iter_dump_frames,
@@ -119,6 +121,31 @@ def test_periodic_patch_sizes_merges_across_boundaries():
     assert _periodic_patch_sizes(np, label, np.zeros((4, 4), dtype=bool)) == []
 
 
+def test_periodic_height_map_wraps_and_takes_max_per_cell():
+    x = np.array([0.1, 9.9])
+    y = np.array([1.0, 1.0])
+    z = np.array([3.0, 7.0])
+    bounds = ((0.0, 10.0), (0.0, 10.0), (0.0, 20.0))
+    height_map = _periodic_height_map(np, x, y, z, bounds, (1, 1))
+    assert height_map[0, 0] == pytest.approx(7.0)
+
+
+def test_roughness_statistics_on_synthetic_height_map():
+    height_map = np.array([[10.0, 12.0], [8.0, 10.0]])
+    stats = _roughness_statistics(np, height_map)
+    assert stats["mean_absolute_angstrom"] == pytest.approx(1.0)
+    assert stats["peak_to_valley_angstrom"] == pytest.approx(4.0)
+    assert stats["rms_angstrom"] == pytest.approx((2.0 ** 2 * 2 / 4) ** 0.5)
+
+
+def test_roughness_statistics_handles_all_invalid_cells():
+    stats = _roughness_statistics(np, np.full((2, 2), -np.inf))
+    assert all(
+        stats[key] != stats[key]  # NaN != NaN
+        for key in ("rms_angstrom", "mean_absolute_angstrom", "peak_to_valley_angstrom")
+    )
+
+
 def test_dump_stream_and_count(tmp_path):
     path = tmp_path / "trajectory.lammpstrj"
     path.write_text(
@@ -149,13 +176,18 @@ def test_analysis_uses_last_frames_and_reports_component_overlap(tmp_path):
     assert summary["metrics"]["void_patch_count"]["mean"] >= 0.0
     assert summary["metrics"]["void_largest_patch_percent"]["mean_percent"] >= 0.0
     assert summary["metrics"]["void_mean_patch_percent"]["mean_percent"] >= 0.0
+    assert summary["metrics"]["roughness_rms"]["mean_angstrom"] >= 0.0
+    assert summary["metrics"]["roughness_mean_absolute"]["mean_angstrom"] >= 0.0
+    assert summary["metrics"]["roughness_peak_to_valley"]["mean_angstrom"] >= 0.0
     assert (summary_path.parent / "coverage_probability.npz").is_file()
+    assert (summary_path.parent / "height_map.npz").is_file()
     with (summary_path.parent / "coverage_timeseries.csv").open() as handle:
         rows = list(csv.DictReader(handle))
     assert len(rows) == 2
     assert int(rows[0]["step"]) == 1000
     assert "void_patch_count" in rows[0]
     assert "void_largest_patch_percent" in rows[0]
+    assert "roughness_rms_angstrom" in rows[0]
     total = float(rows[-1]["coverage_total_percent"])
     primary = float(rows[-1]["coverage_primary_percent"])
     secondary = float(rows[-1]["coverage_secondary_percent"])

@@ -3,11 +3,14 @@ import csv
 import json
 import shutil
 
+import numpy as np
 import pytest
 
 from nio_md_prep.analysis.coverage import load_type_elements
 from nio_md_prep.analysis.interfacial import (
     _canonical_exposed_ni_sites,
+    _update_site_exchange_tracking,
+    _z_dipole_moment,
     analyze_interfacial_structure,
 )
 from nio_md_prep.analysis.interfacial_report import (
@@ -42,6 +45,52 @@ ATOM_ROWS = [
     (21, 0, 2, 2.0, 2.0, -2.0),
     (22, 0, 2, 8.0, 8.0, -2.0),
 ]
+
+
+def test_z_dipole_moment_is_translation_invariant_for_neutral_charge():
+    charges = np.array([1.0, -1.0, 2.0, -2.0])
+    z = np.array([0.0, 5.0, 10.0, 15.0])
+    moment = _z_dipole_moment(np, charges, z)
+    assert moment == pytest.approx(float(np.sum(charges * z)))
+    assert _z_dipole_moment(np, charges, z + 100.0) == pytest.approx(moment)
+
+
+def test_update_site_exchange_tracking_counts_only_confirmed_handoffs():
+    last_distinct_owner = [None]
+    exchange_pair_counts: dict[str, int] = {}
+
+    def step(owners):
+        _update_site_exchange_tracking(
+            [owners], last_distinct_owner, exchange_pair_counts
+        )
+
+    # frame0: site owned solely by "me-4pacz"
+    step({"me-4pacz"})
+    assert exchange_pair_counts == {}
+    # frame1: still "me-4pacz" -- no exchange
+    step({"me-4pacz"})
+    assert exchange_pair_counts == {}
+    # frame2: briefly empty -- a pass-through, not an exchange by itself
+    step(set())
+    assert exchange_pair_counts == {}
+    # frame3: momentarily shared by both -- still not a confirmed handoff
+    step({"me-4pacz", "dcz-4p"})
+    assert exchange_pair_counts == {}
+    # frame4: now solely "dcz-4p" -- this is a confirmed hand-off from me-4pacz
+    step({"dcz-4p"})
+    assert exchange_pair_counts == {"me-4pacz->dcz-4p": 1}
+    # frame5: back to "me-4pacz" -- a second, reverse hand-off
+    step({"me-4pacz"})
+    assert exchange_pair_counts == {
+        "me-4pacz->dcz-4p": 1,
+        "dcz-4p->me-4pacz": 1,
+    }
+    # frame6: repeated identical ownership -- no additional event
+    step({"me-4pacz"})
+    assert exchange_pair_counts == {
+        "me-4pacz->dcz-4p": 1,
+        "dcz-4p->me-4pacz": 1,
+    }
 
 
 def test_canonical_surface_sites_do_not_change_with_thermal_coordinates():
@@ -129,13 +178,19 @@ Bonds
     )
 
 
-def dump_frame(step: int, *, second_terminal_bound: bool) -> str:
+def dump_frame(
+    step: int, *, second_terminal_bound: bool, charges: dict[int, float] | None = None
+) -> str:
     rows = []
     for atom_id, molecule, atom_type, x, y, z in ATOM_ROWS:
         if second_terminal_bound and atom_id in {13, 14, 15, 16, 17}:
             y -= 6.0
             z -= 7.5
-        rows.append(f"{atom_id} {molecule} {atom_type} {x} {y} {z}")
+        if charges is None:
+            rows.append(f"{atom_id} {molecule} {atom_type} {x} {y} {z}")
+        else:
+            rows.append(f"{atom_id} {molecule} {atom_type} {charges[atom_id]} {x} {y} {z}")
+    columns = "id mol type x y z" if charges is None else "id mol type q x y z"
     return f"""ITEM: TIMESTEP
 {step}
 ITEM: NUMBER OF ATOMS
@@ -144,7 +199,7 @@ ITEM: BOX BOUNDS pp pp ff
 0 10
 0 10
 -5 20
-ITEM: ATOMS id mol type x y z
+ITEM: ATOMS {columns}
 {chr(10).join(rows)}
 """
 
@@ -212,6 +267,12 @@ def test_anchor_orientation_terminal_rdf_and_density_outputs(tmp_path):
     assert "bound_phosphorus_height_angstrom" in dcz["metrics"]
     assert summary["site_ownership_metrics"]["shared_percent"]["mean"] == 25.0
     assert summary["site_ownership_metrics"]["empty_percent"]["mean"] == 0.0
+    assert summary["z_dipole"]["available"] is False
+    assert summary["z_dipole"]["moment_e_angstrom"] is None
+    assert summary["site_competition"]["cross_component_exchange_event_count"] == 0
+    with (output / "interface_timeseries.csv").open() as handle:
+        rows = list(csv.DictReader(handle))
+    assert "site_competition_cumulative_exchange_events" in rows[0]
     for name in (
         "interface_timeseries.csv",
         "contact_distance_histogram.csv",
@@ -222,6 +283,56 @@ def test_anchor_orientation_terminal_rdf_and_density_outputs(tmp_path):
     with (output / "lateral_rdf.csv").open() as handle:
         pairs = {row["component_pair"] for row in csv.DictReader(handle)}
     assert {"primary--primary", "primary--dcz_4p", "dcz_4p--dcz_4p"} <= pairs
+
+
+def test_z_dipole_reported_when_trajectory_dumps_charge(tmp_path):
+    build = build_fixture(tmp_path)
+    charges = {
+        atom_id: (1.0 if molecule == 1 else -1.0 if molecule == 2 else 0.0)
+        for atom_id, molecule, *_ in ATOM_ROWS
+    }
+    trajectory = build / "hold-300K.lammpstrj"
+    trajectory.write_text(
+        dump_frame(0, second_terminal_bound=False, charges=charges)
+        + dump_frame(1000, second_terminal_bound=True, charges=charges),
+        encoding="utf-8",
+    )
+    summary_path = analyze_interfacial_structure(
+        build,
+        trajectory=Path("hold-300K.lammpstrj"),
+        output=build / "interface-analysis-charged",
+        last_frames=2,
+        blocks=2,
+        contact_cutoff=3.0,
+        surface_coordination_cutoff=2.8,
+        z_min=-3.0,
+        z_max=15.0,
+        z_bin_width=1.0,
+        rdf_bin_width=0.5,
+        rdf_rmax=4.0,
+    )
+    summary = json.loads(summary_path.read_text())
+    z_dipole = summary["z_dipole"]
+    assert z_dipole["available"] is True
+
+    expected_moments = []
+    for shift in (False, True):
+        moment = 0.0
+        for atom_id, _molecule, _atom_type, _x, _y, z in ATOM_ROWS:
+            if shift and atom_id in {13, 14, 15, 16, 17}:
+                z -= 7.5
+            moment += charges[atom_id] * z
+        expected_moments.append(moment)
+    expected_mean = sum(expected_moments) / len(expected_moments)
+    assert z_dipole["moment_e_angstrom"]["mean"] == pytest.approx(expected_mean)
+    area = 10.0 * 10.0
+    assert z_dipole["areal_density_e_per_angstrom"]["mean"] == pytest.approx(
+        expected_mean / area
+    )
+    assert z_dipole["approximate_potential_step_volts"]["mean"] != 0.0
+    with (build / "interface-analysis-charged" / "interface_timeseries.csv").open() as handle:
+        rows = list(csv.DictReader(handle))
+    assert "z_dipole_moment_e_angstrom" in rows[0]
 
 
 def test_separate_workbook_contains_normalized_sheets(tmp_path):
@@ -263,8 +374,8 @@ def test_separate_workbook_contains_normalized_sheets(tmp_path):
     ]
     assert [cell.value for cell in workbook["Results"][1]] == RESULT_HEADERS
     assert [cell.value for cell in workbook["Components"][1]] == COMPONENT_HEADERS
-    assert workbook["Results"]["M2"].value == pytest.approx(100.0)
-    assert workbook["Results"]["AC2"].value == "OK"
+    assert workbook["Results"]["P2"].value == pytest.approx(100.0)
+    assert workbook["Results"]["AF2"].value == "OK"
     assert "InterfaceResultsTable" in workbook["Results"].tables
     assert "InterfaceComponentsTable" in workbook["Components"].tables
     assert "CutoffSensitivityTable" in workbook["Cutoff Sensitivity"].tables

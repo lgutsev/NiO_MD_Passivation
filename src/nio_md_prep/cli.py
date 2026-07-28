@@ -50,6 +50,7 @@ def main(argv=None)->int:
     i.add_argument("--output",type=Path)
     i.add_argument("--grid-spacing",type=float,default=0.20)
     i.add_argument("--radius-scale",type=float,default=1.0)
+    i.add_argument("--roughness-grid-spacing",type=float,default=2.0,help="grid resolution for the top-of-film height/roughness map")
     i.add_argument("--last-frames",type=int,default=100,help="analyze the final N frames; use 0 for all frames")
     i.add_argument("--stride",type=int,default=1)
     i.add_argument("--blocks",type=int,default=5)
@@ -109,6 +110,7 @@ def main(argv=None)->int:
                 output=a.output,
                 grid_spacing=a.grid_spacing,
                 radius_scale=a.radius_scale,
+                roughness_grid_spacing=a.roughness_grid_spacing,
                 last_frames=None if a.last_frames==0 else a.last_frames,
                 stride=a.stride,
                 blocks=a.blocks,
