@@ -49,6 +49,12 @@ def write_summary(
                 "block_sem_percent": 0.2,
                 "frame_std_percent": 0.6,
             },
+            "void_patch_count": {"mean": 2.0},
+            "void_largest_patch_percent": {"mean_percent": 8.0},
+            "void_mean_patch_percent": {"mean_percent": 4.0},
+            "roughness_rms": {"mean_angstrom": 2.5},
+            "roughness_mean_absolute": {"mean_angstrom": 1.7},
+            "roughness_peak_to_valley": {"mean_angstrom": 9.0},
         },
         "components": {
             "primary-sam": {
@@ -96,6 +102,8 @@ def test_collect_results_sorts_holds_and_checks_union(tmp_path):
     assert results[0]["total"] == pytest.approx(67.0)
     assert results[0]["balance_qc"] == pytest.approx(0.0)
     assert results[0]["union_qc"] == pytest.approx(0.0)
+    assert results[0]["roughness_rms"] == pytest.approx(2.5)
+    assert results[0]["run_directory"] == "mixed-sam"
     assert results[0]["status"] == "OK"
     assert [row["name"] for row in components[:2]] == [
         "primary-sam",
@@ -125,7 +133,7 @@ def test_create_workbook_contains_summary_components_and_chart(tmp_path):
     assert [cell.value for cell in results[1]] == RESULT_HEADERS
     assert [cell.value for cell in components[1]] == COMPONENT_HEADERS
     assert results["F2"].value == pytest.approx(67.0)
-    assert results["T2"].value == "OK"
+    assert results["Z2"].value == "OK"
     assert len(results._charts) == 1
     assert "CoverageResultsTable" in results.tables
     assert components.max_row == 3
@@ -149,6 +157,24 @@ def test_collect_results_includes_relaxed_holds(tmp_path):
     assert len(results) == 1
     assert results[0]["temperature"] == 300
     assert results[0]["stage"] == "relax-300K"
+
+
+def test_collect_results_keeps_recursive_replicate_provenance(tmp_path):
+    prepared = tmp_path / "prepared"
+    write_summary(
+        prepared,
+        "replicates/seed-02/mixed-sam",
+        300,
+        primary=52.0,
+        secondary=14.0,
+        overlap=2.0,
+    )
+
+    results, _ = collect_coverage_results(prepared)
+
+    assert len(results) == 1
+    assert results[0]["system"] == "mixed-sam"
+    assert results[0]["run_directory"] == "replicates/seed-02/mixed-sam"
 
 
 def test_workbook_requires_completed_summaries(tmp_path):
