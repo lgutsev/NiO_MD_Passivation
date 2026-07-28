@@ -177,25 +177,43 @@ def _surface(data: DataFile, offsets: dict[str,int], ids: dict[str,int], molecul
         f=r.fields.copy(); f[0]=str(ids["atom"]+i+1); f[1]=str(molecule); f[2]=str(type_map[int(f[2])]); rows["Atoms"].append(Record(f,r.comment))
     return rows,{"atom":len(data.sections["Atoms"]),"molecule":0}
 
-def _shift_periodic_x(data: DataFile, shift_fraction: float) -> None:
-    """Shift a periodic x origin while preserving unwrapped coordinates."""
-    xlo,xhi=data.bounds["x"]; lx=xhi-xlo
-    if lx<=0.0: raise ValueError("cannot shift a non-positive x cell")
+def _shift_periodic_xy(
+    data: DataFile,
+    shift_fraction_x: float,
+    shift_fraction_y: float = 0.0,
+) -> None:
+    """Shift periodic x/y origins while preserving unwrapped coordinates."""
     widths={len(atom.fields) for atom in data.sections["Atoms"]}
     if not widths<= {7,10}:
-        raise ValueError("periodic x shift requires 7- or 10-field Atoms records")
+        raise ValueError(
+            "periodic x/y shift requires 7- or 10-field Atoms records"
+        )
     if 7 in widths:
         for atom in data.sections["Atoms"]:
             if len(atom.fields)==7: atom.fields.extend(("0","0","0"))
-    displacement=shift_fraction*lx
-    for atom in data.sections["Atoms"]:
-        raw=float(atom.fields[4])+displacement
-        wraps=math.floor((raw-xlo)/lx)
-        wrapped=raw-wraps*lx
-        if wrapped>=xhi:
-            wrapped-=lx; wraps+=1
-        atom.fields[4]=f"{wrapped:.8f}"
-        atom.fields[7]=str(int(atom.fields[7])+wraps)
+    for axis,coordinate_index,image_index,shift_fraction in (
+        ("x",4,7,shift_fraction_x),
+        ("y",5,8,shift_fraction_y),
+    ):
+        lo,hi=data.bounds[axis]; length=hi-lo
+        if length<=0.0:
+            raise ValueError(f"cannot shift a non-positive {axis} cell")
+        displacement=shift_fraction*length
+        for atom in data.sections["Atoms"]:
+            raw=float(atom.fields[coordinate_index])+displacement
+            wraps=math.floor((raw-lo)/length)
+            wrapped=raw-wraps*length
+            if wrapped>=hi:
+                wrapped-=length; wraps+=1
+            atom.fields[coordinate_index]=f"{wrapped:.8f}"
+            atom.fields[image_index]=str(
+                int(atom.fields[image_index])+wraps
+            )
+
+
+def _shift_periodic_x(data: DataFile, shift_fraction: float) -> None:
+    """Backward-compatible x-only periodic shift."""
+    _shift_periodic_xy(data,shift_fraction,0.0)
 
 def build(
     config_path: Path,
@@ -238,13 +256,27 @@ def build(
             if deposition_guidance.get("method") not in {
                 "periodic_x_gap_seeded",
                 "periodic_x_gap_tunnel",
+                "periodic_2d_void_seeded",
             }:
                 raise ValueError("unsupported deposition guidance method")
-            shift_fraction=float(
+            shift_fraction_x=float(
                 deposition_guidance["coordinate_shift_fraction_x"]
             )
-            _shift_periodic_x(existing,shift_fraction)
-            shifted_primary_reference=output/"lego-stage1-shifted.data"
+            shift_fraction_y=float(
+                deposition_guidance.get("coordinate_shift_fraction_y",0.0)
+            )
+            _shift_periodic_xy(
+                existing,
+                shift_fraction_x,
+                shift_fraction_y,
+            )
+            shifted_name=(
+                "lego2-stage1-shifted.data"
+                if deposition_guidance.get("method")
+                == "periodic_2d_void_seeded"
+                else "lego-stage1-shifted.data"
+            )
+            shifted_primary_reference=output/shifted_name
             write(existing,shifted_primary_reference)
             cfg["_deposition_guidance"]=deposition_guidance
         existing_max_z=max(float(a.fields[6]) for a in existing.sections["Atoms"])
@@ -275,7 +307,18 @@ def build(
                 ]
                 pack_xlo=xlo+float(pack_lo)*(xhi-xlo)
                 pack_xhi=xlo+float(pack_hi)*(xhi-xlo)
-            region=f"{pack_xlo:.6f} {ylo+2:.6f} {zlo:.6f} {pack_xhi:.6f} {yhi-2:.6f} {zhi-5:.6f}"
+            if (
+                deposition_guidance is not None
+                and "shifted_packing_y_fraction" in deposition_guidance
+            ):
+                pack_lo_y,pack_hi_y=deposition_guidance[
+                    "shifted_packing_y_fraction"
+                ]
+                pack_ylo=ylo+float(pack_lo_y)*(yhi-ylo)
+                pack_yhi=ylo+float(pack_hi_y)*(yhi-ylo)
+            else:
+                pack_ylo=ylo+2.0; pack_yhi=yhi-2.0
+            region=f"{pack_xlo:.6f} {pack_ylo:.6f} {zlo:.6f} {pack_xhi:.6f} {pack_yhi:.6f} {zhi-5:.6f}"
         templates.append({"slug":spec["slug"],"data":data,"xyz":xyz,"count":int(spec["count"]),"atoms":data.count("Atoms"),"mw":molecular_weight(data),"region":region,"folder":folder,"manifest":manifest})
         manifests.append(manifest)
     packed,coords,packed_ok=_packmol(cfg,templates,output,packed_xyz)
@@ -519,9 +562,20 @@ fix_modify lego_wall energy yes
                 "the moving-wall deposition; all hold stages are unbiased."
             )
         elif guidance is not None:
+            guidance_method=guidance.get("method")
+            deposition_label=(
+                "Coverage-guided 2D-void lego2 sequential stage-2 deposition"
+                if guidance_method=="periodic_2d_void_seeded"
+                else "Coverage-guided lego-style sequential stage-2 deposition"
+            )
+            placement_description=(
+                "largest centered periodic 2D coverage void"
+                if guidance_method=="periodic_2d_void_seeded"
+                else "centered coverage gap"
+            )
             guidance_note=(
-                " Stage-2 molecules are initially packed over the centered "
-                "coverage gap and are laterally unconstrained throughout "
+                " Stage-2 molecules are initially packed over the "
+                f"{placement_description} and are laterally unconstrained throughout "
                 "minimization, moving-wall deposition, and every hold stage. "
                 f"The upper wall stops {float(guidance['deposition_clearance_above_stage1_angstrom']):g} A "
                 "above the maximum z of the completed stage-1 film."
