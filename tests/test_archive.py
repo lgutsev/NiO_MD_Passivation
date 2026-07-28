@@ -94,6 +94,31 @@ def test_create_run_archive_refuses_overwrite_without_force(tmp_path):
     assert ZipFile(output).testzip() is None
 
 
+def test_create_run_archive_does_not_follow_symlinked_directories(tmp_path):
+    root=tmp_path/"prepared"
+    system=root/"me-4pacz-alone"
+    system.mkdir(parents=True)
+    (system/"deposited.data").write_text("state\n")
+
+    outside=tmp_path/"outside-secret"
+    outside.mkdir()
+    (outside/"secret.data").write_text("should not be archived\n")
+
+    link=system/"linked"
+    try:
+        link.symlink_to(outside,target_is_directory=True)
+    except OSError:
+        pytest.skip("creating directory symlinks is not permitted in this environment")
+
+    output=tmp_path/"reruns.zip"
+    result=create_run_archive([root],output,provenance_directory=tmp_path)
+
+    assert result.file_count==1
+    with ZipFile(output) as archive:
+        names=set(archive.namelist())
+    assert not any("secret.data" in name for name in names)
+
+
 def test_create_run_archive_requires_unique_root_names(tmp_path):
     first=tmp_path/"one"/"prepared"
     second=tmp_path/"two"/"prepared"

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 from typing import Iterable, Sequence
@@ -82,13 +83,17 @@ def _git_provenance(directory: Path) -> dict[str, object]:
 
 
 def _selected_files(root: Path) -> Iterable[Path]:
-    for path in sorted(root.rglob("*")):
-        if (
-            path.is_file()
-            and not path.is_symlink()
-            and path.suffix.lower() in ARCHIVED_SUFFIXES
-        ):
-            yield path
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames.sort()
+        current = Path(dirpath)
+        for name in sorted(filenames):
+            path = current / name
+            if (
+                path.is_file()
+                and not path.is_symlink()
+                and path.suffix.lower() in ARCHIVED_SUFFIXES
+            ):
+                yield path
 
 
 def _write_source_file(

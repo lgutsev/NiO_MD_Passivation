@@ -17,6 +17,9 @@ analysis = [
     "matplotlib>=3.7",
     "openpyxl>=3.1",
 ]
+test = [
+    "pytest>=7",
+]
 
 [project.scripts]
 nio-md-prep = "nio_md_prep.cli:main"

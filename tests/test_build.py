@@ -1,9 +1,9 @@
 from pathlib import Path
 import hashlib, json, shutil, subprocess, tomllib
 import pytest
-from nio_md_prep.build import build, refresh_inputs
+from nio_md_prep.build import _identify_ni_o_types, build, refresh_inputs
 from nio_md_prep.geometry import elements
-from nio_md_prep.lammps import Record, parse, write
+from nio_md_prep.lammps import DataFile, Record, parse, write
 from nio_md_prep.validate import _wall_result
 
 ROOT=Path(__file__).parents[1]
@@ -14,6 +14,23 @@ def test_all_production_studies_use_safe_communication_cutoff():
         config=tomllib.loads(path.read_text())
         assert config["protocol"]["communication_cutoff"] >= 20.0, path.name
 
+
+def _masses_only(rows):
+    return DataFile("masses only",{"Masses":[Record([str(t),str(m)]) for t,m in rows]})
+
+def test_identify_ni_o_types_by_mass_regardless_of_order():
+    data=_masses_only([(1,58.6934),(2,15.999)])
+    assert _identify_ni_o_types(data,{1,2})==(1,2)
+    swapped=_masses_only([(1,15.999),(2,58.6934)])
+    assert _identify_ni_o_types(swapped,{1,2})==(2,1)
+
+def test_identify_ni_o_types_rejects_ambiguous_candidates():
+    missing_o=_masses_only([(1,58.6934),(2,12.011)])
+    with pytest.raises(ValueError,match="could not uniquely identify"):
+        _identify_ni_o_types(missing_o,{1,2})
+    duplicate_ni=_masses_only([(1,58.6934),(2,58.6934),(3,15.999)])
+    with pytest.raises(ValueError,match="could not uniquely identify"):
+        _identify_ni_o_types(duplicate_ni,{1,2,3})
 
 def packed_fixture(tmp_path, shift=(15.0,10.0,62.0), swap=False):
     tmp_path.mkdir(parents=True,exist_ok=True)

@@ -5,7 +5,7 @@ import math
 from copy import deepcopy
 import hashlib, json, re, shutil, subprocess
 from .config import ROOT, load, molecule_dir, molecule_manifest, missing_ligpargen
-from .geometry import read_xyz, write_xyz
+from .geometry import ELEMENTS, read_xyz, write_xyz
 from .lammps import DataFile, Record, TOPOLOGY, charge, parse, replicate, write
 from .chemistry import molecular_weight, correction_lines
 
@@ -147,6 +147,26 @@ def _packmol(
                 raise ValueError(f"{item['slug']} packed coordinate lies outside its validated region")
         cursor+=n
     return packed,coords,True
+
+def _identify_ni_o_types(data: DataFile, candidates: set[int]) -> tuple[int,int]:
+    """Identify the Ni and O surface atom types by mass, not by type-ID order.
+
+    Buckingham self-interaction parameters below are physically specific to
+    Ni-Ni, Ni-O, and O-O; trusting numeric type-ID ordering would silently
+    swap them if a surface file ever declared its Masses section differently.
+    """
+    masses={int(r.fields[0]):float(r.fields[1]) for r in data.sections["Masses"]}
+    by_symbol: dict[str,list[int]]={}
+    for t in candidates:
+        mass=masses[t]
+        hits=[s for expected,s in ELEMENTS.items() if abs(expected-mass)<=0.02 and s in ("Ni","O")]
+        if len(hits)==1: by_symbol.setdefault(hits[0],[]).append(t)
+    if len(by_symbol.get("Ni",[]))!=1 or len(by_symbol.get("O",[]))!=1:
+        raise ValueError(
+            f"could not uniquely identify Ni and O surface atom types by mass among "
+            f"candidates {sorted(candidates)} (masses {[masses[t] for t in sorted(candidates)]})"
+        )
+    return by_symbol["Ni"][0], by_symbol["O"][0]
 
 def _surface(data: DataFile, offsets: dict[str,int], ids: dict[str,int], molecule: int) -> tuple[dict[str,list[Record]],dict[str,int]]:
     rows={s:[] for s in data.sections}
@@ -334,7 +354,7 @@ def build(
         if previous_force_field.exists():
             previous_coeffs=[line for line in previous_force_field.read_text(encoding="utf-8").splitlines() if line.strip().startswith(("pair_coeff","bond_coeff","angle_coeff","dihedral_coeff","improper_coeff"))]
     ff=HEADER+"\n"+"\n".join(previous_coeffs+_coeff_lines(result)+overrides)+"\n"
-    ni,o=new_types[-2:]
+    ni,o=_identify_ni_o_types(result,set(new_types))
     ff += f"pair_coeff {ni} {ni} buck/coul/long 0.000000e+00 1.000000e+00 0.000000e+00\n"
     ff += f"pair_coeff {ni} {o} buck/coul/long 17397.5 0.35 0.000000e+00\n"
     ff += f"pair_coeff {o} {o} buck/coul/long 524948.8 0.1490 643.23\n"

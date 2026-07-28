@@ -15,7 +15,7 @@ def main(argv=None)->int:
     i=sub.add_parser("inspect-molecule"); i.add_argument("name")
     i=sub.add_parser("build"); i.add_argument("config",type=Path); i.add_argument("--output",type=Path,required=True); i.add_argument("--packed-xyz",type=Path); i.add_argument("--packmol-seed",type=int); i.add_argument("--velocity-seed",type=int)
     i=sub.add_parser("refresh-inputs"); i.add_argument("config",type=Path); i.add_argument("--output",type=Path,required=True)
-    i=sub.add_parser("validate"); i.add_argument("output",type=Path)
+    i=sub.add_parser("validate"); i.add_argument("output",type=Path); i.add_argument("--primary-final",type=Path)
     i=sub.add_parser("archive-runs")
     i.add_argument("roots",nargs="+",type=Path,help="prepared/work roots to archive")
     i.add_argument("--output",type=Path,required=True)
@@ -94,7 +94,7 @@ def main(argv=None)->int:
             d=parse(path); symbols=elements(d); print(f"{m['molecule']['display_name']}: {d.count('Atoms')} atoms, charge {charge(d):.8f}, elements {' '.join(symbols)}")
         elif a.command=="build": build(a.config,a.output,packed_xyz=a.packed_xyz,packmol_seed=a.packmol_seed,velocity_seed=a.velocity_seed); print(f"Build plan written to {a.output}")
         elif a.command=="refresh-inputs": refresh_inputs(a.config,a.output); print(f"Stage inputs refreshed in {a.output}; simulation data were not modified")
-        elif a.command=="validate": validate(a.output); print((a.output/"validation_report.txt").read_text(),end="")
+        elif a.command=="validate": validate(a.output,primary_final=a.primary_final); print((a.output/"validation_report.txt").read_text(),end="")
         elif a.command=="archive-runs":
             from .archive import create_run_archive
             result=create_run_archive(a.roots,a.output,force=a.force)

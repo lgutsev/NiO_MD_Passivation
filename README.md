@@ -165,6 +165,13 @@ Install the optional analysis dependencies when coverage analysis is needed:
 python -m pip install -e '.[analysis]'
 ```
 
+Install the optional test dependencies to run the test suite:
+
+```bash
+python -m pip install -e '.[test]'
+pytest
+```
+
 On QBD, the supplied launchers load the current Python and LAMMPS modules.
 The build jobs use the `single` partition. Molecular-dynamics jobs use one
 complete 64-core `workq` node with one MPI rank per core.
