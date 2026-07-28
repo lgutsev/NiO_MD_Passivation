@@ -163,8 +163,9 @@ def test_lego_build_seeds_gap_without_lateral_confinement(tmp_path):
     assert f"variable zend equal {expected_endpoint}" in deposition
     assert "compute deposition_zmax all reduce max z" in deposition
     assert (
-        'variable safe_zstart equal "max(v_requested_zstart,'
-        'v_measured_deposition_zmax+v_cutoff+1.0)"'
+        'variable safe_zstart equal "0.5*(v_requested_zstart+'
+        'v_measured_safe_zstart+abs(v_requested_zstart-'
+        'v_measured_safe_zstart))"'
     ) in deposition
     assert "variable zstart equal ${safe_zstart}" in deposition
     assert "variable required_deposition_box_zhi equal" in deposition

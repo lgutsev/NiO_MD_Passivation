@@ -574,7 +574,8 @@ compute deposition_zmax all reduce max z
 run 0 post no
 variable measured_deposition_zmax equal c_deposition_zmax
 variable requested_zstart equal {requested_zstart}
-variable safe_zstart equal "max(v_requested_zstart,v_measured_deposition_zmax+v_cutoff+1.0)"
+variable measured_safe_zstart equal "v_measured_deposition_zmax+v_cutoff+1.0"
+variable safe_zstart equal "0.5*(v_requested_zstart+v_measured_safe_zstart+abs(v_requested_zstart-v_measured_safe_zstart))"
 variable zstart equal ${{safe_zstart}}
 variable required_deposition_box_zhi equal "v_zstart+1.0"
 variable frozen_deposition_box_zhi equal ${{required_deposition_box_zhi}}
