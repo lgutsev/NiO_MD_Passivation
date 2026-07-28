@@ -34,7 +34,7 @@ if ! python -c "import numpy, scipy, openpyxl" >/dev/null 2>&1; then
     exit 1
 fi
 
-prepared_root="${SLURM_SUBMIT_DIR}/prepared"
+prepared_root="${PREPARED_ROOT:-${SLURM_SUBMIT_DIR}/prepared}"
 if [[ ! -d "${prepared_root}" ]]; then
     echo "ERROR: ${prepared_root} does not exist." >&2
     exit 1
@@ -59,6 +59,7 @@ fi
 echo "Repository: ${SLURM_SUBMIT_DIR}"
 echo "Commit: $(git rev-parse --short HEAD)"
 echo "Python: $(python --version 2>&1)"
+echo "PREPARED_ROOT: ${prepared_root}"
 echo "LAST_FRAMES: ${last_frames} (0 means all frames)"
 echo "BLOCKS: ${blocks}"
 echo "CONTACT_CUTOFF: ${contact_cutoff} A"
@@ -143,8 +144,17 @@ fi
 publication_workbook="${prepared_root}/publication_summary.xlsx"
 echo
 echo "Creating publication-ready workbook: ${publication_workbook}"
+publication_args=()
+if [[ -n "${EXPERIMENTAL_CSV:-}" ]]; then
+    if [[ ! -s "${EXPERIMENTAL_CSV}" ]]; then
+        echo "ERROR: EXPERIMENTAL_CSV=${EXPERIMENTAL_CSV} is missing or empty." >&2
+        failed=$((failed + 1))
+    else
+        publication_args+=(--experimental "${EXPERIMENTAL_CSV}")
+    fi
+fi
 if nio-md-prep summarize-publication "${prepared_root}" \
-    --output "${publication_workbook}"; then
+    --output "${publication_workbook}" "${publication_args[@]}"; then
     echo "PUBLICATION WORKBOOK: ${publication_workbook}"
 else
     failed=$((failed + 1))
