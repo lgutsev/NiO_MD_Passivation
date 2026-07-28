@@ -39,6 +39,22 @@ def main(argv=None)->int:
     i.add_argument("--lateral-wall",action="store_true")
     i.add_argument("--wall-strength",type=float,default=0.50)
     i.add_argument("--wall-cutoff",type=float,default=3.0)
+    i=sub.add_parser("prepare-lego2-stage2")
+    i.add_argument("config",type=Path)
+    i.add_argument("--primary-final",type=Path,required=True)
+    i.add_argument("--coverage-map",type=Path,required=True)
+    i.add_argument("--output",type=Path,required=True)
+    i.add_argument("--packed-xyz",type=Path)
+    i.add_argument("--packmol-seed",type=int)
+    i.add_argument("--velocity-seed",type=int)
+    i.add_argument("--occupancy-threshold",type=float,default=0.20)
+    i.add_argument("--packing-inset",type=float,default=4.0)
+    i.add_argument("--minimum-void-area-fraction",type=float,default=0.02)
+    i.add_argument("--minimum-packing-width",type=float,default=12.0)
+    i.add_argument("--minimum-packing-height",type=float,default=12.0)
+    i.add_argument("--deposition-clearance",type=float,default=30.0)
+    i.add_argument("--final-deposition-clearance",type=float,default=15.0)
+    i.add_argument("--continuation-steps",type=int,default=300000)
     i=sub.add_parser("prepare-lego-continuation")
     i.add_argument("config",type=Path)
     i.add_argument("--output",type=Path,required=True)
@@ -190,6 +206,30 @@ def main(argv=None)->int:
                 velocity_seed=a.velocity_seed,
             )
             print(f"Lego-style sequential stage 2 written to {a.output}")
+        elif a.command=="prepare-lego2-stage2":
+            from .lego2 import prepare_lego2_stage2
+            prepare_lego2_stage2(
+                a.config,
+                a.primary_final,
+                a.coverage_map,
+                a.output,
+                occupancy_threshold=a.occupancy_threshold,
+                packing_inset_angstrom=a.packing_inset,
+                minimum_void_area_fraction=a.minimum_void_area_fraction,
+                minimum_packing_width_angstrom=a.minimum_packing_width,
+                minimum_packing_height_angstrom=a.minimum_packing_height,
+                deposition_clearance_above_stage1_angstrom=(
+                    a.deposition_clearance
+                ),
+                final_deposition_clearance_above_stage1_angstrom=(
+                    a.final_deposition_clearance
+                ),
+                deposition_continuation_steps=a.continuation_steps,
+                packed_xyz=a.packed_xyz,
+                packmol_seed=a.packmol_seed,
+                velocity_seed=a.velocity_seed,
+            )
+            print(f"Lego2 2D-void sequential stage 2 written to {a.output}")
         elif a.command=="prepare-lego-continuation":
             from .lego import prepare_lego_continuation
             prepare_lego_continuation(
