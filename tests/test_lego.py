@@ -1,5 +1,7 @@
 from pathlib import Path
+import hashlib
 import json
+import shutil
 
 import numpy as np
 import pytest
@@ -7,7 +9,11 @@ import pytest
 from nio_md_prep.build import build
 from nio_md_prep.geometry import elements
 from nio_md_prep.lammps import Record, parse, write
-from nio_md_prep.lego import identify_x_tunnel, prepare_lego_stage2
+from nio_md_prep.lego import (
+    identify_x_tunnel,
+    prepare_lego_continuation,
+    prepare_lego_stage2,
+)
 
 
 ROOT = Path(__file__).parents[1]
@@ -122,10 +128,15 @@ def test_lego_build_seeds_gap_without_lateral_confinement(tmp_path):
         float(atom.fields[6]) for atom in original.sections["Atoms"]
     )
     expected_endpoint = primary_max_z + 30.0
+    expected_final_endpoint = primary_max_z + 15.0
     assert plan["stage1_max_z_angstrom"] == pytest.approx(primary_max_z)
     assert plan["deposition_wall_endpoint_angstrom"] == pytest.approx(
         expected_endpoint
     )
+    assert plan["final_deposition_wall_endpoint_angstrom"] == pytest.approx(
+        expected_final_endpoint
+    )
+    assert plan["deposition_continuation_steps"] == 300000
     assert plan["lateral_confinement"] is False
     for before, after in zip(
         original.sections["Atoms"], shifted.sections["Atoms"]
@@ -150,6 +161,28 @@ def test_lego_build_seeds_gap_without_lateral_confinement(tmp_path):
     assert "fix lego_wall" not in deposition
     assert "unfix lego_wall" not in deposition
     assert f"variable zend equal {expected_endpoint}" in deposition
+    assert "compute deposition_zmax all reduce max z" in deposition
+    assert (
+        'variable safe_zstart equal "max(v_requested_zstart,'
+        'v_measured_deposition_zmax+v_cutoff+1.0)"'
+    ) in deposition
+    assert "variable zstart equal ${safe_zstart}" in deposition
+    assert "variable required_deposition_box_zhi equal" in deposition
+    assert "change_box all z final" in deposition
+    continuation = (output / "continue-deposition.in").read_text()
+    assert "read_data deposited.data" in continuation
+    assert f"variable continuation_zstart equal {expected_endpoint}" in continuation
+    assert (
+        f"variable continuation_zend equal {expected_final_endpoint}"
+        in continuation
+    )
+    assert "run 300000 start 0 stop 300000" in continuation
+    assert "velocity " not in continuation
+    assert "write_data deposited-continued.data nocoeff" in continuation
+    assert (
+        f"variable hold_wall_hi equal {expected_final_endpoint}"
+        in (output / "hold-300K.in").read_text()
+    )
     for name in (
         "hold-300K.in",
         "hold-400K.in",
@@ -164,6 +197,61 @@ def test_lego_build_seeds_gap_without_lateral_confinement(tmp_path):
         == "periodic_x_gap_seeded"
     )
     assert "laterally unconstrained" in plan["bias_warning"]
+
+
+def test_prepare_legacy_lego_continuation_preserves_deposited_data(tmp_path):
+    primary = primary_fixture(tmp_path)
+    coverage = coverage_fixture(tmp_path)
+    secondary = packed_fixture(
+        tmp_path / "secondary-packed",
+        shift=(50.0, 20.0, 100.0),
+    )
+    output = prepare_lego_stage2(
+        ROOT / "tests/data/small-study.toml",
+        primary,
+        coverage,
+        tmp_path / "legacy-lego",
+        packed_xyz=secondary,
+    )
+    deposited = output / "deposited.data"
+    shutil.copyfile(output / "topology_output.lmp", deposited)
+    deposited_hash = hashlib.sha256(deposited.read_bytes()).hexdigest()
+
+    plan_path = output / "lego_plan.json"
+    plan = json.loads(plan_path.read_text())
+    for key in (
+        "final_deposition_clearance_above_stage1_angstrom",
+        "final_deposition_wall_endpoint_angstrom",
+        "deposition_continuation_steps",
+    ):
+        plan.pop(key)
+    plan_path.write_text(json.dumps(plan, indent=2) + "\n")
+    manifest_path = output / "assembly_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["deposition_guidance"] = plan
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+    prepare_lego_continuation(
+        ROOT / "tests/data/small-study.toml",
+        output,
+        additional_drop_angstrom=15.0,
+        continuation_steps=300000,
+    )
+
+    assert hashlib.sha256(deposited.read_bytes()).hexdigest() == deposited_hash
+    updated = json.loads(plan_path.read_text())
+    expected_final = updated["deposition_wall_endpoint_angstrom"] - 15.0
+    assert updated["final_deposition_wall_endpoint_angstrom"] == pytest.approx(
+        expected_final
+    )
+    assert (
+        f"variable continuation_zend equal {expected_final}"
+        in (output / "continue-deposition.in").read_text()
+    )
+    assert (
+        f"variable hold_wall_hi equal {expected_final}"
+        in (output / "hold-300K.in").read_text()
+    )
 
 
 def test_lego_can_reproduce_confined_tunnel_control(tmp_path):

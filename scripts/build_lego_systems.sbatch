@@ -71,6 +71,8 @@ build_args=(
     --minimum-gap-fraction "${MINIMUM_GAP_FRACTION:-0.12}"
     --minimum-tunnel-width "${MINIMUM_TUNNEL_WIDTH:-12.0}"
     --deposition-clearance "${LEGO_DEPOSITION_CLEARANCE:-30.0}"
+    --final-deposition-clearance "${LEGO_FINAL_DEPOSITION_CLEARANCE:-15.0}"
+    --continuation-steps "${LEGO_CONTINUATION_STEPS:-300000}"
     --wall-strength "${LEGO_WALL_STRENGTH:-0.50}"
     --wall-cutoff "${LEGO_WALL_CUTOFF:-3.0}"
 )
@@ -86,7 +88,7 @@ fi
 
 nio-md-prep prepare-lego-stage2 "${build_args[@]}"
 
-for required in lego_plan.json lego_tunnel_profile.csv lego-stage1-shifted.data topology_output.lmp force_field_settings.lmp deposition.in hold-300K.in; do
+for required in lego_plan.json lego_tunnel_profile.csv lego-stage1-shifted.data topology_output.lmp force_field_settings.lmp deposition.in continue-deposition.in hold-300K.in; do
     if [[ ! -s "${output}/${required}" ]]; then
         echo "ERROR: ${output}/${required} was not produced." >&2
         exit 1

@@ -144,7 +144,10 @@ def validate(
         manifest["stage1_stage2_minimum_separation_lower_bound_angstrom"]=separation
         (folder/"assembly_manifest.json").write_text(json.dumps(manifest,indent=2)+"\n",encoding="utf-8")
     required_order=("boundary p p f","units real","atom_style full","read_data ","include ")
-    for input_name in ("deposition.in","hold-300K.in","hold-400K.in","decompress-300K.in","decompress-400K.in","equilibrate-300K.in","anneal-400K.in"):
+    input_names=["deposition.in","hold-300K.in","hold-400K.in","decompress-300K.in","decompress-400K.in","equilibrate-300K.in","anneal-400K.in"]
+    if (folder/"continue-deposition.in").is_file():
+        input_names.insert(1,"continue-deposition.in")
+    for input_name in input_names:
         text=(folder/input_name).read_text(); positions=[text.find(token) for token in required_order]
         if any(x<0 for x in positions) or positions!=sorted(positions): errors.append(f"{input_name}: invalid initialization command order")
         for directive in ("thermo_style","dump trajectory","restart ","write_data","write_restart"):
@@ -162,6 +165,12 @@ def validate(
             protocol.get("deposition_wall_endpoint",69.615),
         )
     )
+    compressed_endpoint=float(
+        guidance.get(
+            "final_deposition_wall_endpoint_angstrom",
+            expected_endpoint,
+        )
+    )
     primary=next((component for component in manifest.get("components",[]) if component.get("component")=="stage1_primary"),None)
     if primary:
         primary_last=int(primary["atom_ids"][1]); final_atom=max(ids)
@@ -175,6 +184,12 @@ def validate(
             "min_style cg",
             "min_modify dmax 0.01 line backtrack",
             "unfix stage1_lock",
+            "compute deposition_zmax all reduce max z",
+            "variable safe_zstart equal",
+            "v_measured_deposition_zmax+v_cutoff+1.0",
+            "variable zstart equal ${safe_zstart}",
+            "variable required_deposition_box_zhi equal",
+            "change_box all z final",
             f"velocity stage2 create {target_temp}",
             f"fix deposit all npt temp {target_temp} {target_temp}",
         )
@@ -183,11 +198,29 @@ def validate(
             errors.append("sequential minimization lock and stage-2 velocity initialization are out of order")
         if "velocity all create" in deposition: errors.append("sequential deposition replaces the completed stage-1 velocities")
     endpoint_pattern=rf"{re.escape(str(expected_endpoint))}(?:0+)?"
+    compressed_pattern=rf"{re.escape(str(compressed_endpoint))}(?:0+)?"
     if not re.search(rf"variable zend equal {endpoint_pattern}",deposition): errors.append(f"deposition wall endpoint is not {expected_endpoint:g} A")
+    continuation_path=folder/"continue-deposition.in"
+    if compressed_endpoint < expected_endpoint:
+        if not continuation_path.is_file():
+            errors.append("final deposition endpoint requires continue-deposition.in")
+        else:
+            continuation=continuation_path.read_text()
+            required=(
+                "read_data deposited.data",
+                f"variable continuation_zstart equal {expected_endpoint}",
+                f"variable continuation_zend equal {compressed_endpoint}",
+                "fix deposit all npt temp",
+                "write_data deposited-continued.data nocoeff",
+            )
+            if any(token not in continuation for token in required):
+                errors.append("lego deposition continuation is incomplete")
+            if "velocity " in continuation:
+                errors.append("lego deposition continuation reinitializes velocities")
     if "read_data deposited.data" not in hold or "read_data held-300K.data" not in eq or "read_data equilibrated-300K.data" not in anneal: errors.append("continuation stage-local source selection is invalid")
-    if not re.search(rf"variable hold_wall_hi equal {endpoint_pattern}",hold): errors.append("300 K hold wall is not fixed at the deposition endpoint")
+    if not re.search(rf"variable hold_wall_hi equal {compressed_pattern}",hold): errors.append("300 K hold wall is not fixed at the final deposition endpoint")
     if "read_data deposited.data" not in hold_400: errors.append("400 K hold does not branch from deposited.data")
-    if not re.search(rf"variable hold_wall_hi equal {endpoint_pattern}",hold_400): errors.append("400 K hold wall is not fixed at the deposition endpoint")
+    if not re.search(rf"variable hold_wall_hi equal {compressed_pattern}",hold_400): errors.append("400 K hold wall is not fixed at the final deposition endpoint")
     if "fix heating all npt temp 300.0 400.0" not in hold_400: errors.append("400 K heating ramp is invalid")
     if "write_data heated-400K.data nocoeff" not in hold_400: errors.append("400 K heating endpoint is not saved")
     if "fix hold all npt temp 400.0 400.0" not in hold_400: errors.append("400 K hold thermostat is invalid")
@@ -196,7 +229,7 @@ def validate(
         ("400K",decompress_400,"held-400K.data",400.0),
     ):
         if f"read_data {source_name}" not in decompression_text: errors.append(f"{suffix} decompression source is invalid")
-        if not re.search(rf"variable compressed_wall_hi equal {endpoint_pattern}",decompression_text): errors.append(f"{suffix} decompression does not start at the compressed endpoint")
+        if not re.search(rf"variable compressed_wall_hi equal {compressed_pattern}",decompression_text): errors.append(f"{suffix} decompression does not start at the compressed endpoint")
         required=(
             "variable decompression_wall_hi equal",
             "v_resolved_wall_hi-v_compressed_wall_hi",
@@ -229,6 +262,8 @@ def validate(
             target=Path(temp); shutil.copy2(topology,target/topology.name)
             shutil.copy2(folder/"force_field_settings_lammps_with_header.lmp",target/"force_field_settings_lammps_with_header.lmp")
             smoke_stages=[("deposition",None),("hold-300K","deposited.data"),("hold-400K","deposited.data"),("decompress-300K","held-300K.data"),("decompress-400K","held-400K.data"),("equilibrate-300K","held-300K.data"),("anneal-400K","equilibrated-300K.data")]
+            if (folder/"validate-continue-deposition.in").is_file():
+                smoke_stages.insert(1,("continue-deposition","deposited.data"))
             for name,predecessor in smoke_stages:
                 if predecessor and not (folder/predecessor).exists(): continue
                 if predecessor: shutil.copy2(folder/predecessor,target/predecessor)

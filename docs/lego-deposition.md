@@ -34,9 +34,13 @@ The builder consumes the numerical
 6. Apply no lateral wall during minimization or dynamics. The coverage map
    biases only the initial Packmol placement; stage 2 can spread freely in
    periodic x/y throughout deposition and all later stages.
-7. Move the upper z-wall down only to 30 Å above the maximum z of the completed
-   Me-4PACz film. This replaces the former fixed 69.615 Å endpoint referenced
-   to bare NiO, which could leave stage 2 insufficient headroom.
+7. Move the upper z-wall first to 30 Å above the maximum z of the completed
+   Me-4PACz film. The initial wall position is measured after minimization and
+   frozen at least 3.5 Å above the highest atom, avoiding atoms on or inside
+   the wall at step 0.
+8. In a separate restart-safe stage, lower the wall another 15 Å over 300,000
+   steps (150 ps) without reinitializing velocities. The final compressed
+   endpoint is therefore 15 Å above the stage-1 maximum z.
 
 The lower recoil wall remains active exactly as in the standard sequential
 workflow. The former harmonic tunnel remains reproducible as an explicit
@@ -71,8 +75,10 @@ No simulation is submitted automatically. Before deposition, inspect:
   columns selected as the periodic gap;
 - `packmol.inp`: the restricted stage-2 packing box;
 - `lego-stage1-shifted.data`: the periodically translated stage-1 reference;
-- `deposition.in`: laterally free stage-2 deposition and the gentler resolved
-  upper-wall endpoint;
+- `deposition.in`: laterally free stage-2 deposition with a measured safe
+  initial wall position;
+- `continue-deposition.in`: final 15 Å wall descent without velocity
+  reinitialization;
 - `validation_report.txt`: normal assembly validation.
 
 Launch only the DCZ-4P deposition:
@@ -83,7 +89,20 @@ sbatch --array=0 \
   scripts/run_sequential_deposition_array.sbatch
 ```
 
-After `deposited.data` is complete, the unbiased 300 K and 400 K branches use
+Then complete the final gentle compression:
+
+```bash
+sbatch --array=0 \
+  --export=ALL,PREPARED_ROOT=prepared-lego,SYSTEM_SUFFIX=-lego-seeded \
+  scripts/run_lego_deposition_continuation_array.sbatch
+```
+
+LAMMPS writes `deposited-continued.data`; only after successful completion
+does the runner preserve the old state as
+`deposited.pre-continuation.JOBID.data` and promote the new state to
+`deposited.data`. The ordinary hold scripts therefore remain unchanged.
+
+After the continuation completes, the unbiased 300 K and 400 K branches use
 the same suffix mechanism:
 
 ```bash
@@ -144,14 +163,31 @@ The builder accepts environment overrides without changing the study TOML:
 
 ```bash
 sbatch --array=0 \
-  --export=ALL,OCCUPANCY_THRESHOLD=0.20,PACKING_INSET=4.0,LEGO_DEPOSITION_CLEARANCE=30.0 \
+  --export=ALL,OCCUPANCY_THRESHOLD=0.20,PACKING_INSET=4.0,LEGO_DEPOSITION_CLEARANCE=30.0,LEGO_FINAL_DEPOSITION_CLEARANCE=15.0,LEGO_CONTINUATION_STEPS=300000 \
   scripts/build_lego_systems.sbatch
 ```
 
 Other available controls are `COVERAGE_MAP`, `SOURCE_ROOT`, `PREPARED_ROOT`,
 `LEGO_SUFFIX`, `MINIMUM_GAP_FRACTION`, `MINIMUM_TUNNEL_WIDTH`,
-`PACKMOL_SEED`, and `VELOCITY_SEED`. Set `LEGO_LATERAL_WALL=1` only to
+`PACKMOL_SEED`, `VELOCITY_SEED`, and `LEGO_ADDITIONAL_DROP` for upgrading
+existing lego folders. Set `LEGO_LATERAL_WALL=1` only to
 reproduce the former confined control; `LEGO_WALL_STRENGTH` and
 `LEGO_WALL_CUTOFF` then set that optional wall. Record any non-default values
 in the methods and treat threshold, clearance, or wall-strength scans as
 sensitivity tests rather than independent replicates.
+
+## Upgrading existing lego outputs
+
+The continuation preparation job rewrites only input and provenance files; it
+does not alter `topology_output.lmp`, `deposited.data`, trajectories, or
+restarts:
+
+```bash
+sbatch --array=0-2 \
+  --export=ALL,PREPARED_ROOT=prepared-lego,SYSTEM_SUFFIX=-lego-seeded \
+  scripts/prepare_lego_continuation_inputs.sbatch
+```
+
+This also repairs a failed initial deposition by regenerating `deposition.in`
+with the measured safe wall start. Such a case can be resubmitted with the
+ordinary sequential deposition runner before its continuation is launched.

@@ -7,7 +7,7 @@ import csv
 import hashlib
 import json
 
-from .build import build
+from .build import build, refresh_inputs
 from .lammps import parse
 
 
@@ -63,6 +63,8 @@ def identify_x_tunnel(
     minimum_gap_fraction: float = 0.12,
     minimum_tunnel_width_angstrom: float = 12.0,
     deposition_clearance_above_stage1_angstrom: float = 30.0,
+    final_deposition_clearance_above_stage1_angstrom: float = 15.0,
+    deposition_continuation_steps: int = 300000,
     lateral_confinement: bool = False,
     wall_strength: float = 0.50,
     wall_cutoff_angstrom: float = 3.0,
@@ -83,6 +85,17 @@ def identify_x_tunnel(
         raise ValueError("minimum tunnel width must be positive")
     if deposition_clearance_above_stage1_angstrom <= 0.0:
         raise ValueError("deposition clearance above stage 1 must be positive")
+    if not (
+        0.0
+        < final_deposition_clearance_above_stage1_angstrom
+        < deposition_clearance_above_stage1_angstrom
+    ):
+        raise ValueError(
+            "final deposition clearance must be positive and below the "
+            "initial deposition clearance"
+        )
+    if deposition_continuation_steps <= 0:
+        raise ValueError("deposition continuation steps must be positive")
     if lateral_confinement and (
         wall_strength <= 0.0 or wall_cutoff_angstrom <= 0.0
     ):
@@ -127,6 +140,9 @@ def identify_x_tunnel(
     )
     deposition_endpoint = (
         primary_max_z + deposition_clearance_above_stage1_angstrom
+    )
+    final_deposition_endpoint = (
+        primary_max_z + final_deposition_clearance_above_stage1_angstrom
     )
     gap_width = gap_fraction * lx
     packing_width = gap_width - 2.0 * packing_inset_angstrom
@@ -198,6 +214,11 @@ def identify_x_tunnel(
             deposition_clearance_above_stage1_angstrom
         ),
         "deposition_wall_endpoint_angstrom": deposition_endpoint,
+        "final_deposition_clearance_above_stage1_angstrom": (
+            final_deposition_clearance_above_stage1_angstrom
+        ),
+        "final_deposition_wall_endpoint_angstrom": final_deposition_endpoint,
+        "deposition_continuation_steps": int(deposition_continuation_steps),
         "lateral_confinement": bool(lateral_confinement),
         "wall_style": "harmonic" if lateral_confinement else "none",
         "wall_strength_kcal_per_mol_angstrom2": (
@@ -284,6 +305,8 @@ def prepare_lego_stage2(
     minimum_gap_fraction: float = 0.12,
     minimum_tunnel_width_angstrom: float = 12.0,
     deposition_clearance_above_stage1_angstrom: float = 30.0,
+    final_deposition_clearance_above_stage1_angstrom: float = 15.0,
+    deposition_continuation_steps: int = 300000,
     lateral_confinement: bool = False,
     wall_strength: float = 0.50,
     wall_cutoff_angstrom: float = 3.0,
@@ -302,6 +325,10 @@ def prepare_lego_stage2(
         deposition_clearance_above_stage1_angstrom=(
             deposition_clearance_above_stage1_angstrom
         ),
+        final_deposition_clearance_above_stage1_angstrom=(
+            final_deposition_clearance_above_stage1_angstrom
+        ),
+        deposition_continuation_steps=deposition_continuation_steps,
         lateral_confinement=lateral_confinement,
         wall_strength=wall_strength,
         wall_cutoff_angstrom=wall_cutoff_angstrom,
@@ -334,3 +361,69 @@ def prepare_lego_stage2(
             encoding="utf-8",
         )
     return result
+
+
+def prepare_lego_continuation(
+    config_path: Path,
+    output: Path,
+    *,
+    additional_drop_angstrom: float = 15.0,
+    continuation_steps: int = 300000,
+) -> Path:
+    """Add a restart-safe final compression stage to an existing lego run."""
+    output = Path(output)
+    plan_path = output / "lego_plan.json"
+    manifest_path = output / "assembly_manifest.json"
+    topology_path = output / "topology_output.lmp"
+    for path in (plan_path, manifest_path, topology_path):
+        if not path.is_file() or path.stat().st_size == 0:
+            raise FileNotFoundError(path)
+    if additional_drop_angstrom <= 0.0:
+        raise ValueError("additional deposition drop must be positive")
+    if continuation_steps <= 0:
+        raise ValueError("deposition continuation steps must be positive")
+    completed_downstream = [
+        name
+        for name in ("held-300K.data", "held-400K.data")
+        if (output / name).is_file()
+    ]
+    if completed_downstream:
+        raise ValueError(
+            "cannot add final deposition after downstream holds exist: "
+            + ", ".join(completed_downstream)
+        )
+
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    if plan.get("method") not in {
+        "periodic_x_gap_seeded",
+        "periodic_x_gap_tunnel",
+    }:
+        raise ValueError("output is not a coverage-guided lego system")
+    initial_endpoint = float(plan["deposition_wall_endpoint_angstrom"])
+    stage1_max_z = float(plan["stage1_max_z_angstrom"])
+    final_endpoint = initial_endpoint - additional_drop_angstrom
+    if final_endpoint <= stage1_max_z:
+        raise ValueError(
+            "requested final wall would reach or cross the stage-1 maximum z"
+        )
+    plan.update(
+        {
+            "final_deposition_clearance_above_stage1_angstrom": (
+                final_endpoint - stage1_max_z
+            ),
+            "final_deposition_wall_endpoint_angstrom": final_endpoint,
+            "deposition_continuation_steps": int(continuation_steps),
+        }
+    )
+    plan_path.write_text(
+        json.dumps(plan, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["deposition_guidance"] = plan
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    refresh_inputs(config_path, output)
+    return output

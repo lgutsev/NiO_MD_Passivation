@@ -287,7 +287,9 @@ that the channel is centered, and packs layer 2 inside it. By default, no
 lateral wall is applied after packing: layer 2 is free to spread during
 minimization and deposition. The descending upper wall stops 30 Å above the
 maximum z of the completed Me-4PACz film rather than 30 Å above bare NiO.
-Every hold and relaxation remains laterally unbiased.
+After inspection, a second gentle 150 ps compression lowers it another 15 Å
+without resetting velocities. Every hold and relaxation remains laterally
+unbiased.
 
 The default batch submission builds only the DCZ-4P test (array index 0):
 
@@ -302,6 +304,10 @@ Review
 sbatch --array=0 \
   --export=ALL,PREPARED_ROOT=prepared-lego,SYSTEM_SUFFIX=-lego-seeded \
   scripts/run_sequential_deposition_array.sbatch
+
+sbatch --array=0 \
+  --export=ALL,PREPARED_ROOT=prepared-lego,SYSTEM_SUFFIX=-lego-seeded \
+  scripts/run_lego_deposition_continuation_array.sbatch
 ```
 
 This is a seeded geometric-control experiment. A favorable result would show

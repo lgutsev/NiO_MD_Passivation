@@ -424,7 +424,22 @@ def _write_input(output: Path,cfg:dict,data:DataFile)->None:
         else p.get("deposition_wall_endpoint")
     )
     zend=float(configured_endpoint) if configured_endpoint is not None else surface_top+float(p.get("wall_clearance",30.0))
-    zstart=max(zend+100.0,data.bounds["z"][1]-5.0)
+    requested_zstart=max(zend+100.0,data.bounds["z"][1]-5.0)
+    continuation_zend=(
+        float(guidance.get("final_deposition_wall_endpoint_angstrom",zend))
+        if guidance is not None
+        else zend
+    )
+    continuation_steps=(
+        int(guidance.get("deposition_continuation_steps",0))
+        if guidance is not None
+        else 0
+    )
+    if continuation_zend > zend:
+        raise ValueError("final deposition endpoint cannot be above the initial endpoint")
+    if continuation_zend < zend and continuation_steps <= 0:
+        raise ValueError("a lower final deposition endpoint requires positive continuation steps")
+    compressed_zend=continuation_zend if continuation_steps > 0 else zend
     velocity_seed=int(
         cfg.get("_resolved_random",cfg.get("resolved_random",cfg.get("random",{})))
         .get("velocity_seed",214587)
@@ -555,9 +570,21 @@ print "step=${{optimization_step}} potential_energy_kcal_per_mol=${{optimization
 write_data optimized.data nocoeff
 write_restart optimized.restart
 write_dump all custom optimized.lammpstrj id mol type q x y z fx fy fz modify sort id
+compute deposition_zmax all reduce max z
+run 0 post no
+variable measured_deposition_zmax equal c_deposition_zmax
+variable requested_zstart equal {requested_zstart}
+variable safe_zstart equal "max(v_requested_zstart,v_measured_deposition_zmax+v_cutoff+1.0)"
+variable zstart equal ${{safe_zstart}}
+variable required_deposition_box_zhi equal "v_zstart+1.0"
+variable frozen_deposition_box_zhi equal ${{required_deposition_box_zhi}}
+if "$(zhi) < ${{frozen_deposition_box_zhi}}" then "change_box all z final $(zlo) ${{frozen_deposition_box_zhi}} units box"
+print "Requested deposition wall start: ${{requested_zstart}}"
+print "Measured post-minimization maximum z: ${{measured_deposition_zmax}}"
+print "Safe frozen deposition wall start: ${{zstart}}"
+uncompute deposition_zmax
 reset_timestep 0
 {velocity_initialization}
-variable zstart equal {zstart}
 variable zend equal {zend}
 variable zwall equal \"v_zstart - (v_zstart-v_zend)*(step/{steps}.0)\"
 thermo_style custom step temp pe ke etotal press pxx pyy lx ly lz v_zwall fnorm fmax{guidance_thermo}
@@ -580,8 +607,36 @@ write_restart deposited.restart
 """
     (output/"deposition.in").write_text(text,encoding="utf-8")
     (output/"lammps.in").write_text(text,encoding="utf-8")
+    continuation=""
+    if continuation_steps > 0 and continuation_zend < zend:
+        continuation=f"""# Final gentle lego compression: run only after deposition.in
+{init('deposited.data')}reset_timestep 0
+variable continuation_zstart equal {zend}
+variable continuation_zend equal {continuation_zend}
+variable continuation_zwall equal "v_continuation_zstart - (v_continuation_zstart-v_continuation_zend)*(step/{continuation_steps}.0)"
+thermo_style custom step temp pe ke etotal press pxx pyy lx ly lz v_continuation_zwall fnorm fmax
+fix walllo all wall/lj93 zlo {deposition_lower} ${{epsilon}} ${{sigma}} ${{cutoff}} units box
+fix_modify walllo energy yes
+fix wall all wall/lj126 zhi v_continuation_zwall ${{epsilon}} ${{sigma}} ${{cutoff}} units box
+fix deposit all npt temp {temp} {temp} 100.0 x ${{pressure}} ${{pressure}} ${{pressureDamp}} y ${{pressure}} ${{pressure}} ${{pressureDamp}} couple xy
+dump trajectory all custom 1000 deposition-continuation.lammpstrj id mol type q x y z
+dump_modify trajectory sort id
+restart 100000 deposition-continuation.restart.1 deposition-continuation.restart.2
+timestep {deposition_timestep}
+run {continuation_steps} start 0 stop {continuation_steps}
+unfix deposit
+unfix wall
+unfix walllo
+undump trajectory
+write_data deposited-continued.data nocoeff
+write_restart deposited-continued.restart
+"""
+        (output/"continue-deposition.in").write_text(
+            continuation,
+            encoding="utf-8",
+        )
     hold=f"""# Compressed-film hold: run only after deposition.in
-{init('deposited.data')}variable hold_wall_hi equal {zend}
+{init('deposited.data')}variable hold_wall_hi equal {compressed_zend}
 thermo_style custom step temp pe ke etotal press pxx pyy lx ly lz v_hold_wall_hi fnorm fmax
 fix lo all wall/lj93 zlo {lower_300} ${{epsilon}} ${{sigma}} ${{cutoff}} units box
 fix hi all wall/lj126 zhi ${{hold_wall_hi}} ${{epsilon}} ${{sigma}} ${{cutoff}} units box
@@ -597,7 +652,7 @@ write_data held-300K.data nocoeff
 write_restart held-300K.restart
 """
     hold_400=f"""# Independent gradual heating and compressed-film 400 K hold: run only after deposition.in
-{init('deposited.data')}variable hold_wall_hi equal {zend}
+{init('deposited.data')}variable hold_wall_hi equal {compressed_zend}
 thermo_style custom step temp pe ke etotal press pxx pyy lx ly lz v_hold_wall_hi fnorm fmax
 fix lo all wall/lj93 zlo {lower_400} ${{epsilon}} ${{sigma}} ${{cutoff}} units box
 fix hi all wall/lj126 zhi ${{hold_wall_hi}} ${{epsilon}} ${{sigma}} ${{cutoff}} units box
@@ -625,7 +680,7 @@ write_restart held-400K.restart
     def decompression(source: str, temperature: float, suffix: str, lower_wall_coordinate: str) -> str:
         return f"""# Gradual {suffix} decompression and relaxed-film hold: run only after the compressed hold
 {init(source)}{resolution(source)}reset_timestep 0
-variable compressed_wall_hi equal {zend}
+variable compressed_wall_hi equal {compressed_zend}
 variable decompression_wall_hi equal "v_compressed_wall_hi + (v_resolved_wall_hi-v_compressed_wall_hi)*(step/{decompression_steps}.0)"
 thermo_style custom step temp pe ke etotal press pxx pyy lx ly lz v_decompression_wall_hi fnorm fmax
 fix lo all wall/lj93 zlo {lower_wall_coordinate} ${{epsilon}} ${{sigma}} ${{cutoff}} units box
@@ -666,13 +721,22 @@ write_restart relaxed-{suffix}.restart
     (output/"decompress-400K.in").write_text(decompress_400,encoding="utf-8")
     (output/"equilibrate-300K.in").write_text(eq,encoding="utf-8")
     (output/"anneal-400K.in").write_text(anneal,encoding="utf-8")
-    for name,source in (("deposition",text),("hold-300K",hold),("hold-400K",hold_400),("decompress-300K",decompress_300),("decompress-400K",decompress_400),("equilibrate-300K",eq),("anneal-400K",anneal)):
+    stages=[("deposition",text)]
+    if continuation:
+        stages.append(("continue-deposition",continuation))
+    stages.extend((("hold-300K",hold),("hold-400K",hold_400),("decompress-300K",decompress_300),("decompress-400K",decompress_400),("equilibrate-300K",eq),("anneal-400K",anneal)))
+    for name,source in stages:
         check=re.sub(r"(?m)^run\s+.*$","run 0",source)
         check=re.sub(r"(?m)^minimize\s+.*$","run 0 post no # minimization replaced by force evaluation for smoke validation",check)
         (output/f"validate-{name}.in").write_text("# Temporary-directory smoke form of the real stage\n"+check,encoding="utf-8")
     mode=f"manual override {float(manual_upper):g} A" if manual_upper is not None else f"automatic: ceil(max({wall_min:g}, max_atom_z+{wall_clearance:g})/{wall_rounding:g})*{wall_rounding:g} A"
     duration_ps=steps*deposition_timestep/1000.0; hold_duration_ps=hold_steps*hold_timestep/1000.0; heat_400_duration_ps=heat_400_steps*heat_400_timestep/1000.0; hold_400_duration_ps=hold_400_steps*hold_400_timestep/1000.0; decompression_duration_ps=decompression_steps*decompression_timestep/1000.0; relaxed_hold_duration_ps=relaxed_hold_steps*relaxed_hold_timestep/1000.0
-    (output/"protocol_notes.txt").write_text(f"Deposition endpoint: {zend:.3f} A. Deposition uses {steps} steps at a continuous {deposition_timestep:g} fs timestep ({duration_ps:g} ps total), with a continuous upper-wall ramp and no timestep transition. {deposition_thermal_note}{guidance_note} The minimized structure and force summary are written before deposition dynamics. Independent compressed-film temperature branches both start from deposited.data and keep zhi={zend:.3f} A. The 300 K branch holds for {hold_steps} steps at {hold_timestep:g} fs ({hold_duration_ps:g} ps). The 400 K branch first heats from {temp:g} to 400 K for {heat_400_steps} steps at {heat_400_timestep:g} fs ({heat_400_duration_ps:g} ps), writes heated-400K.data, then holds at 400 K for {hold_400_steps} steps at {hold_400_timestep:g} fs ({hold_400_duration_ps:g} ps). Independent decompression branches read held-300K.data and held-400K.data, retract the upper wall from {zend:.3f} A to the resolved production height over {decompression_steps} steps at {decompression_timestep:g} fs ({decompression_duration_ps:g} ps), then hold the relaxed film for {relaxed_hold_steps} steps at {relaxed_hold_timestep:g} fs ({relaxed_hold_duration_ps:g} ps). Production wall policy: {mode}; box margin {box_margin:g} A. Long 300 K source: held-300K.data (DEFERRED until present), zlo={lower_300}. 400 K source: equilibrated-300K.data (DEFERRED until present), zlo={lower_400}. Each resolved production wall is frozen before dynamics and zhi alone is expanded if required.\n",encoding="utf-8")
+    continuation_note=(
+        f" A required final lego compression reads deposited.data, lowers the wall from {zend:.3f} to {compressed_zend:.3f} A over {continuation_steps} steps without reinitializing velocities, and produces deposited-continued.data for atomic promotion back to deposited.data."
+        if continuation
+        else ""
+    )
+    (output/"protocol_notes.txt").write_text(f"Deposition endpoint: {zend:.3f} A. Deposition uses {steps} steps at a continuous {deposition_timestep:g} fs timestep ({duration_ps:g} ps total), with a continuous upper-wall ramp and no timestep transition. {deposition_thermal_note}{guidance_note}{continuation_note} The minimized structure and force summary are written before deposition dynamics. Independent compressed-film temperature branches both start from deposited.data and keep zhi={compressed_zend:.3f} A. The 300 K branch holds for {hold_steps} steps at {hold_timestep:g} fs ({hold_duration_ps:g} ps). The 400 K branch first heats from {temp:g} to 400 K for {heat_400_steps} steps at {heat_400_timestep:g} fs ({heat_400_duration_ps:g} ps), writes heated-400K.data, then holds at 400 K for {hold_400_steps} steps at {hold_400_timestep:g} fs ({hold_400_duration_ps:g} ps). Independent decompression branches read held-300K.data and held-400K.data, retract the upper wall from {compressed_zend:.3f} A to the resolved production height over {decompression_steps} steps at {decompression_timestep:g} fs ({decompression_duration_ps:g} ps), then hold the relaxed film for {relaxed_hold_steps} steps at {relaxed_hold_timestep:g} fs ({relaxed_hold_duration_ps:g} ps). Production wall policy: {mode}; box margin {box_margin:g} A. Long 300 K source: held-300K.data (DEFERRED until present), zlo={lower_300}. 400 K source: equilibrated-300K.data (DEFERRED until present), zlo={lower_400}. Each resolved production wall is frozen before dynamics and zhi alone is expanded if required.\n",encoding="utf-8")
 
 def refresh_inputs(config_path: Path, output: Path) -> Path:
     """Regenerate stage inputs without rebuilding or modifying simulation data."""
@@ -689,5 +753,8 @@ def refresh_inputs(config_path: Path, output: Path) -> Path:
             "packmol_seed":int(manifest.get("packmol_seed",202405367)),
             "velocity_seed":int(manifest.get("velocity_seed",214587)),
         }
+        guidance=manifest.get("deposition_guidance")
+        if guidance is not None:
+            cfg["_deposition_guidance"]=guidance
     _write_input(output,cfg,parse(topology))
     return output
