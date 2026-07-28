@@ -9,6 +9,7 @@ from nio_md_prep.analysis.publication_report import (
     CORRELATION_HEADERS,
     SUMMARY_HEADERS,
     build_publication_rows,
+    build_correlation_rows,
     create_publication_workbook,
 )
 
@@ -62,6 +63,10 @@ def _fixture_rows():
                 "void_patch_count": 3 if index == 0 else 1,
                 "void_largest_patch": 12.0 if index == 0 else 4.0,
                 "void_mean_patch": 8.0 if index == 0 else 4.0,
+                "roughness_rms": 3.0 if index == 0 else 2.0,
+                "roughness_mean_absolute": 2.0 if index == 0 else 1.0,
+                "roughness_peak_to_valley": 10.0 if index == 0 else 7.0,
+                "run_directory": system,
                 "status": "OK",
             }
         )
@@ -80,10 +85,21 @@ def _fixture_rows():
                 "secondary_persistent": persistent,
                 "secondary_p_height": p_height,
                 "secondary_tilt": tilt,
+                "z_dipole_moment": -20.0 + index,
+                "z_dipole_potential_step_volts": -0.4 + 0.1 * index,
                 "packmol_seed": 202607242 + index,
                 "velocity_seed": 31415927 + index,
                 "run_directory": system,
                 "status": "OK",
+            }
+        )
+        interface.append(
+            {
+                "system": system,
+                "stage": "deposition",
+                "run_directory": system,
+                "cross_component_exchange_events": 20 + index,
+                "exchange_rate_per_site_per_ns": 1.2 + 0.3 * index,
             }
         )
         for component, sem in (("me-4pacz", 1.1), ("dcz-4p", 1.7)):
@@ -94,6 +110,7 @@ def _fixture_rows():
                     "stage": "hold-300K",
                     "name": component,
                     "bound_sem": sem,
+                    "run_directory": system,
                 }
             )
         for count, population in ((0, 20.0), (1, 65.0), (2, 15.0)):
@@ -105,6 +122,7 @@ def _fixture_rows():
                     "component": "dcz-4p",
                     "count": count,
                     "population": population,
+                    "run_directory": system,
                 }
             )
     return coverage, interface, components, terminals
@@ -122,6 +140,8 @@ def test_build_publication_rows_pairs_sequential_and_cosam():
     assert comparison[0]["delta_empty"] == pytest.approx(-5.0)
     assert comparison[0]["delta_secondary_bound"] == pytest.approx(-15.0)
     assert comparison[0]["delta_secondary_p_height"] == pytest.approx(-5.0)
+    assert comparison[0]["delta_roughness_rms"] == pytest.approx(-1.0)
+    assert comparison[0]["delta_deposition_exchange_rate"] == pytest.approx(0.3)
 
 
 def test_create_publication_workbook_has_draft_tables(tmp_path, monkeypatch):
@@ -162,10 +182,10 @@ def test_create_publication_workbook_has_draft_tables(tmp_path, monkeypatch):
     )
     assert "AllPublicationMetricsTable" in workbook["All Metrics"].tables
     assert workbook["Draft Summary"]["D2"].value == "71.00 ± 0.70"
-    assert workbook["Draft Summary"]["L2"].value == "20.00 / 65.00 / 15.00"
-    assert workbook["Draft Summary"]["M2"].value == "OK"
-    assert workbook["CoSAM vs Sequential"]["F2"].value == pytest.approx(5.0)
-    assert "single assembly seed" in workbook["Methods"]["B3"].value
+    assert workbook["Draft Summary"]["M2"].value == "20.00 / 65.00 / 15.00"
+    assert workbook["Draft Summary"]["P2"].value == "OK"
+    assert workbook["CoSAM vs Sequential"]["G2"].value == pytest.approx(5.0)
+    assert "available MD seed" in workbook["Methods"]["B3"].value
 
 
 def test_create_publication_workbook_adds_correlation_sheet_when_experimental_csv_given(
@@ -217,8 +237,51 @@ def test_create_publication_workbook_adds_correlation_sheet_when_experimental_cs
     rows = {row[1].value: row for row in sheet.iter_rows(min_row=2)}
     assert set(rows) == {"CoSAM", "Sequential"}
     assert rows["CoSAM"][0].value == "DCZ-4P"
-    assert rows["CoSAM"][12].value == "7.25 ± 0.35"
-    assert rows["CoSAM"][13].value == 2
-    assert rows["Sequential"][12].value == "9.75 ± 0.35"
-    assert len(sheet._charts) == 2
+    assert rows["CoSAM"][21].value == pytest.approx(7.25)
+    assert rows["CoSAM"][22].value == pytest.approx(0.0)
+    assert rows["CoSAM"][23].value == 1
+    assert rows["CoSAM"][24].value == 1
+    assert rows["CoSAM"][25].value == 2
+    assert rows["Sequential"][21].value == pytest.approx(9.75)
+    assert len(sheet._charts) == 3
     assert "Correlated rows" in {row[0].value for row in workbook["Methods"].iter_rows()}
+
+
+def test_build_correlation_rows_keeps_states_and_averages_md_seeds():
+    summary, _ = build_publication_rows(*_fixture_rows())
+    first = dict(summary[0])
+    replicate = dict(first)
+    replicate["run_directory"] = f"replicates/seed-02/{first['system_key']}"
+    replicate["coverage"] = first["coverage"] + 2.0
+    relaxed = dict(first)
+    relaxed["stage"] = "relax-300K"
+    relaxed["film_state"] = "Relaxed"
+    relaxed["coverage"] = first["coverage"] - 4.0
+    experimental = {
+        ("DCZ-4P", "CoSAM"): {
+            "n": 2,
+            "n_batches": 1,
+            "n_independent_units": 2,
+            "n_measurements": 4,
+            **{
+                field: {"mean": mean, "std": 0.1}
+                for field, mean in (
+                    ("voc_v", 1.2),
+                    ("jsc_ma_cm2", 18.0),
+                    ("ff_percent", 80.0),
+                    ("pce_percent", 17.0),
+                )
+            },
+        }
+    }
+
+    rows = build_correlation_rows(
+        [first, replicate, relaxed], experimental
+    )
+
+    assert {(row["film_state"], row["md_seed_count"]) for row in rows} == {
+        ("Compressed", 2),
+        ("Relaxed", 1),
+    }
+    compressed = next(row for row in rows if row["film_state"] == "Compressed")
+    assert compressed["coverage"] == pytest.approx(first["coverage"] + 1.0)
