@@ -33,7 +33,8 @@ systems=(
     me-4pacz-then-meo-4padbc
 )
 
-name="${systems[${SLURM_ARRAY_TASK_ID}]}"
+base_name="${systems[${SLURM_ARRAY_TASK_ID}]}"
+name="${base_name}${SYSTEM_SUFFIX:-}"
 prepared_root="${PREPARED_ROOT:-prepared}"
 output="${prepared_root}/${name}"
 
@@ -44,7 +45,7 @@ fi
 
 echo "REFRESHING DECOMPRESSION INPUTS: ${name} (array index ${SLURM_ARRAY_TASK_ID})"
 PYTHONPATH="${SLURM_SUBMIT_DIR}/src${PYTHONPATH:+:${PYTHONPATH}}" \
-    python -m nio_md_prep refresh-inputs "studies/${name}.toml" \
+    python -m nio_md_prep refresh-inputs "studies/${base_name}.toml" \
     --output "${output}"
 
 for required in decompress-300K.in decompress-400K.in; do
