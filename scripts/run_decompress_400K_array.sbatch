@@ -33,7 +33,8 @@ systems=(
     me-4pacz-then-meo-4padbc
 )
 
-name="${systems[${SLURM_ARRAY_TASK_ID}]}"
+base_name="${systems[${SLURM_ARRAY_TASK_ID}]}"
+name="${base_name}${SYSTEM_SUFFIX:-}"
 prepared_root="${PREPARED_ROOT:-prepared}"
 run_directory="${SLURM_SUBMIT_DIR}/${prepared_root}/${name}"
 
