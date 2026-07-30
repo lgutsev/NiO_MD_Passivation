@@ -463,6 +463,35 @@ final structures are named
 use the same labels. Existing `decompressed-*` and `relaxed-*` production
 files are never modified.
 
+### Full campaign inventory
+
+Generate one workbook covering every run under every `prepared*` tree:
+
+```bash
+python scripts/inventory_runs.py
+```
+
+The command writes `run_inventory.xlsx` in the repository root. It inventories
+actual structure, trajectory, restart, log, marker, and analysis-report files;
+it does not infer completion from a Slurm exit code alone. The workbook
+contains a campaign dashboard, one row per run, one row per stage, a
+prioritized action queue, analysis-report coverage, and a snapshot of the
+current user's Slurm jobs.
+
+A completed hold loop with a restart but no `held-300K.data` or
+`held-400K.data` is marked `FINALIZE_NEEDED`, while missing DCZ control inputs
+are marked `INPUT_MISSING`. This makes failed or skipped array elements
+visible without manually opening every directory.
+
+To scan selected trees or choose the output name:
+
+```bash
+python scripts/inventory_runs.py \
+  --prepared-root prepared \
+  --prepared-root prepared-rerun \
+  --output status.xlsx
+```
+
 ## Validation and safe input refresh
 
 `nio-md-prep` checks atom and topology counts, type remapping, charge,
