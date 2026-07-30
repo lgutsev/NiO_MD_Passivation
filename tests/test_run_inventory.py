@@ -100,3 +100,20 @@ def test_inventory_workbook_contains_auditable_sheets(tmp_path):
     assert workbook["Run Status"]["A2"].value == "prepared-lego"
     assert workbook["Stage Detail"].max_row > 10
     assert workbook["Action Queue"].max_row > 1
+
+
+def test_dcz_controls_are_not_expected_for_lego2(tmp_path):
+    repo = tmp_path
+    (repo / ".git").mkdir()
+    prepared = repo / "prepared-lego2"
+    run = prepared / "me-4pacz-then-dcz-4p-lego2-seeded"
+    write(run / "topology_output.lmp")
+    write(run / "deposition.in")
+    write(run / "deposited.data")
+
+    records = inventory.inventory_run(run, prepared, repo)
+    controls = [
+        record for record in records if record.stage.startswith("DCZ control")
+    ]
+    assert controls
+    assert {record.status for record in controls} == {"NOT_APPLICABLE"}
