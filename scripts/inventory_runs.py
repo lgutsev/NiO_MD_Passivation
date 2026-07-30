@@ -376,14 +376,27 @@ def inventory_run(
         )
         for spec in STAGES
     ]
-    is_dcz_sequential = "me-4pacz-then-dcz-4p" in directory.name
+    is_dcz_control_target = (
+        directory.parent.resolve() == prepared_root.resolve()
+        and (
+            (
+                prepared_root.name
+                in {"prepared", "prepared-rerun", "prepared-rerun2"}
+                and directory.name == "me-4pacz-then-dcz-4p"
+            )
+            or (
+                prepared_root.name == "prepared-lego"
+                and directory.name == "me-4pacz-then-dcz-4p-lego-seeded"
+            )
+        )
+    )
     records.extend(
         stage_record(
             directory,
             prepared_root,
             repo,
             spec,
-            is_dcz_sequential
+            is_dcz_control_target
             or (directory / str(spec.input_file)).exists()
             or (directory / spec.output).exists(),
         )
