@@ -159,7 +159,19 @@ def test_sequential_stage_preserves_existing_records(tmp_path,monkeypatch):
 def test_generated_stage_inputs_are_ordered_and_restartable(tmp_path):
     packed,_=packed_fixture(tmp_path)
     out=build(ROOT/"tests/data/small-study.toml",tmp_path/"ordered",packed_xyz=packed)
-    for name in ("deposition.in","hold-300K.in","hold-400K.in","decompress-300K.in","decompress-400K.in","equilibrate-300K.in","anneal-400K.in"):
+    for name in (
+        "deposition.in",
+        "hold-300K.in",
+        "hold-400K.in",
+        "decompress-300K.in",
+        "decompress-400K.in",
+        "decompress-control-nonsticky-300K.in",
+        "decompress-control-nowall-300K.in",
+        "decompress-control-nonsticky-400K.in",
+        "decompress-control-nowall-400K.in",
+        "equilibrate-300K.in",
+        "anneal-400K.in",
+    ):
         text=(out/name).read_text()
         positions=[text.index(x) for x in ("boundary p p f","units real","atom_style full","read_data ","include ")]
         assert positions==sorted(positions)
@@ -220,6 +232,26 @@ def test_generated_stage_inputs_are_ordered_and_restartable(tmp_path):
         assert "timestep 0.5\nrun 1000000" in text
         assert f"write_data relaxed-{suffix}.data nocoeff" in text
         assert text.index(f"write_data decompressed-{suffix}.data nocoeff") < text.index(f"write_data relaxed-{suffix}.data nocoeff")
+    for mode,temperature,source in (
+        ("nonsticky","300K","held-300K.data"),
+        ("nowall","300K","held-300K.data"),
+        ("nonsticky","400K","held-400K.data"),
+        ("nowall","400K","held-400K.data"),
+    ):
+        text=(out/f"decompress-control-{mode}-{temperature}.in").read_text()
+        assert f"read_data {source}" in text
+        assert "fix lo all wall/lj93 zlo EDGE" in text
+        assert "run 400000 start 0 stop 400000" in text
+        assert "run 1000000" in text
+        assert f"write_data decompressed-control-{mode}-{temperature}.data nocoeff" in text
+        assert f"write_data relaxed-control-{mode}-{temperature}.data nocoeff" in text
+        if mode=="nonsticky":
+            assert "variable nonsticky_cutoff equal 1.122462048309373" in text
+            assert text.count("fix hi all wall/lj126")==2
+            assert "${nonsticky_cutoff}" in text
+        else:
+            assert "fix hi all wall/" not in text
+            assert "variable reference_decompression_wall_hi equal" in text
     assert "read_data held-300K.data" in eq and "fix lo all wall/lj93 zlo EDGE" in eq
     assert "read_data equilibrated-300K.data" in anneal and "fix lo all wall/lj93 zlo EDGE" in anneal
     for text in (eq,anneal):

@@ -38,7 +38,7 @@ if ! python -c "import numpy, scipy, matplotlib, openpyxl" >/dev/null 2>&1; then
     exit 1
 fi
 
-prepared_root="${SLURM_SUBMIT_DIR}/prepared"
+prepared_root="${PREPARED_ROOT:-${SLURM_SUBMIT_DIR}/prepared}"
 if [[ ! -d "${prepared_root}" ]]; then
     echo "ERROR: ${prepared_root} does not exist." >&2
     exit 1
@@ -58,6 +58,7 @@ fi
 echo "Repository: ${SLURM_SUBMIT_DIR}"
 echo "Commit: $(git rev-parse --short HEAD)"
 echo "Python: $(python --version 2>&1)"
+echo "PREPARED_ROOT: ${prepared_root}"
 echo "LAST_FRAMES: ${last_frames} (0 means all frames)"
 echo "GRID_SPACING: ${grid_spacing} A"
 echo "BLOCKS: ${blocks}"
@@ -72,7 +73,7 @@ while IFS= read -r -d '' trajectory; do
     run_directory="$(dirname "${trajectory}")"
     trajectory_name="$(basename "${trajectory}")"
     stage="${trajectory_name%.lammpstrj}"
-    system_name="$(basename "${run_directory}")"
+    system_name="${run_directory#${prepared_root}/}"
     output_directory="${run_directory}/coverage-analysis-${stage}"
 
     echo
@@ -110,7 +111,7 @@ while IFS= read -r -d '' trajectory; do
         echo "FAILED: ${system_name}/${stage} after ${elapsed} seconds" >&2
     fi
 done < <(
-    find "${prepared_root}" -mindepth 2 -maxdepth 2 -type f \
+    find "${prepared_root}" -mindepth 2 -type f \
         \( -name 'hold-300K.lammpstrj' -o -name 'hold-400K.lammpstrj' \
            -o -name 'relax-300K.lammpstrj' -o -name 'relax-400K.lammpstrj' \) \
         -size +0c -print0 | sort -z

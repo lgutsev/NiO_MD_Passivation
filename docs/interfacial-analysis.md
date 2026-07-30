@@ -159,6 +159,30 @@ selected frames. The summary contains:
 These are trajectory-sampling measures. Block SEM and residence statistics
 from one trajectory are not substitutes for independent assembly seeds.
 
+### Site exchange during deposition
+
+The analyzer tracks the sole component occupying each canonical exposed-Ni
+site. A confirmed transition from one sole owner to a different sole owner
+counts as one cross-component exchange; intermediate empty or shared frames
+do not create extra events. The summary reports the event count, analyzed
+step/time span, and the normalized rate:
+
+```text
+exchange rate = events / exposed sites / analyzed ns
+```
+
+Use the complete deposition trajectory (`--last-frames 0`) for this
+descriptor. Comparing a truncated tail with a full deposition would change
+both the physical interval and the normalization basis.
+
+### Charge-weighted z dipole
+
+When the trajectory includes atomic charge `q`, each frame reports
+`Sum(q_i z_i)` and an idealized dipole-sheet potential-step proxy. The system
+is neutral, making the raw moment translation invariant. The potential step
+is a comparative descriptor under the fixed-charge model, not an absolute
+work-function prediction.
+
 ## Per-trajectory outputs
 
 The output directory contains:
@@ -178,6 +202,19 @@ Submit the single-CPU batch job from the repository root:
 
 ```bash
 sbatch scripts/analyze_interface_holds.sbatch
+```
+
+Analyze every complete `deposition.lammpstrj` and regenerate the workbooks:
+
+```bash
+sbatch scripts/analyze_interface_depositions.sbatch
+```
+
+To use another completed tree and add the private Salman JV results:
+
+```bash
+sbatch --export=ALL,PREPARED_ROOT="${PWD}/prepared-rerun",EXPERIMENTAL_CSV="/path/to/wbg_pscs_jv_results.csv" \
+    scripts/analyze_interface_depositions.sbatch
 ```
 
 It analyzes every available compressed `hold-300K/400K` and decompressed
@@ -208,11 +245,14 @@ The publication workbook contains:
 - `Draft Summary`: one compact row per system, temperature, and film state,
   joining projected coverage with anchor-resolved interface statistics and
   combining each reported mean with its block SEM for direct manuscript use;
-- `CoSAM vs Sequential`: matched comparisons for each secondary molecule,
-  temperature, and film state, with every delta defined as sequential minus
-  CoSAM;
+- `CoSAM vs Sequential`: matched comparisons for each replicate cohort,
+  secondary molecule, temperature, and film state, with every delta defined
+  as sequential minus CoSAM;
 - `All Metrics`: the complete numeric fields, random seeds, and source run
   directories behind the compact table;
+- `Structure-Property Correlation` when `--experimental` is supplied:
+  MD-seed means for every available film state joined to batch-aware
+  experimental means and sample SDs, with all sample counts retained;
 - `Methods`: concise metric definitions and the explicit limitation that
   block SEM is temporal sampling uncertainty within one trajectory, not
   independent-deposition-seed uncertainty.
@@ -246,7 +286,7 @@ sbatch --export=ALL,LAST_FRAMES=0,CONTACT_CUTOFF=3.25,RDF_RMAX=15.0 \
     scripts/analyze_interface_holds.sbatch
 ```
 
-The batch search is recursive, so trajectories under
+The batch searches are recursive, so trajectories under
 `prepared/replicates/seed-*/` enter the same workbook with their Packmol and
 LAMMPS velocity seeds recorded.
 

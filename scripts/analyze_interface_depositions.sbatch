@@ -5,8 +5,8 @@
 #SBATCH -c 1
 #SBATCH -t 24:00:00
 #SBATCH -A loni_perovsk27
-#SBATCH -J nio.interface
-#SBATCH -o nio.interface.%j.out
+#SBATCH -J nio.dep.analysis
+#SBATCH -o nio.dep.analysis.%j.out
 
 set -euo pipefail
 
@@ -40,10 +40,11 @@ if [[ ! -d "${prepared_root}" ]]; then
     exit 1
 fi
 
-# Submission-time overrides:
-# sbatch --export=ALL,LAST_FRAMES=0,CONTACT_CUTOFF=3.25 \
-#   scripts/analyze_interface_holds.sbatch
-last_frames="${LAST_FRAMES:-100}"
+# Full deposition trajectories are required for a comparable exchange rate.
+# Submission-time example:
+# sbatch --export=ALL,PREPARED_ROOT="${PWD}/prepared-rerun",EXPERIMENTAL_CSV="/path/to/wbg_pscs_jv_results.csv" \
+#   scripts/analyze_interface_depositions.sbatch
+last_frames="${LAST_FRAMES:-0}"
 blocks="${BLOCKS:-5}"
 contact_cutoff="${CONTACT_CUTOFF:-3.25}"
 sensitivity_cutoffs="${SENSITIVITY_CUTOFFS:-3.0,3.25,3.5}"
@@ -63,10 +64,6 @@ echo "PREPARED_ROOT: ${prepared_root}"
 echo "LAST_FRAMES: ${last_frames} (0 means all frames)"
 echo "BLOCKS: ${blocks}"
 echo "CONTACT_CUTOFF: ${contact_cutoff} A"
-echo "SENSITIVITY_CUTOFFS: ${sensitivity_cutoffs} A"
-echo "SURFACE_COORDINATION_CUTOFF: ${surface_coordination_cutoff} A"
-echo "PERSISTENCE_THRESHOLD: ${persistence_threshold}"
-echo "RDF_RMAX: ${rdf_rmax} A"
 
 found=0
 completed=0
@@ -76,13 +73,11 @@ total_seconds=0
 while IFS= read -r -d '' trajectory; do
     found=$((found + 1))
     run_directory="$(dirname "${trajectory}")"
-    trajectory_name="$(basename "${trajectory}")"
-    stage="${trajectory_name%.lammpstrj}"
     system_name="${run_directory#${prepared_root}/}"
-    output_directory="${run_directory}/interface-analysis-${stage}"
+    output_directory="${run_directory}/interface-analysis-deposition"
 
     echo
-    echo "ANALYZING: ${system_name}/${trajectory_name}"
+    echo "ANALYZING: ${system_name}/deposition.lammpstrj"
     echo "OUTPUT: ${output_directory}"
 
     if [[ ! -s "${run_directory}/topology_output.lmp" ]]; then
@@ -90,7 +85,6 @@ while IFS= read -r -d '' trajectory; do
         failed=$((failed + 1))
         continue
     fi
-
     if [[ ! -s "${run_directory}/assembly_manifest.json" ]]; then
         echo "ERROR: ${run_directory}/assembly_manifest.json is missing." >&2
         failed=$((failed + 1))
@@ -99,7 +93,7 @@ while IFS= read -r -d '' trajectory; do
 
     SECONDS=0
     if nio-md-prep analyze-interface "${run_directory}" \
-        --trajectory "${trajectory_name}" \
+        --trajectory deposition.lammpstrj \
         --output "${output_directory}" \
         --last-frames "${last_frames}" \
         --blocks "${blocks}" \
@@ -112,38 +106,35 @@ while IFS= read -r -d '' trajectory; do
         elapsed="${SECONDS}"
         total_seconds=$((total_seconds + elapsed))
         completed=$((completed + 1))
-        echo "COMPLETED: ${system_name}/${stage} in ${elapsed} seconds"
+        echo "COMPLETED: ${system_name} in ${elapsed} seconds"
     else
         elapsed="${SECONDS}"
         total_seconds=$((total_seconds + elapsed))
         failed=$((failed + 1))
-        echo "FAILED: ${system_name}/${stage} after ${elapsed} seconds" >&2
+        echo "FAILED: ${system_name} after ${elapsed} seconds" >&2
     fi
 done < <(
     find "${prepared_root}" -mindepth 2 -type f \
-        \( -name 'hold-300K.lammpstrj' -o -name 'hold-400K.lammpstrj' \
-           -o -name 'relax-300K.lammpstrj' -o -name 'relax-400K.lammpstrj' \) \
-        -size +0c -print0 | sort -z
+        -name 'deposition.lammpstrj' -size +0c -print0 | sort -z
 )
 
 if (( found == 0 )); then
-    echo "ERROR: no non-empty compressed-hold or relaxed-hold trajectories were found." >&2
+    echo "ERROR: no non-empty deposition trajectories were found." >&2
     exit 1
 fi
 
-workbook="${prepared_root}/interface_structure_summary.xlsx"
+interface_workbook="${prepared_root}/interface_structure_summary.xlsx"
 echo
-echo "Creating consolidated workbook: ${workbook}"
-if nio-md-prep summarize-interface "${prepared_root}" --output "${workbook}"; then
-    echo "WORKBOOK: ${workbook}"
+echo "Creating consolidated workbook: ${interface_workbook}"
+if nio-md-prep summarize-interface "${prepared_root}" \
+    --output "${interface_workbook}"; then
+    echo "WORKBOOK: ${interface_workbook}"
 else
     failed=$((failed + 1))
     echo "FAILED: consolidated interfacial workbook" >&2
 fi
 
 publication_workbook="${prepared_root}/publication_summary.xlsx"
-echo
-echo "Creating publication-ready workbook: ${publication_workbook}"
 publication_args=()
 if [[ -n "${EXPERIMENTAL_CSV:-}" ]]; then
     if [[ ! -s "${EXPERIMENTAL_CSV}" ]]; then
@@ -153,17 +144,19 @@ if [[ -n "${EXPERIMENTAL_CSV:-}" ]]; then
         publication_args+=(--experimental "${EXPERIMENTAL_CSV}")
     fi
 fi
+echo
+echo "Creating publication-ready workbook: ${publication_workbook}"
 if nio-md-prep summarize-publication "${prepared_root}" \
     --output "${publication_workbook}" "${publication_args[@]}"; then
     echo "PUBLICATION WORKBOOK: ${publication_workbook}"
 else
     failed=$((failed + 1))
     echo "FAILED: publication-ready workbook" >&2
-    echo "Run scripts/analyze_coverage_holds.sbatch first so both analyses are available." >&2
+    echo "Run the hold coverage and interface analyses first." >&2
 fi
 
 echo
-echo "Interfacial-analysis batch finished."
+echo "Deposition interfacial-analysis batch finished."
 echo "Found: ${found}"
 echo "Completed: ${completed}"
 echo "Failed: ${failed}"

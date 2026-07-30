@@ -1262,6 +1262,26 @@ def analyze_interfacial_structure(
         if timestep_fs is not None
         else None
     )
+    analyzed_step_span = (
+        int(analyzed_steps[-1] - analyzed_steps[0])
+        if len(analyzed_steps) > 1
+        else 0
+    )
+    analyzed_time_ps = (
+        analyzed_step_span * timestep_fs / 1000.0
+        if timestep_fs is not None
+        else None
+    )
+    exchange_event_count = sum(exchange_pair_counts.values())
+    exchange_rate_per_site_per_ns = (
+        exchange_event_count
+        / len(topology.surface_site_ids)
+        / (analyzed_time_ps / 1000.0)
+        if analyzed_time_ps is not None
+        and analyzed_time_ps > 0.0
+        and topology.surface_site_ids
+        else None
+    )
     component_summaries = {}
     for component in topology.components:
         molecules = molecules_by_component[component.key]
@@ -1409,8 +1429,17 @@ def analyze_interfacial_structure(
                 "already-settled compressed hold, where genuine exchange "
                 "should be rare."
             ),
-            "cross_component_exchange_event_count": sum(
-                exchange_pair_counts.values()
+            "cross_component_exchange_event_count": exchange_event_count,
+            "analyzed_step_span": analyzed_step_span,
+            "analyzed_time_ps": analyzed_time_ps,
+            "exchange_rate_per_site_per_ns": (
+                exchange_rate_per_site_per_ns
+            ),
+            "rate_normalization": (
+                "cross-component exchange events divided by the fixed "
+                "canonical exposed-Ni site count and analyzed trajectory "
+                "duration in ns; available only when --timestep-fs is set "
+                "and at least two distinct timesteps are analyzed"
             ),
             "exchange_events_by_component_pair": dict(
                 sorted(exchange_pair_counts.items())
