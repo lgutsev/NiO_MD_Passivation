@@ -270,6 +270,9 @@ def test_anchor_orientation_terminal_rdf_and_density_outputs(tmp_path):
     assert summary["z_dipole"]["available"] is False
     assert summary["z_dipole"]["moment_e_angstrom"] is None
     assert summary["site_competition"]["cross_component_exchange_event_count"] == 0
+    assert summary["site_competition"]["analyzed_step_span"] == 1000
+    assert summary["site_competition"]["analyzed_time_ps"] == pytest.approx(0.5)
+    assert summary["site_competition"]["exchange_rate_per_site_per_ns"] == 0.0
     with (output / "interface_timeseries.csv").open() as handle:
         rows = list(csv.DictReader(handle))
     assert "site_competition_cumulative_exchange_events" in rows[0]
@@ -358,6 +361,14 @@ def test_separate_workbook_contains_normalized_sheets(tmp_path):
     relax_summary = json.loads(relax_summary_path.read_text())
     relax_summary["trajectory"] = str(build / "relax-300K.lammpstrj")
     relax_summary_path.write_text(json.dumps(relax_summary), encoding="utf-8")
+    deposition_output = build / "interface-analysis-deposition"
+    shutil.copytree(hold_output, deposition_output)
+    deposition_summary_path = deposition_output / "interface_summary.json"
+    deposition_summary = json.loads(deposition_summary_path.read_text())
+    deposition_summary["trajectory"] = str(build / "deposition.lammpstrj")
+    deposition_summary_path.write_text(
+        json.dumps(deposition_summary), encoding="utf-8"
+    )
     output = build.parent / "interface_structure_summary.xlsx"
     assert create_interfacial_workbook(build.parent, output) == output
 
@@ -374,8 +385,11 @@ def test_separate_workbook_contains_normalized_sheets(tmp_path):
     ]
     assert [cell.value for cell in workbook["Results"][1]] == RESULT_HEADERS
     assert [cell.value for cell in workbook["Components"][1]] == COMPONENT_HEADERS
-    assert workbook["Results"]["P2"].value == pytest.approx(100.0)
-    assert workbook["Results"]["AF2"].value == "OK"
+    assert workbook["Results"]["R2"].value == pytest.approx(100.0)
+    assert workbook["Results"]["AH2"].value == "OK"
+    assert {
+        row[3].value for row in workbook["Results"].iter_rows(min_row=2)
+    } == {"hold-300K", "relax-300K", "deposition"}
     assert "InterfaceResultsTable" in workbook["Results"].tables
     assert "InterfaceComponentsTable" in workbook["Components"].tables
     assert "CutoffSensitivityTable" in workbook["Cutoff Sensitivity"].tables

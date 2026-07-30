@@ -19,6 +19,12 @@ RESULT_HEADERS = [
     "Frame SD (%)",
     "Uncovered (%)",
     "Component Overlap (%)",
+    "Void Patch Count",
+    "Largest Void Patch (% of cell)",
+    "Mean Void Patch (% of cell)",
+    "Roughness RMS (Å)",
+    "Roughness Mean Absolute (Å)",
+    "Roughness Peak-to-Valley (Å)",
     "Primary Component",
     "Primary Coverage (%)",
     "Secondary Component",
@@ -31,6 +37,7 @@ RESULT_HEADERS = [
     "Status",
     "Trajectory",
     "Summary JSON",
+    "Run Directory",
 ]
 
 COMPONENT_HEADERS = [
@@ -89,8 +96,16 @@ def collect_coverage_results(prepared_root: Path) -> tuple[list[dict], list[dict
     """Collect one result row per completed hold and normalized component rows."""
     prepared_root = Path(prepared_root)
     paths = sorted(
-        set(prepared_root.glob("*/coverage-analysis-hold-*/coverage_summary.json"))
-        | set(prepared_root.glob("*/coverage-analysis-relax-*/coverage_summary.json"))
+        set(
+            prepared_root.rglob(
+                "coverage-analysis-hold-*/coverage_summary.json"
+            )
+        )
+        | set(
+            prepared_root.rglob(
+                "coverage-analysis-relax-*/coverage_summary.json"
+            )
+        )
     )
     if not paths:
         raise FileNotFoundError(
@@ -102,14 +117,16 @@ def collect_coverage_results(prepared_root: Path) -> tuple[list[dict], list[dict
     component_rows: list[dict] = []
     for summary_path in paths:
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
-        system = summary_path.parents[1].name
+        run_directory_path = summary_path.parents[1]
+        system = run_directory_path.name
+        run_directory = str(run_directory_path.relative_to(prepared_root))
         stage = summary_path.parent.name.removeprefix("coverage-analysis-")
         trajectory = str(summary.get("trajectory", ""))
         temperature = _temperature(stage, trajectory)
         run = (
-            f"{system} | {temperature} K"
+            f"{run_directory} | {temperature} K"
             if temperature is not None
-            else f"{system} | {stage}"
+            else f"{run_directory} | {stage}"
         )
 
         components = []
@@ -186,6 +203,21 @@ def collect_coverage_results(prepared_root: Path) -> tuple[list[dict], list[dict
                     .get("void_mean_patch_percent", {})
                     .get("mean_percent")
                 ),
+                "roughness_rms": (
+                    summary.get("metrics", {})
+                    .get("roughness_rms", {})
+                    .get("mean_angstrom")
+                ),
+                "roughness_mean_absolute": (
+                    summary.get("metrics", {})
+                    .get("roughness_mean_absolute", {})
+                    .get("mean_angstrom")
+                ),
+                "roughness_peak_to_valley": (
+                    summary.get("metrics", {})
+                    .get("roughness_peak_to_valley", {})
+                    .get("mean_angstrom")
+                ),
                 "grid": float(summary["grid_target_spacing_angstrom"]),
                 "radius_scale": float(summary["radius_scale"]),
                 "hydrogen_included": not bool(summary["exclude_hydrogen"]),
@@ -195,6 +227,7 @@ def collect_coverage_results(prepared_root: Path) -> tuple[list[dict], list[dict
                 "trajectory": trajectory,
                 "summary_path": relative_summary,
                 "method": str(summary["method"]),
+                "run_directory": run_directory,
             }
         )
         for component in components:
@@ -293,6 +326,12 @@ def create_coverage_workbook(prepared_root: Path, output: Path) -> Path:
             row["std"],
             row["uncovered"],
             row["overlap"],
+            row["void_patch_count"],
+            row["void_largest_patch"],
+            row["void_mean_patch"],
+            row["roughness_rms"],
+            row["roughness_mean_absolute"],
+            row["roughness_peak_to_valley"],
             row["primary_name"],
             row["primary_mean"],
             row["secondary_name"],
@@ -305,6 +344,7 @@ def create_coverage_workbook(prepared_root: Path, output: Path) -> Path:
             row["status"],
             row["trajectory"],
             row["summary_path"],
+            row["run_directory"],
         ]
         for row in results
     ]
@@ -316,16 +356,31 @@ def create_coverage_workbook(prepared_root: Path, output: Path) -> Path:
         api,
     )
 
-    for column in ("F", "G", "H", "I", "J", "L", "N", "R", "S"):
+    for column in (
+        "F",
+        "G",
+        "H",
+        "I",
+        "J",
+        "L",
+        "M",
+        "N",
+        "O",
+        "P",
+        "R",
+        "T",
+        "U",
+        "V",
+        "X",
+        "Y",
+    ):
         for cell in results_sheet[column][1:]:
             cell.number_format = "0.00"
-    for cell in results_sheet["C"][1:]:
-        cell.number_format = "0"
+    for column in ("C", "K"):
+        for cell in results_sheet[column][1:]:
+            cell.number_format = "0"
     for cell in results_sheet["E"][1:]:
         cell.number_format = "#,##0"
-    for column in ("O", "P"):
-        for cell in results_sheet[column][1:]:
-            cell.number_format = "0.00"
     widths = {
         "A": 42,
         "B": 34,
@@ -337,18 +392,25 @@ def create_coverage_workbook(prepared_root: Path, output: Path) -> Path:
         "H": 14,
         "I": 15,
         "J": 21,
-        "K": 24,
-        "L": 20,
+        "K": 17,
+        "L": 24,
         "M": 24,
-        "N": 22,
-        "O": 17,
-        "P": 14,
-        "Q": 18,
-        "R": 16,
-        "S": 15,
-        "T": 11,
-        "U": 48,
-        "V": 48,
+        "N": 20,
+        "O": 27,
+        "P": 28,
+        "Q": 24,
+        "R": 20,
+        "S": 24,
+        "T": 22,
+        "U": 17,
+        "V": 14,
+        "W": 18,
+        "X": 16,
+        "Y": 15,
+        "Z": 11,
+        "AA": 48,
+        "AB": 48,
+        "AC": 42,
     }
     for column, width in widths.items():
         results_sheet.column_dimensions[column].width = width
@@ -368,17 +430,17 @@ def create_coverage_workbook(prepared_root: Path, output: Path) -> Path:
             ),
         )
         results_sheet.conditional_formatting.add(
-            f"T2:T{last_result_row}",
+            f"Z2:Z{last_result_row}",
             FormulaRule(
-                formula=["$T2=\"OK\""],
+                formula=["$Z2=\"OK\""],
                 fill=PatternFill("solid", fgColor="C6EFCE"),
                 font=Font(color="006100"),
             ),
         )
         results_sheet.conditional_formatting.add(
-            f"T2:T{last_result_row}",
+            f"Z2:Z{last_result_row}",
             FormulaRule(
-                formula=["$T2=\"CHECK\""],
+                formula=["$Z2=\"CHECK\""],
                 fill=PatternFill("solid", fgColor="FFC7CE"),
                 font=Font(color="9C0006"),
             ),
@@ -444,6 +506,8 @@ def create_coverage_workbook(prepared_root: Path, output: Path) -> Path:
     methods_sheet.append(["Workbook purpose", "Consolidated projected coverage results from completed 300 K and 400 K hold analyses"])
     methods_sheet.append(["Coverage definition", "Periodic union of projected elemental van der Waals disks divided by instantaneous x/y cell area"])
     methods_sheet.append(["Uncertainty", "Block SEM from the requested trajectory blocks; frame SD is also retained"])
+    methods_sheet.append(["Void patches", "Periodic four-connected uncovered regions on the projected-coverage grid; largest and mean areas are percentages of the full x/y cell"])
+    methods_sheet.append(["Roughness", "Top-of-film max-z height map over all atoms; RMS, mean-absolute, and peak-to-valley values are experimental morphology proxies"])
     methods_sheet.append(["QC Balance", "Total coverage + uncovered coverage - 100%; expected to be approximately zero"])
     methods_sheet.append(["QC Union", "For one or two components: total - sum(component coverage) + overlap; expected to be approximately zero"])
     methods_sheet.append(["Source root", str(Path(prepared_root).resolve())])

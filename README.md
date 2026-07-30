@@ -432,6 +432,37 @@ alongside the original compressed `hold-*.lammpstrj` trajectories, allowing
 the wall-constrained and relaxed morphologies to be compared in the same
 workbook.
 
+### DCZ-4P upper-wall controls
+
+DCZ-4P can form a cohesive aggregate that follows the attractive portion of
+the ordinary 12-6 upper wall during retraction. Two isolated controls test the
+wall contribution without replacing any production result:
+
+- `nonsticky` retains the same wall trajectory but truncates the 12-6
+  potential at `2^(1/6) sigma`, making it WCA-like and purely repulsive;
+- `nowall` removes the upper wall immediately while retaining the lower recoil
+  wall and the same 200 ps plus 500 ps observation windows.
+
+The controls are prepared for sequential DCZ-4P in `prepared`,
+`prepared-rerun`, `prepared-rerun2`, and the original LEGO1
+`prepared-lego/...-lego-seeded` tree:
+
+```bash
+sbatch scripts/build_dcz_decompression_controls.sbatch
+```
+
+After the four preparation tasks succeed, submit all 300/400 K controls:
+
+```bash
+sbatch scripts/run_dcz_decompression_controls_array.sbatch
+```
+
+The 16-task runner covers four roots, two temperatures, and two modes. Its
+final structures are named
+`relaxed-control-{nonsticky,nowall}-{300K,400K}.data`; trajectories and logs
+use the same labels. Existing `decompressed-*` and `relaxed-*` production
+files are never modified.
+
 ## Validation and safe input refresh
 
 `nio-md-prep` checks atom and topology counts, type remapping, charge,
@@ -638,6 +669,17 @@ Analyze every available compressed and relaxed 300/400 K trajectory on the
 sbatch scripts/analyze_interface_holds.sbatch
 ```
 
+Analyze the complete original deposition trajectories separately to measure
+normalized cross-component site-exchange kinetics:
+
+```bash
+sbatch scripts/analyze_interface_depositions.sbatch
+```
+
+Both analysis launchers accept `PREPARED_ROOT`. Set `EXPERIMENTAL_CSV` on
+either interfacial launcher to regenerate the publication workbook with the
+private JV-data correlation sheet.
+
 The workbook is written to:
 
 ```text
@@ -663,17 +705,28 @@ whose NiO coordinates have already evolved during stage 1.
 `nio-md-prep summarize-publication` accepts an optional `--experimental
 PATH` pointing at a CSV of measured device results (columns: `secondary`,
 `assembly`, `voc_v`, `jsc_ma_cm2`, `ff_percent`, `pce_percent`, plus optional
-`batch`/`scan_direction` provenance columns). When supplied, it adds a
-`Structure-Property Correlation` sheet to `publication_summary.xlsx` joining
-projected coverage, bound fraction, tilt, unbound-anchor density, and void
-patch metrics (all at the 300 K compressed hold) against the pooled mean ±
-sample SD of the experimental values for each secondary molecule and
-CoSAM/Sequential assembly, plus two scatter plots against PCE.
+`batch`/`device_id`/`scan_direction` provenance columns). When supplied, it
+adds a `Structure-Property Correlation` sheet joining coverage, roughness,
+bound fraction, persistence, tilt, unbound-anchor density, void topology,
+dipole-potential, and deposition-exchange metrics for every available
+300/400 K compressed/relaxed state against the experimental results.
+Forward/reverse scans are collapsed within a device, devices are averaged
+within each batch, and batch means receive equal weight. The sheet retains MD
+seed count plus experimental batch, independent-unit, and raw-measurement
+counts, and its scatter plots point to numeric PCE cells.
+
+If a batch contains scans from more than one device, supply `device_id`.
+Without it, scan-direction rows in the same condition and batch are
+conservatively interpreted as one forward/reverse device pair.
 
 ```bash
 nio-md-prep summarize-publication prepared --output prepared/publication_summary.xlsx \
     --experimental /path/to/device_results.csv
 ```
+
+The experimental 100 °C anneal is intentionally not hard-mapped to the
+artificially compressed 300 K simulation hold; the workbook leaves all MD
+states visible for transparent comparison.
 
 **Keep unpublished device data out of this repository.** Point
 `--experimental` at a CSV stored somewhere private (outside the repo

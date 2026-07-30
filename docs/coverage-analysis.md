@@ -95,9 +95,9 @@ single-CPU job from the repository root:
 sbatch scripts/analyze_coverage_holds.sbatch
 ```
 
-The job searches every immediate subdirectory of `prepared/` for non-empty
-`hold-300K.lammpstrj` and `hold-400K.lammpstrj` files and processes them
-sequentially. Results are kept separate:
+The job recursively searches `PREPARED_ROOT` (default `prepared/`) for
+non-empty compressed `hold-300K/400K` and relaxed `relax-300K/400K`
+trajectories and processes them sequentially. Results are kept separate:
 
 ```text
 prepared/SYSTEM/coverage-analysis-hold-300K/
@@ -110,12 +110,13 @@ After processing the trajectories, the job also writes a consolidated workbook:
 prepared/coverage_summary.xlsx
 ```
 
-Its `Results` sheet contains one row per system and hold temperature, including
-total coverage, uncertainty, uncovered area, component overlap, and the primary
-and secondary component coverages. The `Components` sheet provides one
-normalized row per SAM component, and `Methods` records the coverage definition
-and quality-control checks. A bar chart on `Results` gives a quick comparison
-across all completed holds.
+Its `Results` sheet contains one row per run and state, including total
+coverage, uncertainty, uncovered area, component overlap, periodic void-patch
+topology, molecular-surface roughness, and primary/secondary component
+coverages. `Run Directory` preserves independent-seed provenance. The
+`Components` sheet provides one normalized row per SAM component, and
+`Methods` records the definitions and quality-control checks. A bar chart on
+`Results` gives a quick comparison across all completed states.
 
 By default, the final 100 frames of each trajectory are analyzed. To analyze
 all frames:
@@ -128,6 +129,13 @@ The grid and statistical block count can also be overridden:
 
 ```bash
 sbatch --export=ALL,GRID_SPACING=0.10,BLOCKS=5 \
+  scripts/analyze_coverage_holds.sbatch
+```
+
+Analyze an independent replicate tree without moving it:
+
+```bash
+sbatch --export=ALL,PREPARED_ROOT="${PWD}/prepared/replicates/seed-02" \
   scripts/analyze_coverage_holds.sbatch
 ```
 

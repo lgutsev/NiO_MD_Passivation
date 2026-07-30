@@ -786,20 +786,105 @@ run {relaxed_hold_steps}
 write_data relaxed-{suffix}.data nocoeff
 write_restart relaxed-{suffix}.restart
 """
+    def decompression_control(
+        source: str,
+        temperature: float,
+        suffix: str,
+        lower_wall_coordinate: str,
+        mode: str,
+    ) -> str:
+        if mode not in {"nonsticky", "nowall"}:
+            raise ValueError(f"unsupported decompression control mode: {mode}")
+        label=f"control-{mode}-{suffix}"
+        reference_wall=f"""variable compressed_wall_hi equal {compressed_zend}
+variable reference_decompression_wall_hi equal "v_compressed_wall_hi + (v_resolved_wall_hi-v_compressed_wall_hi)*(step/{decompression_steps}.0)"
+"""
+        if mode=="nonsticky":
+            wall_setup="""variable nonsticky_cutoff equal 1.122462048309373
+fix hi all wall/lj126 zhi v_reference_decompression_wall_hi ${epsilon} ${sigma} ${nonsticky_cutoff} units box
+fix_modify hi energy yes
+"""
+            wall_release="unfix hi\n"
+            relaxed_wall="""variable relaxed_wall_hi equal ${resolved_wall_hi}
+fix hi all wall/lj126 zhi ${relaxed_wall_hi} ${epsilon} ${sigma} ${nonsticky_cutoff} units box
+fix_modify hi energy yes
+"""
+            description=(
+                "WCA-truncated purely repulsive upper-wall retraction"
+            )
+        else:
+            wall_setup=""
+            wall_release=""
+            relaxed_wall=""
+            description=(
+                "instantaneous upper-wall removal control; the lower recoil "
+                "wall remains active"
+            )
+        return f"""# DCZ-4P {suffix} {description}
+{init(source)}{resolution(source)}reset_timestep 0
+{reference_wall}thermo_style custom step temp pe ke etotal press pxx pyy lx ly lz v_reference_decompression_wall_hi fnorm fmax
+fix lo all wall/lj93 zlo {lower_wall_coordinate} ${{epsilon}} ${{sigma}} ${{cutoff}} units box
+fix_modify lo energy yes
+{wall_setup}fix release all npt temp {temperature} {temperature} 100.0 x ${{pressure}} ${{pressure}} ${{pressureDamp}} y ${{pressure}} ${{pressure}} ${{pressureDamp}} couple xy
+dump trajectory all custom 2000 decompress-{label}.lammpstrj id mol type q x y z
+dump_modify trajectory sort id
+restart 100000 decompress-{label}.restart.1 decompress-{label}.restart.2
+timestep {decompression_timestep}
+run {decompression_steps} start 0 stop {decompression_steps}
+unfix release
+{wall_release}undump trajectory
+write_data decompressed-{label}.data nocoeff
+write_restart decompressed-{label}.restart
+{relaxed_wall}thermo_style custom step temp pe ke etotal press pxx pyy lx ly lz fnorm fmax
+fix relax all npt temp {temperature} {temperature} 100.0 x ${{pressure}} ${{pressure}} ${{pressureDamp}} y ${{pressure}} ${{pressure}} ${{pressureDamp}} couple xy
+dump trajectory all custom 2000 relax-{label}.lammpstrj id mol type q x y z
+dump_modify trajectory sort id
+restart 200000 relax-{label}.restart.1 relax-{label}.restart.2
+timestep {relaxed_hold_timestep}
+run {relaxed_hold_steps}
+write_data relaxed-{label}.data nocoeff
+write_restart relaxed-{label}.restart
+"""
     decompress_300=decompression("held-300K.data",temp,"300K",lower_300)
     decompress_400=decompression("held-400K.data",400.0,"400K",lower_400)
+    decompression_controls={
+        ("nonsticky","300K"):decompression_control(
+            "held-300K.data",temp,"300K",lower_300,"nonsticky"
+        ),
+        ("nowall","300K"):decompression_control(
+            "held-300K.data",temp,"300K",lower_300,"nowall"
+        ),
+        ("nonsticky","400K"):decompression_control(
+            "held-400K.data",400.0,"400K",lower_400,"nonsticky"
+        ),
+        ("nowall","400K"):decompression_control(
+            "held-400K.data",400.0,"400K",lower_400,"nowall"
+        ),
+    }
     eq=f"# Cao 300 K continuation: run only after hold-300K.in\n{init('held-300K.data')}{resolution('held-300K.data')}fix lo all wall/lj93 zlo {lower_300} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix hi all wall/lj93 zhi ${{resolved_wall_hi}} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix ensemble all npt temp {temp} {temp} 100.0 x ${{pressure}} ${{pressure}} ${{pressureDamp}} y ${{pressure}} ${{pressure}} ${{pressureDamp}} couple xy\ndump trajectory all custom 10000 equilibration-300K.lammpstrj id mol type q x y z\ndump_modify trajectory sort id\nrestart 500000 equilibration-300K.restart.1 equilibration-300K.restart.2\nrun 5000000\nwrite_data equilibrated-300K.data nocoeff\nwrite_restart equilibrated-300K.restart\n"
     anneal=f"# Cao 400 K continuation: run only after equilibrate-300K.in\n{init('equilibrated-300K.data')}{resolution('equilibrated-300K.data')}fix lo all wall/lj93 zlo {lower_400} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix hi all wall/lj93 zhi ${{resolved_wall_hi}} ${{epsilon}} ${{sigma}} ${{cutoff}} units box\nfix ensemble all npt temp 400.0 400.0 100.0 x ${{pressure}} ${{pressure}} ${{pressureDamp}} y ${{pressure}} ${{pressure}} ${{pressureDamp}} couple xy\ndump trajectory all custom 10000 anneal-400K.lammpstrj id mol type q x y z\ndump_modify trajectory sort id\nrestart 500000 anneal-400K.restart.1 anneal-400K.restart.2\nrun 3000000\nwrite_data annealed-400K.data nocoeff\nwrite_restart annealed-400K.restart\n"
     (output/"hold-300K.in").write_text(hold,encoding="utf-8")
     (output/"hold-400K.in").write_text(hold_400,encoding="utf-8")
     (output/"decompress-300K.in").write_text(decompress_300,encoding="utf-8")
     (output/"decompress-400K.in").write_text(decompress_400,encoding="utf-8")
+    for (mode,suffix),source in decompression_controls.items():
+        (output/f"decompress-control-{mode}-{suffix}.in").write_text(
+            source,
+            encoding="utf-8",
+        )
     (output/"equilibrate-300K.in").write_text(eq,encoding="utf-8")
     (output/"anneal-400K.in").write_text(anneal,encoding="utf-8")
     stages=[("deposition",text)]
     if continuation:
         stages.append(("continue-deposition",continuation))
     stages.extend((("hold-300K",hold),("hold-400K",hold_400),("decompress-300K",decompress_300),("decompress-400K",decompress_400),("equilibrate-300K",eq),("anneal-400K",anneal)))
+    stages.extend(
+        (
+            f"decompress-control-{mode}-{suffix}",
+            source,
+        )
+        for (mode,suffix),source in decompression_controls.items()
+    )
     for name,source in stages:
         check=re.sub(r"(?m)^run\s+.*$","run 0",source)
         check=re.sub(r"(?m)^minimize\s+.*$","run 0 post no # minimization replaced by force evaluation for smoke validation",check)

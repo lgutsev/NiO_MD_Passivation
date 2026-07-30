@@ -157,6 +157,23 @@ sbatch --array=0-2 scripts/build_lego_systems.sbatch
 Use the same `--array=0-2`, `PREPARED_ROOT=prepared-lego`, and
 `SYSTEM_SUFFIX=-lego-seeded` arguments for each later sequential runner.
 
+## DCZ-4P upper-wall controls
+
+If the DCZ-4P aggregate follows the retracting upper wall, prepare two
+decompression controls from each completed compressed hold:
+
+```bash
+sbatch scripts/build_dcz_decompression_controls.sbatch
+sbatch scripts/run_dcz_decompression_controls_array.sbatch
+```
+
+The first control uses the ordinary 12-6 wall truncated at
+`2^(1/6) sigma`, which removes its attractive branch while retaining hard
+short-range repulsion. The second removes the upper wall immediately. Both
+retain the lower recoil wall, use the same observation times as ordinary
+decompression, write control-specific filenames, and include the original
+LEGO1 DCZ-4P system plus the three regular sequential prepared trees.
+
 ## Parameter overrides
 
 The builder accepts environment overrides without changing the study TOML:
