@@ -8,8 +8,8 @@ import pytest
 
 from nio_md_prep.analysis.coverage import load_type_elements
 from nio_md_prep.analysis.interfacial import (
+    SiteExchangeTracker,
     _canonical_exposed_ni_sites,
-    _update_site_exchange_tracking,
     _z_dipole_moment,
     analyze_interfacial_structure,
 )
@@ -55,42 +55,91 @@ def test_z_dipole_moment_is_translation_invariant_for_neutral_charge():
     assert _z_dipole_moment(np, charges, z + 100.0) == pytest.approx(moment)
 
 
-def test_update_site_exchange_tracking_counts_only_confirmed_handoffs():
-    last_distinct_owner = [None]
-    exchange_pair_counts: dict[str, int] = {}
+def test_site_exchange_tracker_counts_only_confirmed_handoffs():
+    tracker = SiteExchangeTracker(1)
 
     def step(owners):
-        _update_site_exchange_tracking(
-            [owners], last_distinct_owner, exchange_pair_counts
-        )
+        tracker.update([owners])
 
     # frame0: site owned solely by "me-4pacz"
     step({"me-4pacz"})
-    assert exchange_pair_counts == {}
+    assert tracker.exchange_pair_counts == {}
     # frame1: still "me-4pacz" -- no exchange
     step({"me-4pacz"})
-    assert exchange_pair_counts == {}
+    assert tracker.exchange_pair_counts == {}
     # frame2: briefly empty -- a pass-through, not an exchange by itself
     step(set())
-    assert exchange_pair_counts == {}
+    assert tracker.exchange_pair_counts == {}
     # frame3: momentarily shared by both -- still not a confirmed handoff
     step({"me-4pacz", "dcz-4p"})
-    assert exchange_pair_counts == {}
+    assert tracker.exchange_pair_counts == {}
     # frame4: now solely "dcz-4p" -- this is a confirmed hand-off from me-4pacz
     step({"dcz-4p"})
-    assert exchange_pair_counts == {"me-4pacz->dcz-4p": 1}
+    assert tracker.exchange_pair_counts == {"me-4pacz->dcz-4p": 1}
     # frame5: back to "me-4pacz" -- a second, reverse hand-off
     step({"me-4pacz"})
-    assert exchange_pair_counts == {
+    assert tracker.exchange_pair_counts == {
         "me-4pacz->dcz-4p": 1,
         "dcz-4p->me-4pacz": 1,
     }
     # frame6: repeated identical ownership -- no additional event
     step({"me-4pacz"})
-    assert exchange_pair_counts == {
+    assert tracker.exchange_pair_counts == {
         "me-4pacz->dcz-4p": 1,
         "dcz-4p->me-4pacz": 1,
     }
+
+
+def test_site_exchange_tracker_forgets_owner_after_vacancy_gap_exceeded():
+    # Dossier acceptance test "Exchange vacancy gap": primary -> long vacancy
+    # -> secondary must NOT count as a direct exchange once the gap exceeds
+    # max_vacancy_gap_frames.
+    tracker = SiteExchangeTracker(1, max_vacancy_gap_frames=2)
+    tracker.update([{"me-4pacz"}])
+    assert tracker.last_distinct_owner == ["me-4pacz"]
+    tracker.update([set()])
+    tracker.update([set()])
+    assert tracker.last_distinct_owner == ["me-4pacz"]
+    tracker.update([set()])
+    assert tracker.last_distinct_owner == [None]
+    tracker.update([{"dcz-4p"}])
+    assert tracker.exchange_pair_counts == {}
+
+
+def test_site_exchange_tracker_short_bridge_within_gap_still_counts():
+    # Dossier acceptance test "Exchange short bridge": a brief vacancy well
+    # inside the configured gap still confirms the hand-off.
+    tracker = SiteExchangeTracker(1, max_vacancy_gap_frames=3)
+    tracker.update([{"me-4pacz"}])
+    tracker.update([set()])
+    tracker.update([{"dcz-4p"}])
+    assert tracker.exchange_pair_counts == {"me-4pacz->dcz-4p": 1}
+
+
+def test_site_exchange_tracker_requires_min_dwell_frames_to_confirm_handoff():
+    tracker = SiteExchangeTracker(1, min_dwell_frames=2)
+    tracker.update([{"me-4pacz"}])
+    tracker.update([{"me-4pacz"}])
+    assert tracker.exchange_pair_counts == {}
+    assert tracker.last_distinct_owner == ["me-4pacz"]
+
+    # single-frame flicker to dcz-4p and back -- dwell not met, no event
+    tracker.update([{"dcz-4p"}])
+    tracker.update([{"me-4pacz"}])
+    assert tracker.exchange_pair_counts == {}
+
+    # sustained hand-off across two consecutive frames -- confirmed
+    tracker.update([{"dcz-4p"}])
+    tracker.update([{"dcz-4p"}])
+    assert tracker.exchange_pair_counts == {"me-4pacz->dcz-4p": 1}
+
+
+def test_site_exchange_tracker_tracks_ever_contacted_and_contested_sites():
+    tracker = SiteExchangeTracker(2)
+    tracker.update([{"me-4pacz"}, set()])
+    tracker.update([{"dcz-4p"}, set()])
+    assert tracker.ever_contacted == {0}
+    assert tracker.contested_site_count == 1
 
 
 def test_canonical_surface_sites_do_not_change_with_thermal_coordinates():

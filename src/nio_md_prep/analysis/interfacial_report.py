@@ -50,6 +50,10 @@ RESULT_HEADERS = [
     "Run Directory",
     "Packmol Seed",
     "Velocity Seed",
+    "Ever-Contacted Sites",
+    "Contested Sites",
+    "Exchange Rate (per ever-contacted site, /ns)",
+    "Exchange Rate (per contested site, /ns)",
 ]
 
 COMPONENT_HEADERS = [
@@ -303,6 +307,24 @@ def collect_interfacial_results(
             "exchange_rate_per_site_per_ns": summary.get(
                 "site_competition", {}
             ).get("exchange_rate_per_site_per_ns"),
+            "ever_contacted_site_count": summary.get(
+                "site_competition", {}
+            ).get("ever_contacted_site_count"),
+            "contested_site_count": summary.get(
+                "site_competition", {}
+            ).get("contested_site_count"),
+            "exchange_rate_per_ever_contacted_site_per_ns": summary.get(
+                "site_competition", {}
+            ).get("exchange_rate_per_ever_contacted_site_per_ns"),
+            "exchange_rate_per_contested_site_per_ns": summary.get(
+                "site_competition", {}
+            ).get("exchange_rate_per_contested_site_per_ns"),
+            # Internal-only fields (not surfaced as workbook columns): used by
+            # publication_report.py's comparability gate.
+            "first_step": summary.get("provenance", {}).get("first_step"),
+            "last_step": summary.get("provenance", {}).get("last_step"),
+            "stride": summary.get("provenance", {}).get("stride"),
+            "git_commit": summary.get("provenance", {}).get("git_commit"),
             "z_dipole_moment": (
                 summary.get("z_dipole", {})
                 .get("moment_e_angstrom", {})
@@ -653,6 +675,10 @@ def create_interfacial_workbook(prepared_root: Path, output: Path) -> Path:
             row["run_directory"],
             row["packmol_seed"],
             row["velocity_seed"],
+            row["ever_contacted_site_count"],
+            row["contested_site_count"],
+            row["exchange_rate_per_ever_contacted_site_per_ns"],
+            row["exchange_rate_per_contested_site_per_ns"],
         ]
         for row in results
     ]
@@ -687,11 +713,13 @@ def create_interfacial_workbook(prepared_root: Path, output: Path) -> Path:
         31,
         32,
         33,
+        42,
+        43,
     ):
         column = results_sheet.cell(1, column_index).column_letter
         for cell in results_sheet[column][1:]:
             cell.number_format = "0.00"
-    for column_index in (3, 5, 8, 11, 38, 39):
+    for column_index in (3, 5, 8, 11, 38, 39, 40, 41):
         column = results_sheet.cell(1, column_index).column_letter
         for cell in results_sheet[column][1:]:
             cell.number_format = "#,##0"
@@ -736,6 +764,10 @@ def create_interfacial_workbook(prepared_root: Path, output: Path) -> Path:
             44,
             17,
             17,
+            20,
+            18,
+            30,
+            30,
         ],
         1,
     ):
@@ -1030,7 +1062,7 @@ def create_interfacial_workbook(prepared_root: Path, output: Path) -> Path:
         ],
         [
             "Site competition",
-            "Cross-component hand-offs of a canonical exposed-Ni site. The normalized rate is events per site per ns over the analyzed time span and is intended primarily for complete deposition trajectories.",
+            "Confirmed cross-component hand-offs of a canonical exposed-Ni site: a candidate owner must hold sole occupancy for --exchange-min-dwell-frames consecutive analyzed frames, and a site's remembered prior owner is forgotten after more than --exchange-max-vacancy-gap-frames consecutive empty/shared frames (so a long vacancy does not silently bridge two unrelated occupants). Three rate denominators are reported: per fixed canonical site, per site ever confirmed-occupied in this window, and per site confirmed-occupied by 2+ distinct components (\"contested\"). Intended primarily for complete deposition trajectories.",
         ],
         [
             "Z dipole",

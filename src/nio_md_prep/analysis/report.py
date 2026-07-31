@@ -38,6 +38,8 @@ RESULT_HEADERS = [
     "Trajectory",
     "Summary JSON",
     "Run Directory",
+    "Near-Surface Coverage (%)",
+    "Anchor-Conditioned Coverage (%)",
 ]
 
 COMPONENT_HEADERS = [
@@ -218,6 +220,23 @@ def collect_coverage_results(prepared_root: Path) -> tuple[list[dict], list[dict
                     .get("roughness_peak_to_valley", {})
                     .get("mean_angstrom")
                 ),
+                "near_surface": (
+                    summary.get("metrics", {})
+                    .get("near_surface", {})
+                    .get("mean_percent")
+                ),
+                "anchor_conditioned": (
+                    summary.get("metrics", {})
+                    .get("anchor_conditioned", {})
+                    .get("mean_percent")
+                ),
+                # Internal-only fields (not surfaced as workbook columns): used
+                # by publication_report.py's comparability gate to detect a
+                # coverage/interface pair analyzed over mismatched windows.
+                "first_step": summary.get("provenance", {}).get("first_step"),
+                "last_step": summary.get("provenance", {}).get("last_step"),
+                "stride": summary.get("provenance", {}).get("stride"),
+                "git_commit": summary.get("provenance", {}).get("git_commit"),
                 "grid": float(summary["grid_target_spacing_angstrom"]),
                 "radius_scale": float(summary["radius_scale"]),
                 "hydrogen_included": not bool(summary["exclude_hydrogen"]),
@@ -345,6 +364,8 @@ def create_coverage_workbook(prepared_root: Path, output: Path) -> Path:
             row["trajectory"],
             row["summary_path"],
             row["run_directory"],
+            row["near_surface"],
+            row["anchor_conditioned"],
         ]
         for row in results
     ]
@@ -373,6 +394,8 @@ def create_coverage_workbook(prepared_root: Path, output: Path) -> Path:
         "V",
         "X",
         "Y",
+        "AD",
+        "AE",
     ):
         for cell in results_sheet[column][1:]:
             cell.number_format = "0.00"
@@ -411,6 +434,8 @@ def create_coverage_workbook(prepared_root: Path, output: Path) -> Path:
         "AA": 48,
         "AB": 48,
         "AC": 42,
+        "AD": 24,
+        "AE": 30,
     }
     for column, width in widths.items():
         results_sheet.column_dimensions[column].width = width
@@ -504,7 +529,9 @@ def create_coverage_workbook(prepared_root: Path, output: Path) -> Path:
     methods_sheet.sheet_view.showGridLines = False
     methods_sheet.append(["Field", "Value"])
     methods_sheet.append(["Workbook purpose", "Consolidated projected coverage results from completed 300 K and 400 K hold analyses"])
-    methods_sheet.append(["Coverage definition", "Periodic union of projected elemental van der Waals disks divided by instantaneous x/y cell area"])
+    methods_sheet.append(["Coverage definition", "Total/Uncovered/Component Overlap are a z-UNRESTRICTED canopy metric: periodic union of projected elemental van der Waals disks divided by instantaneous x/y cell area, regardless of how far above the surface an atom sits. A ligand clump that has lifted off and drifted upward with a retracting wall still reads as covered here -- see Near-Surface/Anchor-Conditioned Coverage for a height-gated alternative."])
+    methods_sheet.append(["Near-Surface Coverage (%)", "Same projected-union method restricted to ligand atoms within --near-surface-height (default 5 Å) of the local substrate-only height reference; an atom-level gate."])
+    methods_sheet.append(["Anchor-Conditioned Coverage (%)", "Projected union of the FULL footprint of every ligand molecule that has at least one phosphorus atom within the same near-surface height gate; a molecule-level gate, so a bound molecule's whole footprint counts even if part of it extends above the height cutoff."])
     methods_sheet.append(["Uncertainty", "Block SEM from the requested trajectory blocks; frame SD is also retained"])
     methods_sheet.append(["Void patches", "Periodic four-connected uncovered regions on the projected-coverage grid; largest and mean areas are percentages of the full x/y cell"])
     methods_sheet.append(["Roughness", "Top-of-film max-z height map over all atoms; RMS, mean-absolute, and peak-to-valley values are experimental morphology proxies"])

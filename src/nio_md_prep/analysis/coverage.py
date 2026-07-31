@@ -8,14 +8,22 @@ to report total and per-component coverage.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 import csv
 import gzip
+import hashlib
 import json
 import math
 import re
+import subprocess
 
+from .. import __version__
+from ..config import ROOT
+
+
+SCHEMA_VERSION = "2"
 
 ATOMIC_MASSES = {
     "H": 1.008,
@@ -580,6 +588,103 @@ def _resolve_trajectory(build_directory: Path, trajectory: Path | None) -> Path:
     )
 
 
+def _git_commit() -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+    return result.stdout.strip()
+
+
+def _file_hash(path: Path | None) -> str | None:
+    if path is None or not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def provenance_fields(
+    *,
+    trajectory_path: Path,
+    topology_path: Path | None = None,
+    manifest_path: Path | None = None,
+    first_step: int | None,
+    last_step: int | None,
+    first_frame_index: int | None,
+    last_frame_index: int | None,
+    stride: int,
+    blocks: int,
+) -> dict[str, Any]:
+    """Best-effort run identity so downstream joins can detect mismatched windows.
+
+    Every field is best-effort: a missing git binary, an untracked repo, or an
+    unreadable topology/manifest file yields ``None`` for that field rather
+    than failing the analysis.
+    """
+    trajectory_stat = trajectory_path.stat()
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "git_commit": _git_commit(),
+        "analyzer_name": "nio-md-prep",
+        "analyzer_version": __version__,
+        "generation_timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "trajectory_size_bytes": trajectory_stat.st_size,
+        "trajectory_mtime_utc": datetime.fromtimestamp(
+            trajectory_stat.st_mtime, tz=timezone.utc
+        ).isoformat(),
+        "topology_sha256": _file_hash(topology_path),
+        "manifest_sha256": _file_hash(manifest_path),
+        "first_frame_index": first_frame_index,
+        "last_frame_index": last_frame_index,
+        "first_step": first_step,
+        "last_step": last_step,
+        "stride": stride,
+        "requested_blocks": blocks,
+    }
+
+
+def _height_above_reference(np, x, y, z, bounds, shape, reference_height_map):
+    """Height of each atom above a periodic reference height map.
+
+    Grid cells with no reference-map coverage fall back to the map's global
+    maximum finite height rather than 0, so a sparsely sampled substrate
+    reference does not spuriously read as "at height zero".
+    """
+    ny, nx = shape
+    xlo, xhi = bounds[0]
+    ylo, yhi = bounds[1]
+    lx, ly = xhi - xlo, yhi - ylo
+    wrapped_x = np.mod(x - xlo, lx)
+    wrapped_y = np.mod(y - ylo, ly)
+    ix = np.floor(wrapped_x / lx * nx).astype(np.int64) % nx
+    iy = np.floor(wrapped_y / ly * ny).astype(np.int64) % ny
+    finite = np.isfinite(reference_height_map)
+    fallback = float(reference_height_map[finite].max()) if finite.any() else 0.0
+    filled = np.where(finite, reference_height_map, fallback)
+    return z - filled[iy, ix]
+
+
+def _anchor_qualifying_molecule_ids(
+    np, molecule_ids, atom_types, type_elements, height_above_reference, near_surface_height
+):
+    """Molecule IDs with >=1 phosphorus atom within the near-surface height gate."""
+    is_phosphorus = np.asarray(
+        [type_elements.get(int(atom_type)) == "P" for atom_type in atom_types],
+        dtype=bool,
+    )
+    qualifying = is_phosphorus & (height_above_reference <= near_surface_height)
+    return np.unique(molecule_ids[qualifying])
+
+
 def analyze_coverage(
     build_directory: Path,
     trajectory: Path | None = None,
@@ -588,6 +693,7 @@ def analyze_coverage(
     grid_spacing: float = 0.20,
     radius_scale: float = 1.0,
     roughness_grid_spacing: float = 2.0,
+    near_surface_height: float = 5.0,
     last_frames: int | None = 100,
     stride: int = 1,
     blocks: int = 5,
@@ -603,6 +709,8 @@ def analyze_coverage(
         raise ValueError("radius_scale must be positive")
     if roughness_grid_spacing <= 0:
         raise ValueError("roughness_grid_spacing must be positive")
+    if near_surface_height <= 0:
+        raise ValueError("near_surface_height must be positive")
     if stride <= 0:
         raise ValueError("stride must be positive")
     if blocks <= 0:
@@ -700,6 +808,63 @@ def analyze_coverage(
         total_mask = occupancy_count > 0
         overlap_mask = occupancy_count > 1
         probability_sum += total_mask
+
+        substrate_mask = ~positive
+        substrate_height_map = _periodic_height_map(
+            np,
+            frame.x[substrate_mask],
+            frame.y[substrate_mask],
+            frame.z[substrate_mask],
+            frame.bounds,
+            shape,
+        )
+        height_above_substrate = _height_above_reference(
+            np, frame.x, frame.y, frame.z, frame.bounds, shape, substrate_height_map
+        )
+        hydrogen_mask = np.asarray(
+            [type_elements.get(int(atom_type)) == "H" for atom_type in frame.atom_types],
+            dtype=bool,
+        )
+
+        near_surface_selected = mapped & (height_above_substrate <= near_surface_height)
+        if exclude_hydrogen:
+            near_surface_selected &= ~hydrogen_mask
+        near_surface_types = frame.atom_types[near_surface_selected]
+        near_surface_radii = np.asarray(
+            [type_radii[int(atom_type)] for atom_type in near_surface_types],
+            dtype=float,
+        )
+        near_surface_mask = rasterize_periodic(
+            frame.x[near_surface_selected],
+            frame.y[near_surface_selected],
+            near_surface_radii,
+            frame.bounds,
+            shape,
+        )
+
+        qualifying_molecule_ids = _anchor_qualifying_molecule_ids(
+            np,
+            frame.molecule_ids,
+            frame.atom_types,
+            type_elements,
+            height_above_substrate,
+            near_surface_height,
+        )
+        anchor_selected = mapped & np.isin(frame.molecule_ids, qualifying_molecule_ids)
+        if exclude_hydrogen:
+            anchor_selected &= ~hydrogen_mask
+        anchor_types = frame.atom_types[anchor_selected]
+        anchor_radii = np.asarray(
+            [type_radii[int(atom_type)] for atom_type in anchor_types],
+            dtype=float,
+        )
+        anchor_conditioned_mask = rasterize_periodic(
+            frame.x[anchor_selected],
+            frame.y[anchor_selected],
+            anchor_radii,
+            frame.bounds,
+            shape,
+        )
         patch_sizes = _periodic_patch_sizes(np, label, ~total_mask)
         total_cells = total_mask.size
         height_map = _periodic_height_map(
@@ -726,6 +891,10 @@ def analyze_coverage(
             "roughness_rms_angstrom": roughness["rms_angstrom"],
             "roughness_mean_absolute_angstrom": roughness["mean_absolute_angstrom"],
             "roughness_peak_to_valley_angstrom": roughness["peak_to_valley_angstrom"],
+            "coverage_near_surface_percent": float(near_surface_mask.mean() * 100.0),
+            "coverage_anchor_conditioned_percent": float(
+                anchor_conditioned_mask.mean() * 100.0
+            ),
         }
         for component, mask in zip(components, component_masks):
             row[f"coverage_{component.key}_percent"] = float(mask.mean() * 100.0)
@@ -793,6 +962,12 @@ def analyze_coverage(
             blocks,
             suffix="_angstrom",
         ),
+        "near_surface": _block_statistics(
+            np, [row["coverage_near_surface_percent"] for row in rows], blocks
+        ),
+        "anchor_conditioned": _block_statistics(
+            np, [row["coverage_anchor_conditioned_percent"] for row in rows], blocks
+        ),
     }
     component_metrics = {
         component.name: {
@@ -837,6 +1012,16 @@ def analyze_coverage(
         "exclude_hydrogen": exclude_hydrogen,
         "vdw_radii_angstrom": VDW_RADII_ANGSTROM,
         "requested_blocks": blocks,
+        "near_surface_height_angstrom": near_surface_height,
+        "near_surface_reference": (
+            "coverage_total_percent/coverage_uncovered_percent/coverage_overlap_percent "
+            "are a z-unrestricted canopy metric (any ligand atom anywhere above the cell "
+            "counts as covered). near_surface restricts to ligand atoms within "
+            "near_surface_height_angstrom of the local substrate-only height reference; "
+            "anchor_conditioned includes the FULL footprint of any ligand molecule with "
+            "at least one phosphorus atom within that same height gate. Both address the "
+            "case where a lifted-off or drifting clump still reads as canopy coverage."
+        ),
         "metrics": metrics,
         "components": component_metrics,
         "outputs": [
@@ -845,6 +1030,17 @@ def analyze_coverage(
             "height_map.npz",
             *plot_files,
         ],
+        "provenance": provenance_fields(
+            trajectory_path=trajectory_path,
+            topology_path=topology_path,
+            manifest_path=build_directory / "assembly_manifest.json",
+            first_step=rows[0]["step"] if rows else None,
+            last_step=rows[-1]["step"] if rows else None,
+            first_frame_index=analyzed_indices[0] if analyzed_indices else None,
+            last_frame_index=analyzed_indices[-1] if analyzed_indices else None,
+            stride=stride,
+            blocks=blocks,
+        ),
     }
     summary_path = output / "coverage_summary.json"
     summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")

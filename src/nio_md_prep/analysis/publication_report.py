@@ -73,6 +73,7 @@ ALL_METRICS_HEADERS = [
     "Velocity Seed",
     "QC Status",
     "Run Directory",
+    "Comparability Note",
 ]
 
 # Public name retained for callers that imported the original constant.
@@ -225,6 +226,55 @@ def _mean_sem(mean: float | None, sem: float | None) -> str | None:
     return f"{mean:.2f} ± {sem:.2f}"
 
 
+def _comparability_note(
+    coverage: dict[str, Any], interface: dict[str, Any]
+) -> str | None:
+    """Explain why a coverage/interface pair should not be joined, or None if OK.
+
+    Both analyzers can run against the same nominal system/temperature/stage
+    with different --last-frames/--stride choices (or even different
+    trajectories). Coverage and interface metrics computed over mismatched
+    windows are not directly comparable, so this gate catches that before the
+    numbers land in a "Δ Seq-CoSAM" column.
+    """
+    coverage_frames = coverage.get("frames")
+    interface_frames = interface.get("frames")
+    if (
+        coverage_frames is not None
+        and interface_frames is not None
+        and coverage_frames != interface_frames
+    ):
+        return (
+            f"frame window mismatch: coverage {coverage_frames} frames "
+            f"(step {coverage.get('first_step')}-{coverage.get('last_step')}) "
+            f"vs interface {interface_frames} frames "
+            f"(step {interface.get('first_step')}-{interface.get('last_step')})"
+        )
+    coverage_stride = coverage.get("stride")
+    interface_stride = interface.get("stride")
+    if (
+        coverage_stride is not None
+        and interface_stride is not None
+        and coverage_stride != interface_stride
+    ):
+        return (
+            f"stride mismatch: coverage stride {coverage_stride} "
+            f"vs interface stride {interface_stride}"
+        )
+    coverage_first = coverage.get("first_step")
+    coverage_last = coverage.get("last_step")
+    interface_first = interface.get("first_step")
+    interface_last = interface.get("last_step")
+    if None not in (coverage_first, coverage_last, interface_first, interface_last) and (
+        coverage_first != interface_first or coverage_last != interface_last
+    ):
+        return (
+            f"step-range mismatch: coverage step {coverage_first}-{coverage_last} "
+            f"vs interface step {interface_first}-{interface_last}"
+        )
+    return None
+
+
 def _terminal_populations(row: dict[str, Any]) -> str | None:
     populations = (row["dcz_0"], row["dcz_1"], row["dcz_2"])
     if all(value is None for value in populations):
@@ -325,10 +375,17 @@ def build_publication_rows(
                 if terminal is not None:
                     terminal_populations[count] = terminal["population"]
 
+        comparability_note = (
+            _comparability_note(coverage, interface)
+            if coverage is not None and interface is not None
+            else None
+        )
         if coverage is None:
             status = "MISSING COVERAGE"
         elif interface is None:
             status = "MISSING INTERFACE"
+        elif comparability_note is not None:
+            status = "INCOMPARABLE"
         elif coverage["status"] != "OK" or interface["status"] != "OK":
             status = "CHECK"
         else:
@@ -448,6 +505,7 @@ def build_publication_rows(
                     interface.get("velocity_seed") if interface else None
                 ),
                 "status": status,
+                "comparability_note": comparability_note,
                 "run_directory": (
                     run_directory
                 ),
@@ -484,6 +542,11 @@ def build_publication_rows(
             continue
         cosam = pair["CoSAM"]
         sequential = pair["Sequential"]
+        # An INCOMPARABLE side means its own metrics were computed over a
+        # mismatched coverage/interface window; excluded outright rather
+        # than risk a Seq-CoSAM delta built on non-comparable numbers.
+        if "INCOMPARABLE" in (cosam["status"], sequential["status"]):
+            continue
         status = (
             "OK"
             if cosam["status"] == "OK" and sequential["status"] == "OK"
@@ -866,6 +929,7 @@ def create_publication_workbook(
             row["velocity_seed"],
             row["status"],
             row["run_directory"],
+            row["comparability_note"],
         ]
         for row in summary_rows
     ]
@@ -896,7 +960,7 @@ def create_publication_workbook(
     all_metrics_widths = [
         32, 24, 19, 20, 15, 16, 22, 21, 18, 24, 26, 20, 18, 26, 26, 20,
         27, 28, 23, 23, 25, 25, 33, 23, 24, 30, 25, 26, 30, 27, 22, 20,
-        22, 22, 22, 17, 17, 18, 34,
+        22, 22, 22, 17, 17, 18, 34, 60,
     ]
     for index, width in enumerate(all_metrics_widths, 1):
         all_metrics_sheet.column_dimensions[
@@ -1150,6 +1214,10 @@ def create_publication_workbook(
         [
             "CoSAM vs Sequential deltas",
             "Every delta is Sequential minus CoSAM at matched replicate cohort, secondary molecule, temperature, and compressed/relaxed film state.",
+        ],
+        [
+            "Comparability gate",
+            "A row's coverage and interface analyses were not necessarily run with the same --last-frames/--stride/trajectory. Status is INCOMPARABLE (with a Comparability Note on the All Metrics sheet explaining why) whenever the two sides' analyzed frame counts, step ranges, or strides disagree. INCOMPARABLE rows are excluded outright from the CoSAM vs Sequential delta table rather than risk a delta built on non-comparable numbers; they remain visible on Draft Summary/All Metrics so the underlying per-side numbers are not hidden.",
         ],
         [
             "Projected coverage",

@@ -25,6 +25,7 @@ from .coverage import (
     iter_dump_frames,
     load_components,
     load_type_elements,
+    provenance_fields,
     _resolve_trajectory,
 )
 
@@ -74,29 +75,82 @@ def _z_dipole_moment(np, charges, z) -> float:
     return float(np.sum(charges * z))
 
 
-def _update_site_exchange_tracking(
-    site_components: list[set[str]],
-    last_distinct_owner: list[str | None],
-    exchange_pair_counts: dict[str, int],
-) -> None:
-    """Record cross-component hand-offs of exposed-Ni sites for one frame.
+class SiteExchangeTracker:
+    """Dwell/gap state machine for cross-component exposed-Ni site hand-offs.
 
-    A site with zero or 2+ simultaneous owners this frame is a pass-through
-    (neither confirms nor ends a prior tenant's occupancy). An exchange is
-    counted only when a site's sole owner is a different component than the
-    last distinct sole owner recorded for that site.
+    A site with zero or 2+ simultaneous owners in a frame is a pass-through
+    (neither confirms nor ends a prior tenant's occupancy) by itself, but a
+    long run of such frames should eventually forget who held the site --
+    otherwise ``primary -> long vacancy -> secondary`` reads as one direct
+    exchange with no time limit. Two knobs control this:
+
+    - ``min_dwell_frames``: a candidate owner must be the site's sole owner
+      for this many consecutive confirmed frames before a hand-off counts
+      (default 1: single-frame confirmation, matching prior behavior).
+    - ``max_vacancy_gap_frames``: once a site has gone unowned or shared for
+      more than this many consecutive frames, its remembered prior owner is
+      forgotten, so a later re-occupation starts fresh rather than counting
+      as an exchange against a stale owner (default 3).
     """
-    for site_index, owners in enumerate(site_components):
-        current_owner = next(iter(owners)) if len(owners) == 1 else None
-        if current_owner is None:
-            continue
-        previous_owner = last_distinct_owner[site_index]
-        if previous_owner is not None and previous_owner != current_owner:
-            pair_key = f"{previous_owner}->{current_owner}"
-            exchange_pair_counts[pair_key] = (
-                exchange_pair_counts.get(pair_key, 0) + 1
-            )
-        last_distinct_owner[site_index] = current_owner
+
+    def __init__(
+        self,
+        site_count: int,
+        *,
+        min_dwell_frames: int = 1,
+        max_vacancy_gap_frames: int = 3,
+    ) -> None:
+        if min_dwell_frames < 1:
+            raise ValueError("min_dwell_frames must be >= 1")
+        if max_vacancy_gap_frames < 0:
+            raise ValueError("max_vacancy_gap_frames must be >= 0")
+        self.min_dwell_frames = min_dwell_frames
+        self.max_vacancy_gap_frames = max_vacancy_gap_frames
+        self.last_distinct_owner: list[str | None] = [None] * site_count
+        self._candidate_owner: list[str | None] = [None] * site_count
+        self._candidate_streak: list[int] = [0] * site_count
+        self._vacancy_streak: list[int] = [0] * site_count
+        self.exchange_pair_counts: dict[str, int] = {}
+        self.ever_contacted: set[int] = set()
+        self._distinct_owners_seen: list[set[str]] = [
+            set() for _ in range(site_count)
+        ]
+
+    def update(self, site_components: list[set[str]]) -> None:
+        """Record one frame's site ownership."""
+        for site_index, owners in enumerate(site_components):
+            current_owner = next(iter(owners)) if len(owners) == 1 else None
+            if current_owner is None:
+                self._candidate_owner[site_index] = None
+                self._candidate_streak[site_index] = 0
+                self._vacancy_streak[site_index] += 1
+                if self._vacancy_streak[site_index] > self.max_vacancy_gap_frames:
+                    self.last_distinct_owner[site_index] = None
+                continue
+            self._vacancy_streak[site_index] = 0
+            self.ever_contacted.add(site_index)
+            self._distinct_owners_seen[site_index].add(current_owner)
+            if self._candidate_owner[site_index] == current_owner:
+                self._candidate_streak[site_index] += 1
+            else:
+                self._candidate_owner[site_index] = current_owner
+                self._candidate_streak[site_index] = 1
+            if self._candidate_streak[site_index] < self.min_dwell_frames:
+                continue
+            previous_owner = self.last_distinct_owner[site_index]
+            if previous_owner is not None and previous_owner != current_owner:
+                pair_key = f"{previous_owner}->{current_owner}"
+                self.exchange_pair_counts[pair_key] = (
+                    self.exchange_pair_counts.get(pair_key, 0) + 1
+                )
+            self.last_distinct_owner[site_index] = current_owner
+
+    @property
+    def contested_site_count(self) -> int:
+        """Sites that have had confirmed sole ownership by >=2 distinct components."""
+        return sum(
+            1 for owners in self._distinct_owners_seen if len(owners) >= 2
+        )
 
 
 def _dependencies() -> tuple[Any, Any, Any]:
@@ -689,6 +743,8 @@ def analyze_interfacial_structure(
     rdf_bin_width: float = 0.25,
     rdf_rmax: float = 20.0,
     timestep_fs: float | None = None,
+    exchange_min_dwell_frames: int = 1,
+    exchange_max_vacancy_gap_frames: int = 3,
 ) -> Path:
     """Analyze interfacial structure and return ``interface_summary.json``."""
     np, _, _ = _dependencies()
@@ -709,6 +765,10 @@ def analyze_interfacial_structure(
         raise ValueError("RDF bin width and maximum must be positive")
     if timestep_fs is not None and timestep_fs <= 0:
         raise ValueError("timestep_fs must be positive")
+    if exchange_min_dwell_frames < 1:
+        raise ValueError("exchange_min_dwell_frames must be >= 1")
+    if exchange_max_vacancy_gap_frames < 0:
+        raise ValueError("exchange_max_vacancy_gap_frames must be >= 0")
 
     trajectory_path = _resolve_trajectory(build_directory, trajectory)
     topology = load_interfacial_topology(
@@ -841,10 +901,11 @@ def analyze_interfacial_structure(
     dipole_moment_series: list[float] = []
     dipole_density_series: list[float] = []
     potential_step_series: list[float] = []
-    last_distinct_owner: list[str | None] = [
-        None for _ in topology.surface_site_ids
-    ]
-    exchange_pair_counts: dict[str, int] = {}
+    exchange_tracker = SiteExchangeTracker(
+        len(topology.surface_site_ids),
+        min_dwell_frames=exchange_min_dwell_frames,
+        max_vacancy_gap_frames=exchange_max_vacancy_gap_frames,
+    )
     for frame in _selected_frames(trajectory_path, first_index, stride):
         lookup = _index_by_atom_id(np, frame)
         (
@@ -1156,11 +1217,9 @@ def analyze_interfacial_structure(
             site_series[f"{component.key}_only_percent"].append(value)
             row[f"site_{component.key}_only_percent"] = value
 
-        _update_site_exchange_tracking(
-            site_components, last_distinct_owner, exchange_pair_counts
-        )
+        exchange_tracker.update(site_components)
         row["site_competition_cumulative_exchange_events"] = sum(
-            exchange_pair_counts.values()
+            exchange_tracker.exchange_pair_counts.values()
         )
 
         shell_areas = math.pi * (rdf_edges[1:] ** 2 - rdf_edges[:-1] ** 2)
@@ -1272,16 +1331,23 @@ def analyze_interfacial_structure(
         if timestep_fs is not None
         else None
     )
-    exchange_event_count = sum(exchange_pair_counts.values())
-    exchange_rate_per_site_per_ns = (
-        exchange_event_count
-        / len(topology.surface_site_ids)
-        / (analyzed_time_ps / 1000.0)
-        if analyzed_time_ps is not None
-        and analyzed_time_ps > 0.0
-        and topology.surface_site_ids
+    exchange_event_count = sum(exchange_tracker.exchange_pair_counts.values())
+    ever_contacted_site_count = len(exchange_tracker.ever_contacted)
+    contested_site_count = exchange_tracker.contested_site_count
+    analyzed_ns = (
+        analyzed_time_ps / 1000.0
+        if analyzed_time_ps is not None and analyzed_time_ps > 0.0
         else None
     )
+
+    def _rate(denominator: int | None) -> float | None:
+        if analyzed_ns is None or not denominator:
+            return None
+        return exchange_event_count / denominator / analyzed_ns
+
+    exchange_rate_per_site_per_ns = _rate(len(topology.surface_site_ids))
+    exchange_rate_per_ever_contacted_site_per_ns = _rate(ever_contacted_site_count)
+    exchange_rate_per_contested_site_per_ns = _rate(contested_site_count)
     component_summaries = {}
     for component in topology.components:
         molecules = molecules_by_component[component.key]
@@ -1421,28 +1487,45 @@ def analyze_interfacial_structure(
             "method": (
                 "Counts transitions where an exposed-Ni site's sole "
                 "occupying component changes to a DIFFERENT component "
-                "between two analyzed frames. A site that is empty or "
-                "simultaneously shared by 2+ components is a pass-through, "
-                "not treated as ending the previous occupant's tenure. "
-                "Most informative when run over the deposition trajectory "
-                "(molecules still competing for sites), not an "
+                "between analyzed frames, confirmed by "
+                "exchange_min_dwell_frames consecutive sole-owner frames "
+                "and forgetting the prior occupant after more than "
+                "exchange_max_vacancy_gap_frames consecutive empty/shared "
+                "frames. Most informative when run over the deposition "
+                "trajectory (molecules still competing for sites), not an "
                 "already-settled compressed hold, where genuine exchange "
                 "should be rare."
             ),
+            "exchange_min_dwell_frames": exchange_min_dwell_frames,
+            "exchange_max_vacancy_gap_frames": exchange_max_vacancy_gap_frames,
             "cross_component_exchange_event_count": exchange_event_count,
             "analyzed_step_span": analyzed_step_span,
             "analyzed_time_ps": analyzed_time_ps,
+            "surface_site_count": len(topology.surface_site_ids),
+            "ever_contacted_site_count": ever_contacted_site_count,
+            "contested_site_count": contested_site_count,
             "exchange_rate_per_site_per_ns": (
                 exchange_rate_per_site_per_ns
             ),
+            "exchange_rate_per_ever_contacted_site_per_ns": (
+                exchange_rate_per_ever_contacted_site_per_ns
+            ),
+            "exchange_rate_per_contested_site_per_ns": (
+                exchange_rate_per_contested_site_per_ns
+            ),
             "rate_normalization": (
-                "cross-component exchange events divided by the fixed "
-                "canonical exposed-Ni site count and analyzed trajectory "
-                "duration in ns; available only when --timestep-fs is set "
-                "and at least two distinct timesteps are analyzed"
+                "cross-component exchange events divided by one of three "
+                "denominators (the fixed canonical exposed-Ni site count, "
+                "the count ever confirmed-occupied during this analyzed "
+                "window, or the count confirmed-occupied by >=2 distinct "
+                "components) and analyzed trajectory duration in ns; "
+                "available only when --timestep-fs is set and at least two "
+                "distinct timesteps are analyzed. The per-site rate is the "
+                "most conservative; the per-contested-site rate answers "
+                "'how fast do sites that ARE being competed for turn over'."
             ),
             "exchange_events_by_component_pair": dict(
-                sorted(exchange_pair_counts.items())
+                sorted(exchange_tracker.exchange_pair_counts.items())
             ),
         },
         "components": component_summaries,
@@ -1465,6 +1548,17 @@ def analyze_interfacial_structure(
             "z_density_profiles.csv",
             "lateral_rdf.csv",
         ],
+        "provenance": provenance_fields(
+            trajectory_path=trajectory_path,
+            topology_path=build_directory / "topology_output.lmp",
+            manifest_path=manifest_path,
+            first_step=analyzed_steps[0] if analyzed_steps else None,
+            last_step=analyzed_steps[-1] if analyzed_steps else None,
+            first_frame_index=analyzed_indices[0] if analyzed_indices else None,
+            last_frame_index=analyzed_indices[-1] if analyzed_indices else None,
+            stride=stride,
+            blocks=blocks,
+        ),
     }
     summary_path = output / "interface_summary.json"
     summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")

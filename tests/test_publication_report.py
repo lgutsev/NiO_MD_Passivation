@@ -247,6 +247,45 @@ def test_create_publication_workbook_adds_correlation_sheet_when_experimental_cs
     assert "Correlated rows" in {row[0].value for row in workbook["Methods"].iter_rows()}
 
 
+def test_build_publication_rows_marks_mismatched_frame_windows_incomparable():
+    coverage, interface, components, terminals = _fixture_rows()
+    # Coverage says 501 frames over step 0-500000; interface (unchanged
+    # fixture) implicitly has no provenance at all for the first system, so
+    # give system 0 explicit, MISMATCHED provenance on both sides.
+    coverage[0]["frames"] = 501
+    coverage[0]["first_step"] = 0
+    coverage[0]["last_step"] = 500000
+    coverage[0]["stride"] = 1
+    hold_interface = next(
+        row for row in interface if row.get("stage") == "hold-300K" and row["system"] == coverage[0]["system"]
+    )
+    hold_interface["frames"] = 101
+    hold_interface["first_step"] = 0
+    hold_interface["last_step"] = 100000
+    hold_interface["stride"] = 1
+
+    summary, comparison = build_publication_rows(
+        coverage, interface, components, terminals
+    )
+
+    mismatched = next(
+        row for row in summary if row["system_key"] == coverage[0]["system"]
+    )
+    assert mismatched["status"] == "INCOMPARABLE"
+    assert "frame window mismatch" in mismatched["comparability_note"]
+    assert "501 frames" in mismatched["comparability_note"]
+    assert "101 frames" in mismatched["comparability_note"]
+    # The mismatched pair's comparison row must be excluded outright, not
+    # merely blanked -- only the still-comparable system remains.
+    assert len(comparison) == 0
+
+    other = next(
+        row for row in summary if row["system_key"] != coverage[0]["system"]
+    )
+    assert other["status"] == "OK"
+    assert other["comparability_note"] is None
+
+
 def test_build_correlation_rows_keeps_states_and_averages_md_seeds():
     summary, _ = build_publication_rows(*_fixture_rows())
     first = dict(summary[0])

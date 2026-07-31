@@ -195,6 +195,100 @@ def test_analysis_uses_last_frames_and_reports_component_overlap(tmp_path):
     assert total == pytest.approx(primary + secondary - overlap)
 
 
+def test_analysis_records_provenance_fields(tmp_path):
+    build = build_fixture(tmp_path)
+    summary_path = analyze_coverage(build, last_frames=2, grid_spacing=0.1, blocks=2)
+    summary = json.loads(summary_path.read_text())
+    provenance = summary["provenance"]
+    assert provenance["schema_version"] == "2"
+    assert provenance["stride"] == 1
+    assert provenance["requested_blocks"] == 2
+    assert provenance["first_step"] == 1000
+    assert provenance["last_step"] == 2000
+    # git_commit is best-effort (None outside a git checkout); must not raise
+    assert "git_commit" in provenance
+
+
+def test_near_surface_coverage_excludes_molecules_far_above_reference(tmp_path):
+    # Dossier "Z-gated coverage" acceptance test (SS10): two ligand molecules
+    # at different x/y, one 3A above the substrate reference and one 30A
+    # above it. Canopy (total) coverage must include both; near-surface
+    # coverage must include only the close one.
+    build = tmp_path / "build"
+    build.mkdir()
+    (build / "topology_output.lmp").write_text(
+        """LAMMPS data
+
+3 atoms
+3 atom types
+
+0.0 20.0 xlo xhi
+0.0 20.0 ylo yhi
+0.0 60.0 zlo zhi
+
+Masses
+
+1 30.974
+2 12.011
+3 58.6934
+
+Atoms # full
+
+1 1 1 0.0 5.0 5.0 3.0
+2 2 2 0.0 15.0 15.0 30.0
+3 0 3 0.0 5.0 5.0 0.0
+""",
+        encoding="utf-8",
+    )
+    (build / "assembly_manifest.json").write_text(
+        json.dumps(
+            {
+                "components": [
+                    {"component": "near", "molecule_ids": [1, 1]},
+                    {"component": "far", "molecule_ids": [2, 2]},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (build / "equilibration-300K.lammpstrj").write_text(
+        """ITEM: TIMESTEP
+0
+ITEM: NUMBER OF ATOMS
+3
+ITEM: BOX BOUNDS pp pp ff
+0 20
+0 20
+0 60
+ITEM: ATOMS id mol type q x y z
+1 1 1 0.0 5.0 5.0 3.0
+2 2 2 0.0 15.0 15.0 30.0
+3 0 3 0.0 5.0 5.0 0.0
+""",
+        encoding="utf-8",
+    )
+
+    summary_path = analyze_coverage(
+        build, last_frames=1, grid_spacing=0.2, near_surface_height=5.0
+    )
+    summary = json.loads(summary_path.read_text())
+
+    near_component = summary["components"]["near"]["mean_percent"]
+    far_component = summary["components"]["far"]["mean_percent"]
+    total = summary["metrics"]["total"]["mean_percent"]
+    near_surface = summary["metrics"]["near_surface"]["mean_percent"]
+    anchor_conditioned = summary["metrics"]["anchor_conditioned"]["mean_percent"]
+
+    assert near_component > 0.0
+    assert far_component > 0.0
+    # Canopy includes both non-overlapping disks.
+    assert total == pytest.approx(near_component + far_component, abs=0.05)
+    # Near-surface and anchor-conditioned include only the close molecule.
+    assert near_surface == pytest.approx(near_component, abs=0.05)
+    assert anchor_conditioned == pytest.approx(near_component, abs=0.05)
+    assert near_surface < total
+
+
 def test_unmapped_positive_molecule_id_is_rejected(tmp_path):
     build = build_fixture(tmp_path)
     manifest = build / "assembly_manifest.json"
