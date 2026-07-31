@@ -94,12 +94,40 @@ def test_inventory_workbook_contains_auditable_sheets(tmp_path):
         "Action Queue",
         "Analysis Reports",
         "Current Slurm Jobs",
+        "Current NiO Runs",
         "README",
     ]
     assert workbook["Dashboard"]["B7"].value == 1
     assert workbook["Run Status"]["A2"].value == "prepared-lego"
     assert workbook["Stage Detail"].max_row > 10
     assert workbook["Action Queue"].max_row > 1
+
+
+def test_current_jobs_mark_stages_and_duplicates(tmp_path):
+    repo = tmp_path
+    (repo / ".git").mkdir()
+    prepared = repo / "prepared-lego2"
+    run = prepared / "me-4pacz-then-dcz-4p-lego2-seeded"
+    write(run / "topology_output.lmp")
+    write(run / "deposition.in")
+    write(run / "deposited.data")
+    write(run / "continue-deposition.in")
+    write(run / "log.deposition-continuation.101.lammps")
+    write(run / "log.deposition-continuation.102.lammps")
+
+    records = inventory.inventory_run(run, prepared, repo)
+    slurm = [
+        ["101", "100_0", "nio.lego.cont", "RUNNING", "1:00", "", "", "", ""],
+        ["102", "101_0", "nio.lego.cont", "RUNNING", "0:30", "", "", "", ""],
+    ]
+    current = inventory.current_nio_rows(records, repo, slurm)
+    continuation = next(
+        row for row in records if row.stage == "LEGO continuation"
+    )
+
+    assert continuation.status == "RUNNING"
+    assert len(current) == 2
+    assert {row[8] for row in current} == {"DUPLICATE ACTIVE"}
 
 
 def test_dcz_controls_are_not_expected_for_lego2(tmp_path):

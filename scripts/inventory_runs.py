@@ -26,6 +26,7 @@ except ImportError as exc:  # pragma: no cover - exercised on QBD only
 
 STATUS_COLORS = {
     "COMPLETE": "C6EFCE",
+    "RUNNING": "DDEBF7",
     "READY": "FFF2CC",
     "FINALIZE_NEEDED": "FCE4D6",
     "PARTIAL": "F4B183",
@@ -35,6 +36,17 @@ STATUS_COLORS = {
     "NOT_APPLICABLE": "EDEDED",
     "NEEDS_ATTENTION": "FFC7CE",
 }
+SLURM_HEADERS = [
+    "QBD Job ID",
+    "Array Display ID",
+    "Job Name",
+    "State",
+    "Elapsed",
+    "Time Limit",
+    "Nodes",
+    "CPUs",
+    "Reason/Node",
+]
 STATUS_PRIORITY = {
     "ZERO_LENGTH": "Critical",
     "FINALIZE_NEEDED": "High",
@@ -432,8 +444,11 @@ def run_rows(records: list[StageRecord]) -> list[list[object]]:
         ]
         ready = [row for row in relevant if row.status == "READY"]
         blocked = [row for row in relevant if row.status == "BLOCKED"]
+        running = [row for row in relevant if row.status == "RUNNING"]
         overall = (
-            "NEEDS_ATTENTION"
+            "RUNNING"
+            if running
+            else "NEEDS_ATTENTION"
             if attention
             else "READY"
             if ready
@@ -496,7 +511,119 @@ def slurm_rows() -> list[list[str]]:
         return []
     if result.returncode:
         return []
-    return [line.split("|", 7) for line in result.stdout.splitlines() if line.strip()]
+    rows = []
+    for line in result.stdout.splitlines():
+        if not line.strip():
+            continue
+        fields = line.split("|", 7)
+        display_id = fields[0]
+        unique_id = display_id.split("_", 1)[0]
+        if fields[1].startswith("nio."):
+            try:
+                detail = subprocess.run(
+                    ["scontrol", "show", "job", "-o", display_id],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+            except (FileNotFoundError, subprocess.SubprocessError):
+                detail = None
+            if detail and detail.returncode == 0:
+                match = re.search(r"(?:^|\s)JobId=(\d+)", detail.stdout)
+                if match:
+                    unique_id = match.group(1)
+        rows.append([unique_id, display_id, *fields[1:]])
+    return rows
+
+
+def current_nio_rows(
+    records: list[StageRecord], repo: Path, slurm: list[list[str]]
+) -> list[list[str]]:
+    specs = {spec.name: spec for spec in [*STAGES, *CONTROL_STAGES]}
+    matches: list[tuple[list[str], StageRecord | None]] = []
+    for job in slurm:
+        unique_id, display_id, job_name, state, elapsed = job[:5]
+        if not job_name.startswith("nio."):
+            continue
+        candidates = []
+        for record in records:
+            spec = specs.get(record.stage)
+            if spec is None or spec.log_glob is None:
+                continue
+            directory = repo / record.relative_run
+            if any(unique_id in path.name for path in directory.glob(spec.log_glob)):
+                candidates.append(record)
+        matches.append((job, candidates[0] if len(candidates) == 1 else None))
+
+    target_counts: dict[tuple[str, str], int] = {}
+    for _, record in matches:
+        if record is not None:
+            key = (record.relative_run, record.stage)
+            target_counts[key] = target_counts.get(key, 0) + 1
+
+    rows = []
+    for job, record in matches:
+        unique_id, display_id, job_name, state, elapsed = job[:5]
+        if record is None:
+            rows.append(
+                [
+                    unique_id,
+                    display_id,
+                    job_name,
+                    state,
+                    elapsed,
+                    "UNRESOLVED",
+                    "UNRESOLVED FROM ACTIVE JOB METADATA",
+                    "Target not matched to a stage log",
+                    "CHECK OUTPUT",
+                    "Inspect this job before submission planning.",
+                ]
+            )
+            continue
+        key = (record.relative_run, record.stage)
+        duplicate = target_counts[key] > 1
+        output_complete = record.status == "COMPLETE"
+        mapping = (
+            "DUPLICATE ACTIVE"
+            if duplicate
+            else "OUTPUT COMPLETE / JOB ACTIVE"
+            if output_complete
+            else "MATCHED"
+        )
+        instruction = (
+            "Cancel duplicate writers, quarantine shared outputs, and rerun one clean stage."
+            if duplicate
+            else "Verify completion, then cancel the lingering scheduler job if it is no longer progressing."
+            if output_complete
+            else "Already running; exclude from submission planning."
+        )
+        rows.append(
+            [
+                unique_id,
+                display_id,
+                job_name,
+                state,
+                elapsed,
+                record.prepared_root,
+                record.relative_run,
+                record.stage,
+                mapping,
+                instruction,
+            ]
+        )
+        if not output_complete:
+            record.status = "RUNNING"
+            record.recommended_action = (
+                "Already running; do not relaunch. Regenerate inventory after completion."
+            )
+    rank = {
+        "DUPLICATE ACTIVE": 0,
+        "CHECK OUTPUT": 1,
+        "OUTPUT COMPLETE / JOB ACTIVE": 2,
+        "MATCHED": 3,
+    }
+    rows.sort(key=lambda row: (rank[row[8]], row[0]))
+    return rows
 
 
 def report_rows(prepared_roots: list[Path], repo: Path) -> list[list[object]]:
@@ -602,6 +729,8 @@ def build_workbook(
     workbook.calculation.fullCalcOnLoad = True
     workbook.calculation.forceFullCalc = True
 
+    slurm = slurm_rows() if include_slurm else []
+    current_nio = current_nio_rows(records, repo, slurm)
     runs = run_rows(records)
     stages = [
         [
@@ -643,7 +772,6 @@ def build_workbook(
             str(row[4]),
         )
     )
-    slurm = slurm_rows() if include_slurm else []
     reports = report_rows(prepared_roots, repo)
     generated = datetime.now().astimezone().replace(tzinfo=None)
 
@@ -673,12 +801,13 @@ def build_workbook(
         ("Action items", len(actions)),
         ("Current Slurm jobs", len(slurm)),
         ("Analysis workbooks present", sum(row[2] == "COMPLETE" for row in reports)),
+        ("Current NiO jobs", len(current_nio)),
     ]
     for index, row in enumerate(kpis, 7):
         dashboard.cell(index, 1, row[0])
         dashboard.cell(index, 2, row[1])
     for index, state in enumerate(
-        ("COMPLETE", "READY", "BLOCKED", "NEEDS_ATTENTION"), 7
+        ("COMPLETE", "READY", "BLOCKED", "NEEDS_ATTENTION", "RUNNING"), 7
     ):
         dashboard.cell(index, 4, state)
         dashboard.cell(index, 5, sum(row[4] == state for row in runs))
@@ -812,22 +941,58 @@ def build_workbook(
     slurm_sheet = add_table_sheet(
         workbook,
         "Current Slurm Jobs",
-        [
-            "Job ID",
-            "Job Name",
-            "State",
-            "Elapsed",
-            "Time Limit",
-            "Nodes",
-            "CPUs",
-            "Reason/Node",
-        ],
+        SLURM_HEADERS,
         slurm,
         "CurrentSlurmJobsTable",
     )
     style_sheet(
         slurm_sheet,
-        {"A": 18, "B": 30, "C": 15, "D": 14, "E": 14, "F": 10, "G": 10, "H": 42},
+        {
+            "A": 18,
+            "B": 20,
+            "C": 30,
+            "D": 15,
+            "E": 14,
+            "F": 14,
+            "G": 10,
+            "H": 10,
+            "I": 42,
+        },
+    )
+
+    current_sheet = add_table_sheet(
+        workbook,
+        "Current NiO Runs",
+        [
+            "QBD Job ID",
+            "Array Display ID",
+            "Job Name",
+            "State",
+            "Elapsed",
+            "Prepared Root",
+            "Relative Run",
+            "Stage",
+            "Mapping",
+            "Instruction",
+        ],
+        current_nio,
+        "CurrentNiORunsTable",
+    )
+    style_sheet(
+        current_sheet,
+        {
+            "A": 18,
+            "B": 20,
+            "C": 24,
+            "D": 15,
+            "E": 14,
+            "F": 20,
+            "G": 52,
+            "H": 34,
+            "I": 28,
+            "J": 68,
+        },
+        "D",
     )
 
     methods = workbook.create_sheet("README")
@@ -847,12 +1012,20 @@ def build_workbook(
             "PARTIAL",
             "Trajectory/restart/log evidence exists without the required final output.",
         ),
+        (
+            "RUNNING",
+            "The stage matched an active NiO job and is excluded from Action Queue.",
+        ),
         ("READY", "Prerequisite and stage input exist; the stage can be submitted."),
         ("INPUT_MISSING", "Prerequisite exists but the generated input is absent."),
         ("BLOCKED", "The required upstream scientific output is absent."),
         (
             "Scope",
             "A run directory contains topology_output.lmp, assembly_manifest.json, or deposition.in.",
+        ),
+        (
+            "Current NiO Runs",
+            "Maps QBD job IDs to prepared directories and flags duplicate writers or lingering completed jobs.",
         ),
         (
             "Generated",
