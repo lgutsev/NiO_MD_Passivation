@@ -86,7 +86,7 @@ class SiteExchangeTracker:
 
     - ``min_dwell_frames``: a candidate owner must be the site's sole owner
       for this many consecutive confirmed frames before a hand-off counts
-      (default 1: single-frame confirmation, matching prior behavior).
+      (default 2: rejects single-analyzed-frame ownership flicker).
     - ``max_vacancy_gap_frames``: once a site has gone unowned or shared for
       more than this many consecutive frames, its remembered prior owner is
       forgotten, so a later re-occupation starts fresh rather than counting
@@ -97,7 +97,7 @@ class SiteExchangeTracker:
         self,
         site_count: int,
         *,
-        min_dwell_frames: int = 1,
+        min_dwell_frames: int = 2,
         max_vacancy_gap_frames: int = 3,
     ) -> None:
         if min_dwell_frames < 1:
@@ -128,8 +128,6 @@ class SiteExchangeTracker:
                     self.last_distinct_owner[site_index] = None
                 continue
             self._vacancy_streak[site_index] = 0
-            self.ever_contacted.add(site_index)
-            self._distinct_owners_seen[site_index].add(current_owner)
             if self._candidate_owner[site_index] == current_owner:
                 self._candidate_streak[site_index] += 1
             else:
@@ -137,6 +135,8 @@ class SiteExchangeTracker:
                 self._candidate_streak[site_index] = 1
             if self._candidate_streak[site_index] < self.min_dwell_frames:
                 continue
+            self.ever_contacted.add(site_index)
+            self._distinct_owners_seen[site_index].add(current_owner)
             previous_owner = self.last_distinct_owner[site_index]
             if previous_owner is not None and previous_owner != current_owner:
                 pair_key = f"{previous_owner}->{current_owner}"
@@ -743,7 +743,7 @@ def analyze_interfacial_structure(
     rdf_bin_width: float = 0.25,
     rdf_rmax: float = 20.0,
     timestep_fs: float | None = None,
-    exchange_min_dwell_frames: int = 1,
+    exchange_min_dwell_frames: int = 2,
     exchange_max_vacancy_gap_frames: int = 3,
 ) -> Path:
     """Analyze interfacial structure and return ``interface_summary.json``."""

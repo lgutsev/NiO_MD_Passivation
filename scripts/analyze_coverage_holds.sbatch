@@ -49,6 +49,8 @@ fi
 last_frames="${LAST_FRAMES:-100}"
 grid_spacing="${GRID_SPACING:-0.20}"
 blocks="${BLOCKS:-5}"
+near_surface_height="${NEAR_SURFACE_HEIGHT:-5.0}"
+surface_reference_depth="${SURFACE_REFERENCE_DEPTH:-4.0}"
 
 if [[ ! "${last_frames}" =~ ^[0-9]+$ ]]; then
     echo "ERROR: LAST_FRAMES must be a non-negative integer." >&2
@@ -62,6 +64,8 @@ echo "PREPARED_ROOT: ${prepared_root}"
 echo "LAST_FRAMES: ${last_frames} (0 means all frames)"
 echo "GRID_SPACING: ${grid_spacing} A"
 echo "BLOCKS: ${blocks}"
+echo "NEAR_SURFACE_HEIGHT: ${near_surface_height} A"
+echo "SURFACE_REFERENCE_DEPTH: ${surface_reference_depth} A"
 
 found=0
 completed=0
@@ -98,6 +102,8 @@ while IFS= read -r -d '' trajectory; do
         --output "${output_directory}" \
         --last-frames "${last_frames}" \
         --grid-spacing "${grid_spacing}" \
+        --near-surface-height "${near_surface_height}" \
+        --surface-reference-depth "${surface_reference_depth}" \
         --blocks "${blocks}" \
         --timestep-fs 0.5; then
         elapsed="${SECONDS}"

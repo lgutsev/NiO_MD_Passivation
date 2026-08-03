@@ -56,7 +56,7 @@ def test_z_dipole_moment_is_translation_invariant_for_neutral_charge():
 
 
 def test_site_exchange_tracker_counts_only_confirmed_handoffs():
-    tracker = SiteExchangeTracker(1)
+    tracker = SiteExchangeTracker(1, min_dwell_frames=1)
 
     def step(owners):
         tracker.update([owners])
@@ -94,7 +94,9 @@ def test_site_exchange_tracker_forgets_owner_after_vacancy_gap_exceeded():
     # Dossier acceptance test "Exchange vacancy gap": primary -> long vacancy
     # -> secondary must NOT count as a direct exchange once the gap exceeds
     # max_vacancy_gap_frames.
-    tracker = SiteExchangeTracker(1, max_vacancy_gap_frames=2)
+    tracker = SiteExchangeTracker(
+        1, min_dwell_frames=1, max_vacancy_gap_frames=2
+    )
     tracker.update([{"me-4pacz"}])
     assert tracker.last_distinct_owner == ["me-4pacz"]
     tracker.update([set()])
@@ -109,7 +111,9 @@ def test_site_exchange_tracker_forgets_owner_after_vacancy_gap_exceeded():
 def test_site_exchange_tracker_short_bridge_within_gap_still_counts():
     # Dossier acceptance test "Exchange short bridge": a brief vacancy well
     # inside the configured gap still confirms the hand-off.
-    tracker = SiteExchangeTracker(1, max_vacancy_gap_frames=3)
+    tracker = SiteExchangeTracker(
+        1, min_dwell_frames=1, max_vacancy_gap_frames=3
+    )
     tracker.update([{"me-4pacz"}])
     tracker.update([set()])
     tracker.update([{"dcz-4p"}])
@@ -137,9 +141,21 @@ def test_site_exchange_tracker_requires_min_dwell_frames_to_confirm_handoff():
 def test_site_exchange_tracker_tracks_ever_contacted_and_contested_sites():
     tracker = SiteExchangeTracker(2)
     tracker.update([{"me-4pacz"}, set()])
+    tracker.update([{"me-4pacz"}, set()])
+    tracker.update([{"dcz-4p"}, set()])
     tracker.update([{"dcz-4p"}, set()])
     assert tracker.ever_contacted == {0}
     assert tracker.contested_site_count == 1
+
+
+def test_site_exchange_tracker_excludes_unconfirmed_contacts_from_denominators():
+    tracker = SiteExchangeTracker(1, min_dwell_frames=2)
+    tracker.update([{"me-4pacz"}])
+    tracker.update([set()])
+    tracker.update([{"dcz-4p"}])
+
+    assert tracker.ever_contacted == set()
+    assert tracker.contested_site_count == 0
 
 
 def test_canonical_surface_sites_do_not_change_with_thermal_coordinates():

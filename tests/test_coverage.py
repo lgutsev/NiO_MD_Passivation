@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from nio_md_prep.analysis.coverage import (
+    _height_above_local_substrate,
     _label_dependency,
     _periodic_height_map,
     _periodic_patch_sizes,
@@ -138,6 +139,26 @@ def test_roughness_statistics_on_synthetic_height_map():
     assert stats["rms_angstrom"] == pytest.approx((2.0 ** 2 * 2 / 4) ** 0.5)
 
 
+def test_local_substrate_reference_preserves_corrugation():
+    bounds = ((0.0, 10.0), (0.0, 10.0), (0.0, 20.0))
+    substrate_x = np.asarray([1.0, 9.0])
+    substrate_y = np.asarray([5.0, 5.0])
+    substrate_z = np.asarray([10.0, 8.0])
+    heights = _height_above_local_substrate(
+        np,
+        np.asarray([1.1, 8.9]),
+        np.asarray([5.0, 5.0]),
+        np.asarray([13.0, 11.0]),
+        bounds,
+        substrate_x,
+        substrate_y,
+        substrate_z,
+        4.0,
+    )
+
+    assert heights.tolist() == pytest.approx([3.0, 3.0])
+
+
 def test_roughness_statistics_handles_all_invalid_cells():
     stats = _roughness_statistics(np, np.full((2, 2), -np.inf))
     assert all(
@@ -179,7 +200,11 @@ def test_analysis_uses_last_frames_and_reports_component_overlap(tmp_path):
     assert summary["metrics"]["roughness_rms"]["mean_angstrom"] >= 0.0
     assert summary["metrics"]["roughness_mean_absolute"]["mean_angstrom"] >= 0.0
     assert summary["metrics"]["roughness_peak_to_valley"]["mean_angstrom"] >= 0.0
-    assert (summary_path.parent / "coverage_probability.npz").is_file()
+    probability_path = summary_path.parent / "coverage_probability.npz"
+    assert probability_path.is_file()
+    with np.load(probability_path) as probability:
+        assert "near_surface_probability" in probability
+        assert "p_near_surface_conditioned_probability" in probability
     assert (summary_path.parent / "height_map.npz").is_file()
     with (summary_path.parent / "coverage_timeseries.csv").open() as handle:
         rows = list(csv.DictReader(handle))
@@ -205,6 +230,7 @@ def test_analysis_records_provenance_fields(tmp_path):
     assert provenance["requested_blocks"] == 2
     assert provenance["first_step"] == 1000
     assert provenance["last_step"] == 2000
+    assert len(provenance["trajectory_sha256"]) == 64
     # git_commit is best-effort (None outside a git checkout); must not raise
     assert "git_commit" in provenance
 
@@ -278,6 +304,7 @@ ITEM: ATOMS id mol type q x y z
     total = summary["metrics"]["total"]["mean_percent"]
     near_surface = summary["metrics"]["near_surface"]["mean_percent"]
     anchor_conditioned = summary["metrics"]["anchor_conditioned"]["mean_percent"]
+    p_near_surface = summary["metrics"]["p_near_surface_conditioned"]["mean_percent"]
 
     assert near_component > 0.0
     assert far_component > 0.0
@@ -286,6 +313,13 @@ ITEM: ATOMS id mol type q x y z
     # Near-surface and anchor-conditioned include only the close molecule.
     assert near_surface == pytest.approx(near_component, abs=0.05)
     assert anchor_conditioned == pytest.approx(near_component, abs=0.05)
+    assert p_near_surface == pytest.approx(near_component, abs=0.05)
+    assert (
+        summary["metrics"]["near_surface_void_largest_patch_percent"][
+            "mean_percent"
+        ]
+        >= 0.0
+    )
     assert near_surface < total
 
 
