@@ -54,6 +54,7 @@ RESULT_HEADERS = [
     "Contested Sites",
     "Exchange Rate (per ever-contacted site, /ns)",
     "Exchange Rate (per contested site, /ns)",
+    "Scientific Scope",
 ]
 
 COMPONENT_HEADERS = [
@@ -325,6 +326,20 @@ def collect_interfacial_results(
             "last_step": summary.get("provenance", {}).get("last_step"),
             "stride": summary.get("provenance", {}).get("stride"),
             "git_commit": summary.get("provenance", {}).get("git_commit"),
+            "schema_version": summary.get("provenance", {}).get("schema_version"),
+            "trajectory_sha256": summary.get("provenance", {}).get("trajectory_sha256"),
+            "trajectory_size_bytes": summary.get("provenance", {}).get("trajectory_size_bytes"),
+            "trajectory_mtime_utc": summary.get("provenance", {}).get("trajectory_mtime_utc"),
+            "topology_sha256": summary.get("provenance", {}).get("topology_sha256"),
+            "manifest_sha256": summary.get("provenance", {}).get("manifest_sha256"),
+            "requested_blocks": summary.get("provenance", {}).get("requested_blocks"),
+            "persistence_threshold": summary.get("persistence_threshold"),
+            "exchange_min_dwell_frames": summary.get("site_competition", {}).get(
+                "exchange_min_dwell_frames"
+            ),
+            "exchange_max_vacancy_gap_frames": summary.get(
+                "site_competition", {}
+            ).get("exchange_max_vacancy_gap_frames"),
             "z_dipole_moment": (
                 summary.get("z_dipole", {})
                 .get("moment_e_angstrom", {})
@@ -679,6 +694,7 @@ def create_interfacial_workbook(prepared_root: Path, output: Path) -> Path:
             row["contested_site_count"],
             row["exchange_rate_per_ever_contacted_site_per_ns"],
             row["exchange_rate_per_contested_site_per_ns"],
+            "GEOMETRIC_CONTACT_ONLY",
         ]
         for row in results
     ]
@@ -768,6 +784,7 @@ def create_interfacial_workbook(prepared_root: Path, output: Path) -> Path:
             18,
             30,
             30,
+            32,
         ],
         1,
     ):
@@ -1063,6 +1080,10 @@ def create_interfacial_workbook(prepared_root: Path, output: Path) -> Path:
         [
             "Site competition",
             "Confirmed cross-component hand-offs of a canonical exposed-Ni site: a candidate owner must hold sole occupancy for --exchange-min-dwell-frames consecutive analyzed frames, and a site's remembered prior owner is forgotten after more than --exchange-max-vacancy-gap-frames consecutive empty/shared frames (so a long vacancy does not silently bridge two unrelated occupants). Three rate denominators are reported: per fixed canonical site, per site ever confirmed-occupied in this window, and per site confirmed-occupied by 2+ distinct components (\"contested\"). Intended primarily for complete deposition trajectories.",
+        ],
+        [
+            "Scientific Scope",
+            "GEOMETRIC_CONTACT_ONLY: TECHNICAL Status=OK verifies structural accounting and file consistency. Distance contacts under the present mixed-rule ligand/NiO force field are exploratory geometric descriptors, not chemically validated adsorption events.",
         ],
         [
             "Z dipole",

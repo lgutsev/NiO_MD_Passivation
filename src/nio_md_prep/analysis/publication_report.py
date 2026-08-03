@@ -31,6 +31,11 @@ DRAFT_HEADERS = [
     "Approx. Potential Step (V)",
     "Deposition Exchange Rate (events/site/ns)",
     "QC Status",
+    "Near-Surface Coverage (%)",
+    "P-Near-Surface-Conditioned Coverage (%)",
+    "Near-Surface Largest Void Patch (% of cell)",
+    "P-Near-Surface Largest Void Patch (% of cell)",
+    "Scientific Scope",
 ]
 
 ALL_METRICS_HEADERS = [
@@ -74,6 +79,11 @@ ALL_METRICS_HEADERS = [
     "QC Status",
     "Run Directory",
     "Comparability Note",
+    "Near-Surface Coverage (%)",
+    "P-Near-Surface-Conditioned Coverage (%)",
+    "Near-Surface Largest Void Patch (% of cell)",
+    "P-Near-Surface Largest Void Patch (% of cell)",
+    "Scientific Scope",
 ]
 
 # Public name retained for callers that imported the original constant.
@@ -118,6 +128,18 @@ COMPARISON_HEADERS = [
     "Sequential Deposition Exchange Rate (events/site/ns)",
     "Δ Exchange Rate: Seq-CoSAM (events/site/ns)",
     "QC Status",
+    "CoSAM Near-Surface Coverage (%)",
+    "Sequential Near-Surface Coverage (%)",
+    "Δ Near-Surface Coverage: Seq-CoSAM (%)",
+    "CoSAM P-Near-Surface Coverage (%)",
+    "Sequential P-Near-Surface Coverage (%)",
+    "Δ P-Near-Surface Coverage: Seq-CoSAM (%)",
+    "CoSAM Near-Surface Largest Void Patch (% of cell)",
+    "Sequential Near-Surface Largest Void Patch (% of cell)",
+    "Δ Near-Surface Largest Void Patch: Seq-CoSAM (% of cell)",
+    "CoSAM P-Near-Surface Largest Void Patch (% of cell)",
+    "Sequential P-Near-Surface Largest Void Patch (% of cell)",
+    "Δ P-Near-Surface Largest Void Patch: Seq-CoSAM (% of cell)",
 ]
 
 CORRELATION_HEADERS = [
@@ -147,6 +169,10 @@ CORRELATION_HEADERS = [
     "N Experimental Batches",
     "N Independent Units",
     "N Measurements",
+    "Near-Surface Coverage, MD Mean (%)",
+    "P-Near-Surface-Conditioned Coverage, MD Mean (%)",
+    "Near-Surface Largest Void Patch, MD Mean (% of cell)",
+    "P-Near-Surface Largest Void Patch, MD Mean (% of cell)",
 ]
 
 
@@ -237,41 +263,116 @@ def _comparability_note(
     windows are not directly comparable, so this gate catches that before the
     numbers land in a "Δ Seq-CoSAM" column.
     """
-    coverage_frames = coverage.get("frames")
-    interface_frames = interface.get("frames")
-    if (
-        coverage_frames is not None
-        and interface_frames is not None
-        and coverage_frames != interface_frames
-    ):
+    required = (
+        "frames",
+        "first_step",
+        "last_step",
+        "stride",
+        "schema_version",
+        "git_commit",
+        "trajectory_sha256",
+        "trajectory_size_bytes",
+        "trajectory_mtime_utc",
+        "topology_sha256",
+        "manifest_sha256",
+        "requested_blocks",
+    )
+    for label, row in (("coverage", coverage), ("interface", interface)):
+        missing = [field for field in required if row.get(field) is None]
+        if missing:
+            return f"missing {label} provenance: {', '.join(missing)}"
+    shared = (
+        "frames",
+        "first_step",
+        "last_step",
+        "stride",
+        "schema_version",
+        "git_commit",
+        "trajectory_sha256",
+        "trajectory_size_bytes",
+        "trajectory_mtime_utc",
+        "topology_sha256",
+        "manifest_sha256",
+        "requested_blocks",
+    )
+    mismatched = [
+        field for field in shared if coverage.get(field) != interface.get(field)
+    ]
+    if mismatched:
         return (
-            f"frame window mismatch: coverage {coverage_frames} frames "
-            f"(step {coverage.get('first_step')}-{coverage.get('last_step')}) "
-            f"vs interface {interface_frames} frames "
-            f"(step {interface.get('first_step')}-{interface.get('last_step')})"
+            "coverage/interface provenance mismatch: "
+            + ", ".join(
+                f"{field}={coverage.get(field)!r}/{interface.get(field)!r}"
+                for field in mismatched
+            )
         )
-    coverage_stride = coverage.get("stride")
-    interface_stride = interface.get("stride")
-    if (
-        coverage_stride is not None
-        and interface_stride is not None
-        and coverage_stride != interface_stride
-    ):
-        return (
-            f"stride mismatch: coverage stride {coverage_stride} "
-            f"vs interface stride {interface_stride}"
-        )
-    coverage_first = coverage.get("first_step")
-    coverage_last = coverage.get("last_step")
-    interface_first = interface.get("first_step")
-    interface_last = interface.get("last_step")
-    if None not in (coverage_first, coverage_last, interface_first, interface_last) and (
-        coverage_first != interface_first or coverage_last != interface_last
-    ):
-        return (
-            f"step-range mismatch: coverage step {coverage_first}-{coverage_last} "
-            f"vs interface step {interface_first}-{interface_last}"
-        )
+    return None
+
+
+def _cross_assembly_comparability_note(
+    cosam: dict[str, Any], sequential: dict[str, Any]
+) -> str | None:
+    """Require matched windows and analyzer settings before Seq-CoSAM deltas."""
+    checks = (
+        (
+            "coverage",
+            cosam.get("_coverage_source"),
+            sequential.get("_coverage_source"),
+            (
+                "frames",
+                "first_step",
+                "last_step",
+                "stride",
+                "schema_version",
+                "git_commit",
+                "requested_blocks",
+                "grid",
+                "radius_scale",
+                "hydrogen_included",
+                "near_surface_height",
+                "surface_reference_depth",
+            ),
+        ),
+        (
+            "interface",
+            cosam.get("_interface_source"),
+            sequential.get("_interface_source"),
+            (
+                "frames",
+                "first_step",
+                "last_step",
+                "stride",
+                "schema_version",
+                "git_commit",
+                "requested_blocks",
+                "cutoff",
+                "cutoff_method",
+                "surface_sites",
+                "persistence_threshold",
+                "exchange_min_dwell_frames",
+                "exchange_max_vacancy_gap_frames",
+            ),
+        ),
+    )
+    for label, left, right, fields in checks:
+        if left is None or right is None:
+            return f"missing {label} analysis for cross-assembly comparison"
+        missing = [
+            field
+            for field in fields
+            if left.get(field) is None or right.get(field) is None
+        ]
+        if missing:
+            return f"missing cross-assembly {label} provenance: {', '.join(missing)}"
+        mismatched = [field for field in fields if left.get(field) != right.get(field)]
+        if mismatched:
+            return (
+                f"cross-assembly {label} mismatch: "
+                + ", ".join(
+                    f"{field}={left.get(field)!r}/{right.get(field)!r}"
+                    for field in mismatched
+                )
+            )
     return None
 
 
@@ -433,6 +534,22 @@ def build_publication_rows(
                     if coverage
                     else None
                 ),
+                "near_surface_coverage": (
+                    coverage.get("near_surface") if coverage else None
+                ),
+                "p_near_surface_coverage": (
+                    coverage.get("anchor_conditioned") if coverage else None
+                ),
+                "near_surface_void_largest_patch": (
+                    coverage.get("near_surface_void_largest_patch")
+                    if coverage
+                    else None
+                ),
+                "p_near_surface_void_largest_patch": (
+                    coverage.get("p_near_surface_void_largest_patch")
+                    if coverage
+                    else None
+                ),
                 "empty_sites": interface.get("empty") if interface else None,
                 "z_dipole_moment": (
                     interface.get("z_dipole_moment")
@@ -506,6 +623,11 @@ def build_publication_rows(
                 ),
                 "status": status,
                 "comparability_note": comparability_note,
+                "scientific_scope": (
+                    "MORPHOLOGY_SUPPORTED; SURFACE_CHEMISTRY_EXPLORATORY"
+                ),
+                "_coverage_source": coverage,
+                "_interface_source": interface,
                 "run_directory": (
                     run_directory
                 ),
@@ -546,6 +668,12 @@ def build_publication_rows(
         # mismatched coverage/interface window; excluded outright rather
         # than risk a Seq-CoSAM delta built on non-comparable numbers.
         if "INCOMPARABLE" in (cosam["status"], sequential["status"]):
+            continue
+        pair_note = _cross_assembly_comparability_note(cosam, sequential)
+        if pair_note is not None:
+            for row in (cosam, sequential):
+                row["status"] = "INCOMPARABLE"
+                row["comparability_note"] = pair_note
             continue
         status = (
             "OK"
@@ -644,6 +772,46 @@ def build_publication_rows(
                     sequential["deposition_exchange_rate"],
                 ),
                 "status": status,
+                "cosam_near_surface_coverage": cosam[
+                    "near_surface_coverage"
+                ],
+                "sequential_near_surface_coverage": sequential[
+                    "near_surface_coverage"
+                ],
+                "delta_near_surface_coverage": _delta(
+                    cosam["near_surface_coverage"],
+                    sequential["near_surface_coverage"],
+                ),
+                "cosam_p_near_surface_coverage": cosam[
+                    "p_near_surface_coverage"
+                ],
+                "sequential_p_near_surface_coverage": sequential[
+                    "p_near_surface_coverage"
+                ],
+                "delta_p_near_surface_coverage": _delta(
+                    cosam["p_near_surface_coverage"],
+                    sequential["p_near_surface_coverage"],
+                ),
+                "cosam_near_surface_void_largest_patch": cosam[
+                    "near_surface_void_largest_patch"
+                ],
+                "sequential_near_surface_void_largest_patch": sequential[
+                    "near_surface_void_largest_patch"
+                ],
+                "delta_near_surface_void_largest_patch": _delta(
+                    cosam["near_surface_void_largest_patch"],
+                    sequential["near_surface_void_largest_patch"],
+                ),
+                "cosam_p_near_surface_void_largest_patch": cosam[
+                    "p_near_surface_void_largest_patch"
+                ],
+                "sequential_p_near_surface_void_largest_patch": sequential[
+                    "p_near_surface_void_largest_patch"
+                ],
+                "delta_p_near_surface_void_largest_patch": _delta(
+                    cosam["p_near_surface_void_largest_patch"],
+                    sequential["p_near_surface_void_largest_patch"],
+                ),
             }
         )
     return summary_rows, comparison_rows
@@ -756,6 +924,18 @@ def build_correlation_rows(
                 "deposition_exchange_rate": _mean_available(
                     md_rows, "deposition_exchange_rate"
                 ),
+                "near_surface_coverage": _mean_available(
+                    md_rows, "near_surface_coverage"
+                ),
+                "p_near_surface_coverage": _mean_available(
+                    md_rows, "p_near_surface_coverage"
+                ),
+                "near_surface_void_largest_patch": _mean_available(
+                    md_rows, "near_surface_void_largest_patch"
+                ),
+                "p_near_surface_void_largest_patch": _mean_available(
+                    md_rows, "p_near_surface_void_largest_patch"
+                ),
                 "voc_mean": device["voc_v"]["mean"],
                 "voc_std": device["voc_v"]["std"],
                 "jsc_mean": device["jsc_ma_cm2"]["mean"],
@@ -834,6 +1014,11 @@ def create_publication_workbook(
             row["z_dipole_potential_step_volts"],
             row["deposition_exchange_rate"],
             row["status"],
+            row["near_surface_coverage"],
+            row["p_near_surface_coverage"],
+            row["near_surface_void_largest_patch"],
+            row["p_near_surface_void_largest_patch"],
+            row["scientific_scope"],
         ]
         for row in summary_rows
     ]
@@ -845,7 +1030,7 @@ def create_publication_workbook(
         api,
     )
     summary_sheet.freeze_panes = "B2"
-    for column_index in (5, 6, 7, 10, 11, 12, 14, 15):
+    for column_index in (5, 6, 7, 10, 11, 12, 14, 15, 17, 18, 19, 20):
         for cell in summary_sheet.iter_cols(
             min_col=column_index,
             max_col=column_index,
@@ -864,6 +1049,11 @@ def create_publication_workbook(
         16,
         31,
         18,
+        24,
+        34,
+        34,
+        39,
+        46,
         21,
         23,
         31,
@@ -930,6 +1120,11 @@ def create_publication_workbook(
             row["status"],
             row["run_directory"],
             row["comparability_note"],
+            row["near_surface_coverage"],
+            row["p_near_surface_coverage"],
+            row["near_surface_void_largest_patch"],
+            row["p_near_surface_void_largest_patch"],
+            row["scientific_scope"],
         ]
         for row in summary_rows
     ]
@@ -960,7 +1155,7 @@ def create_publication_workbook(
     all_metrics_widths = [
         32, 24, 19, 20, 15, 16, 22, 21, 18, 24, 26, 20, 18, 26, 26, 20,
         27, 28, 23, 23, 25, 25, 33, 23, 24, 30, 25, 26, 30, 27, 22, 20,
-        22, 22, 22, 17, 17, 18, 34, 60,
+        22, 22, 22, 17, 17, 18, 34, 60, 24, 34, 36, 41, 52,
     ]
     for index, width in enumerate(all_metrics_widths, 1):
         all_metrics_sheet.column_dimensions[
@@ -996,6 +1191,10 @@ def create_publication_workbook(
                 row["n_batches"],
                 row["n_independent_units"],
                 row["n_measurements"],
+                row["near_surface_coverage"],
+                row["p_near_surface_coverage"],
+                row["near_surface_void_largest_patch"],
+                row["p_near_surface_void_largest_patch"],
             ]
             for row in correlation_rows
         ]
@@ -1007,7 +1206,7 @@ def create_publication_workbook(
             api,
         )
         correlation_sheet.freeze_panes = "F2"
-        for column_index in range(6, 24):
+        for column_index in list(range(6, 24)) + list(range(27, 31)):
             for cells in correlation_sheet.iter_cols(
                 min_col=column_index,
                 max_col=column_index,
@@ -1026,6 +1225,7 @@ def create_publication_workbook(
         correlation_widths = [
             20, 15, 15, 16, 13, 24, 24, 23, 28, 24, 34, 30, 23,
             31, 36, 17, 15, 23, 21, 16, 14, 17, 15, 21, 20, 17,
+            24, 34, 36, 41,
         ]
         for index, width in enumerate(correlation_widths, 1):
             correlation_sheet.column_dimensions[
@@ -1050,9 +1250,9 @@ def create_publication_workbook(
             )
             for chart_title, x_header, x_title, anchor in (
                 (
-                    "Coverage vs. PCE",
-                    "Projected Coverage, MD Mean (%)",
-                    "Projected Coverage (%)",
+                    "Near-Surface Coverage vs. PCE",
+                    "Near-Surface Coverage, MD Mean (%)",
+                    "Near-Surface Coverage (%)",
                     "AB2",
                 ),
                 (
@@ -1129,6 +1329,18 @@ def create_publication_workbook(
             row["sequential_deposition_exchange_rate"],
             row["delta_deposition_exchange_rate"],
             row["status"],
+            row["cosam_near_surface_coverage"],
+            row["sequential_near_surface_coverage"],
+            row["delta_near_surface_coverage"],
+            row["cosam_p_near_surface_coverage"],
+            row["sequential_p_near_surface_coverage"],
+            row["delta_p_near_surface_coverage"],
+            row["cosam_near_surface_void_largest_patch"],
+            row["sequential_near_surface_void_largest_patch"],
+            row["delta_near_surface_void_largest_patch"],
+            row["cosam_p_near_surface_void_largest_patch"],
+            row["sequential_p_near_surface_void_largest_patch"],
+            row["delta_p_near_surface_void_largest_patch"],
         ]
         for row in comparison_rows
     ]
@@ -1140,8 +1352,9 @@ def create_publication_workbook(
         api,
     )
     comparison_sheet.freeze_panes = "E2"
-    delta_columns = {7, 10, 13, 16, 19, 22, 25, 28, 31, 34, 37}
-    for column_index in range(5, len(COMPARISON_HEADERS)):
+    delta_columns = {7, 10, 13, 16, 19, 22, 25, 28, 31, 34, 37, 41, 44, 47, 50}
+    numeric_columns = set(range(5, 38)) | set(range(39, 51))
+    for column_index in sorted(numeric_columns):
         for cell in comparison_sheet.iter_cols(
             min_col=column_index,
             max_col=column_index,
@@ -1157,12 +1370,12 @@ def create_publication_workbook(
     comparison_sheet.column_dimensions["B"].width = 21
     comparison_sheet.column_dimensions["C"].width = 15
     comparison_sheet.column_dimensions["D"].width = 16
-    for index in range(5, len(COMPARISON_HEADERS)):
+    for index in range(5, len(COMPARISON_HEADERS) + 1):
         comparison_sheet.column_dimensions[
             comparison_sheet.cell(1, index).column_letter
         ].width = 24
     comparison_sheet.column_dimensions[
-        comparison_sheet.cell(1, len(COMPARISON_HEADERS)).column_letter
+        comparison_sheet.cell(1, COMPARISON_HEADERS.index("QC Status") + 1).column_letter
     ].width = 18
 
     ok_fill = PatternFill("solid", fgColor="C6EFCE")
@@ -1217,11 +1430,11 @@ def create_publication_workbook(
         ],
         [
             "Comparability gate",
-            "A row's coverage and interface analyses were not necessarily run with the same --last-frames/--stride/trajectory. Status is INCOMPARABLE (with a Comparability Note on the All Metrics sheet explaining why) whenever the two sides' analyzed frame counts, step ranges, or strides disagree. INCOMPARABLE rows are excluded outright from the CoSAM vs Sequential delta table rather than risk a delta built on non-comparable numbers; they remain visible on Draft Summary/All Metrics so the underlying per-side numbers are not hidden.",
+            "Status is INCOMPARABLE when coverage/interface provenance is missing or disagrees in trajectory identity, hashes, Git/schema version, analyzed window, stride, or block settings. CoSAM and Sequential rows are also checked against each other for matching windows and analyzer settings before any delta is emitted. Incomparable rows remain visible in Draft Summary/All Metrics but are excluded from correlations and delta tables.",
         ],
         [
-            "Projected coverage",
-            "Periodic union of projected elemental van der Waals disks divided by instantaneous x/y cell area.",
+            "Coverage hierarchy",
+            "Total projected coverage is a z-unrestricted canopy metric. Near-Surface Coverage uses only ligand atoms within the stated height above the nearest periodic atom in the local substrate top band. P-Near-Surface-Conditioned Coverage uses the full footprint of molecules whose phosphorus atom passes that height gate; it is geometric proximity, not proof of a chemical anchor bond.",
         ],
         [
             "Bound molecule",
@@ -1241,7 +1454,11 @@ def create_publication_workbook(
         ],
         [
             "Void patches",
-            "Contiguous uncovered-cell regions on the same periodic projected-coverage grid (periodic in x and y); largest/mean size reported as a percent of the full cell area.",
+            "Separate canopy, near-surface, and P-near-surface-conditioned uncovered regions are evaluated on the periodic x/y grid. Salman-facing interpretation should prioritize the two surface-gated variants.",
+        ],
+        [
+            "Scientific scope",
+            "Technical QC and provenance comparability do not validate ligand/NiO adsorption chemistry. Morphology descriptors are supported within the classical model; distance-defined binding, site competition, and fixed-charge dipoles remain exploratory until calibrated against higher-level surface interactions.",
         ],
         [
             "Unbound anchor density",

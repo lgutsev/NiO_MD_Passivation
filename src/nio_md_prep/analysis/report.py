@@ -39,7 +39,10 @@ RESULT_HEADERS = [
     "Summary JSON",
     "Run Directory",
     "Near-Surface Coverage (%)",
-    "Anchor-Conditioned Coverage (%)",
+    "P-Near-Surface-Conditioned Coverage (%)",
+    "Near-Surface Largest Void Patch (% of cell)",
+    "P-Near-Surface Largest Void Patch (% of cell)",
+    "Scientific Scope",
 ]
 
 COMPONENT_HEADERS = [
@@ -227,7 +230,20 @@ def collect_coverage_results(prepared_root: Path) -> tuple[list[dict], list[dict
                 ),
                 "anchor_conditioned": (
                     summary.get("metrics", {})
-                    .get("anchor_conditioned", {})
+                    .get(
+                        "p_near_surface_conditioned",
+                        summary.get("metrics", {}).get("anchor_conditioned", {}),
+                    )
+                    .get("mean_percent")
+                ),
+                "near_surface_void_largest_patch": (
+                    summary.get("metrics", {})
+                    .get("near_surface_void_largest_patch_percent", {})
+                    .get("mean_percent")
+                ),
+                "p_near_surface_void_largest_patch": (
+                    summary.get("metrics", {})
+                    .get("p_near_surface_void_largest_patch_percent", {})
                     .get("mean_percent")
                 ),
                 # Internal-only fields (not surfaced as workbook columns): used
@@ -237,9 +253,18 @@ def collect_coverage_results(prepared_root: Path) -> tuple[list[dict], list[dict
                 "last_step": summary.get("provenance", {}).get("last_step"),
                 "stride": summary.get("provenance", {}).get("stride"),
                 "git_commit": summary.get("provenance", {}).get("git_commit"),
+                "schema_version": summary.get("provenance", {}).get("schema_version"),
+                "trajectory_sha256": summary.get("provenance", {}).get("trajectory_sha256"),
+                "trajectory_size_bytes": summary.get("provenance", {}).get("trajectory_size_bytes"),
+                "trajectory_mtime_utc": summary.get("provenance", {}).get("trajectory_mtime_utc"),
+                "topology_sha256": summary.get("provenance", {}).get("topology_sha256"),
+                "manifest_sha256": summary.get("provenance", {}).get("manifest_sha256"),
+                "requested_blocks": summary.get("provenance", {}).get("requested_blocks"),
                 "grid": float(summary["grid_target_spacing_angstrom"]),
                 "radius_scale": float(summary["radius_scale"]),
                 "hydrogen_included": not bool(summary["exclude_hydrogen"]),
+                "near_surface_height": summary.get("near_surface_height_angstrom"),
+                "surface_reference_depth": summary.get("surface_reference_depth_angstrom"),
                 "balance_qc": balance_qc,
                 "union_qc": union_qc,
                 "status": status,
@@ -366,6 +391,9 @@ def create_coverage_workbook(prepared_root: Path, output: Path) -> Path:
             row["run_directory"],
             row["near_surface"],
             row["anchor_conditioned"],
+            row["near_surface_void_largest_patch"],
+            row["p_near_surface_void_largest_patch"],
+            "GEOMETRIC_MORPHOLOGY_ONLY",
         ]
         for row in results
     ]
@@ -396,6 +424,8 @@ def create_coverage_workbook(prepared_root: Path, output: Path) -> Path:
         "Y",
         "AD",
         "AE",
+        "AF",
+        "AG",
     ):
         for cell in results_sheet[column][1:]:
             cell.number_format = "0.00"
@@ -436,6 +466,9 @@ def create_coverage_workbook(prepared_root: Path, output: Path) -> Path:
         "AC": 42,
         "AD": 24,
         "AE": 30,
+        "AF": 34,
+        "AG": 39,
+        "AH": 34,
     }
     for column, width in widths.items():
         results_sheet.column_dimensions[column].width = width
@@ -531,7 +564,8 @@ def create_coverage_workbook(prepared_root: Path, output: Path) -> Path:
     methods_sheet.append(["Workbook purpose", "Consolidated projected coverage results from completed 300 K and 400 K hold analyses"])
     methods_sheet.append(["Coverage definition", "Total/Uncovered/Component Overlap are a z-UNRESTRICTED canopy metric: periodic union of projected elemental van der Waals disks divided by instantaneous x/y cell area, regardless of how far above the surface an atom sits. A ligand clump that has lifted off and drifted upward with a retracting wall still reads as covered here -- see Near-Surface/Anchor-Conditioned Coverage for a height-gated alternative."])
     methods_sheet.append(["Near-Surface Coverage (%)", "Same projected-union method restricted to ligand atoms within --near-surface-height (default 5 Å) of the local substrate-only height reference; an atom-level gate."])
-    methods_sheet.append(["Anchor-Conditioned Coverage (%)", "Projected union of the FULL footprint of every ligand molecule that has at least one phosphorus atom within the same near-surface height gate; a molecule-level gate, so a bound molecule's whole footprint counts even if part of it extends above the height cutoff."])
+    methods_sheet.append(["P-Near-Surface-Conditioned Coverage (%)", "Projected union of the FULL footprint of every ligand molecule that has at least one phosphorus atom within the same near-surface height gate. This is a geometric proximity condition, not proof of a Ni-O-P bond."])
+    methods_sheet.append(["Scientific Scope", "GEOMETRIC_MORPHOLOGY_ONLY: TECHNICAL Status=OK means arithmetic/file checks passed; it does not validate surface adsorption chemistry or the ligand/NiO cross interaction."])
     methods_sheet.append(["Uncertainty", "Block SEM from the requested trajectory blocks; frame SD is also retained"])
     methods_sheet.append(["Void patches", "Periodic four-connected uncovered regions on the projected-coverage grid; largest and mean areas are percentages of the full x/y cell"])
     methods_sheet.append(["Roughness", "Top-of-film max-z height map over all atoms; RMS, mean-absolute, and peak-to-valley values are experimental morphology proxies"])

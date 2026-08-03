@@ -67,7 +67,8 @@ def main(argv=None)->int:
     i.add_argument("--grid-spacing",type=float,default=0.20)
     i.add_argument("--radius-scale",type=float,default=1.0)
     i.add_argument("--roughness-grid-spacing",type=float,default=2.0,help="grid resolution for the top-of-film height/roughness map")
-    i.add_argument("--near-surface-height",type=float,default=5.0,help="height above the local substrate reference (A) gating the near-surface/anchor-conditioned coverage metrics")
+    i.add_argument("--near-surface-height",type=float,default=5.0,help="height above the local substrate reference (A) gating near-surface/P-near-surface-conditioned coverage")
+    i.add_argument("--surface-reference-depth",type=float,default=4.0,help="depth below the topmost substrate atom (A) included in the local periodic surface reference")
     i.add_argument("--last-frames",type=int,default=100,help="analyze the final N frames; use 0 for all frames")
     i.add_argument("--stride",type=int,default=1)
     i.add_argument("--blocks",type=int,default=5)
@@ -93,7 +94,7 @@ def main(argv=None)->int:
     i.add_argument("--rdf-bin-width",type=float,default=0.25)
     i.add_argument("--rdf-rmax",type=float,default=15.0)
     i.add_argument("--timestep-fs",type=float)
-    i.add_argument("--exchange-min-dwell-frames",type=int,default=1,help="consecutive sole-owner frames required to confirm a site hand-off")
+    i.add_argument("--exchange-min-dwell-frames",type=int,default=2,help="consecutive sole-owner frames required to confirm a site hand-off")
     i.add_argument("--exchange-max-vacancy-gap-frames",type=int,default=3,help="consecutive empty/shared frames after which a site's prior owner is forgotten")
     i=sub.add_parser("summarize-interface")
     i.add_argument("prepared_root",type=Path)
@@ -131,6 +132,7 @@ def main(argv=None)->int:
                 radius_scale=a.radius_scale,
                 roughness_grid_spacing=a.roughness_grid_spacing,
                 near_surface_height=a.near_surface_height,
+                surface_reference_depth=a.surface_reference_depth,
                 last_frames=None if a.last_frames==0 else a.last_frames,
                 stride=a.stride,
                 blocks=a.blocks,

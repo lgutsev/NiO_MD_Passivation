@@ -486,6 +486,8 @@ def _write_plots(
     output: Path,
     rows: list[dict[str, float | int]],
     probability,
+    near_surface_probability,
+    p_near_surface_probability,
     height_map,
     component_keys: list[str],
     timestep_fs: float | None,
@@ -527,26 +529,36 @@ def _write_plots(
     figure.savefig(output / timeseries_name, dpi=200)
     plt.close(figure)
 
-    figure, axis = plt.subplots(figsize=(7.2, 3.2))
-    image = axis.imshow(
-        probability,
-        origin="lower",
-        extent=(0.0, 1.0, 0.0, 1.0),
-        aspect="auto",
-        vmin=0.0,
-        vmax=1.0,
-        cmap="viridis",
-    )
-    axis.set(
-        xlabel="Fractional x",
-        ylabel="Fractional y",
-        title="Ligand occupancy probability",
-    )
-    figure.colorbar(image, ax=axis, label="Occupied-frame fraction")
-    figure.tight_layout()
-    probability_name = "coverage_probability.png"
-    figure.savefig(output / probability_name, dpi=200)
-    plt.close(figure)
+    probability_names = []
+    for values, title, name in (
+        (probability, "Total canopy occupancy probability", "coverage_probability.png"),
+        (
+            near_surface_probability,
+            "Near-surface occupancy probability",
+            "near_surface_coverage_probability.png",
+        ),
+        (
+            p_near_surface_probability,
+            "P-near-surface-conditioned occupancy probability",
+            "p_near_surface_coverage_probability.png",
+        ),
+    ):
+        figure, axis = plt.subplots(figsize=(7.2, 3.2))
+        image = axis.imshow(
+            values,
+            origin="lower",
+            extent=(0.0, 1.0, 0.0, 1.0),
+            aspect="auto",
+            vmin=0.0,
+            vmax=1.0,
+            cmap="viridis",
+        )
+        axis.set(xlabel="Fractional x", ylabel="Fractional y", title=title)
+        figure.colorbar(image, ax=axis, label="Occupied-frame fraction")
+        figure.tight_layout()
+        figure.savefig(output / name, dpi=200)
+        plt.close(figure)
+        probability_names.append(name)
 
     import numpy as np
 
@@ -569,7 +581,7 @@ def _write_plots(
     height_map_name = "height_map.png"
     figure.savefig(output / height_map_name, dpi=200)
     plt.close(figure)
-    return [timeseries_name, probability_name, height_map_name]
+    return [timeseries_name, *probability_names, height_map_name]
 
 
 def _resolve_trajectory(build_directory: Path, trajectory: Path | None) -> Path:
@@ -605,11 +617,14 @@ def _git_commit() -> str | None:
 def _file_hash(path: Path | None) -> str | None:
     if path is None or not path.is_file():
         return None
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        while chunk := handle.read(1024 * 1024):
-            digest.update(chunk)
-    return digest.hexdigest()
+    try:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
 
 
 def provenance_fields(
@@ -641,6 +656,7 @@ def provenance_fields(
         "trajectory_mtime_utc": datetime.fromtimestamp(
             trajectory_stat.st_mtime, tz=timezone.utc
         ).isoformat(),
+        "trajectory_sha256": _file_hash(trajectory_path),
         "topology_sha256": _file_hash(topology_path),
         "manifest_sha256": _file_hash(manifest_path),
         "first_frame_index": first_frame_index,
@@ -652,25 +668,57 @@ def provenance_fields(
     }
 
 
-def _height_above_reference(np, x, y, z, bounds, shape, reference_height_map):
-    """Height of each atom above a periodic reference height map.
+def _height_above_local_substrate(
+    np,
+    x,
+    y,
+    z,
+    bounds,
+    substrate_x,
+    substrate_y,
+    substrate_z,
+    surface_reference_depth,
+):
+    """Height above the nearest periodic atom in the substrate's top band.
 
-    Grid cells with no reference-map coverage fall back to the map's global
-    maximum finite height rather than 0, so a sparsely sampled substrate
-    reference does not spuriously read as "at height zero".
+    A fine coverage grid is much sparser than the NiO atomic lattice. Filling
+    empty grid cells with the global maximum substrate height therefore turns
+    a nominally local reference into a global plane. A periodic nearest-neighbor
+    query over atoms in the top ``surface_reference_depth`` band preserves the
+    local corrugation without requiring every 0.2-A cell to contain Ni or O.
     """
-    ny, nx = shape
+    try:
+        from scipy.spatial import cKDTree
+    except ImportError as exc:
+        raise RuntimeError(
+            "near-surface coverage requires SciPy; "
+            "install with: python -m pip install -e '.[analysis]'"
+        ) from exc
+    if len(substrate_z) == 0:
+        raise ValueError("trajectory frame contains no molecule-0 substrate atoms")
     xlo, xhi = bounds[0]
     ylo, yhi = bounds[1]
     lx, ly = xhi - xlo, yhi - ylo
-    wrapped_x = np.mod(x - xlo, lx)
-    wrapped_y = np.mod(y - ylo, ly)
-    ix = np.floor(wrapped_x / lx * nx).astype(np.int64) % nx
-    iy = np.floor(wrapped_y / ly * ny).astype(np.int64) % ny
-    finite = np.isfinite(reference_height_map)
-    fallback = float(reference_height_map[finite].max()) if finite.any() else 0.0
-    filled = np.where(finite, reference_height_map, fallback)
-    return z - filled[iy, ix]
+    if lx <= 0 or ly <= 0:
+        raise ValueError("LAMMPS dump has non-positive lateral box dimensions")
+    top = float(np.max(substrate_z))
+    surface = substrate_z >= top - surface_reference_depth
+    sx = xlo + np.mod(substrate_x[surface] - xlo, lx)
+    sy = ylo + np.mod(substrate_y[surface] - ylo, ly)
+    sz = substrate_z[surface]
+    shifts = np.asarray(
+        [(dx, dy) for dx in (-lx, 0.0, lx) for dy in (-ly, 0.0, ly)],
+        dtype=float,
+    )
+    tiled_xy = np.concatenate(
+        [np.column_stack((sx + dx, sy + dy)) for dx, dy in shifts], axis=0
+    )
+    tiled_z = np.tile(sz, len(shifts))
+    query_xy = np.column_stack(
+        (xlo + np.mod(x - xlo, lx), ylo + np.mod(y - ylo, ly))
+    )
+    _, nearest = cKDTree(tiled_xy).query(query_xy, k=1)
+    return z - tiled_z[nearest]
 
 
 def _anchor_qualifying_molecule_ids(
@@ -694,6 +742,7 @@ def analyze_coverage(
     radius_scale: float = 1.0,
     roughness_grid_spacing: float = 2.0,
     near_surface_height: float = 5.0,
+    surface_reference_depth: float = 4.0,
     last_frames: int | None = 100,
     stride: int = 1,
     blocks: int = 5,
@@ -711,6 +760,8 @@ def analyze_coverage(
         raise ValueError("roughness_grid_spacing must be positive")
     if near_surface_height <= 0:
         raise ValueError("near_surface_height must be positive")
+    if surface_reference_depth <= 0:
+        raise ValueError("surface_reference_depth must be positive")
     if stride <= 0:
         raise ValueError("stride must be positive")
     if blocks <= 0:
@@ -745,6 +796,8 @@ def analyze_coverage(
     shape = None
     roughness_shape = None
     probability_sum = None
+    near_surface_probability_sum = None
+    p_near_surface_probability_sum = None
     last_height_map = None
     rows: list[dict[str, float | int]] = []
     analyzed_indices: list[int] = []
@@ -758,6 +811,8 @@ def analyze_coverage(
             ny = max(1, int(math.ceil((yhi - ylo) / grid_spacing)))
             shape = (ny, nx)
             probability_sum = np.zeros(shape, dtype=np.float64)
+            near_surface_probability_sum = np.zeros(shape, dtype=np.float64)
+            p_near_surface_probability_sum = np.zeros(shape, dtype=np.float64)
             roughness_nx = max(1, int(math.ceil((xhi - xlo) / roughness_grid_spacing)))
             roughness_ny = max(1, int(math.ceil((yhi - ylo) / roughness_grid_spacing)))
             roughness_shape = (roughness_ny, roughness_nx)
@@ -810,16 +865,16 @@ def analyze_coverage(
         probability_sum += total_mask
 
         substrate_mask = ~positive
-        substrate_height_map = _periodic_height_map(
+        height_above_substrate = _height_above_local_substrate(
             np,
+            frame.x,
+            frame.y,
+            frame.z,
+            frame.bounds,
             frame.x[substrate_mask],
             frame.y[substrate_mask],
             frame.z[substrate_mask],
-            frame.bounds,
-            shape,
-        )
-        height_above_substrate = _height_above_reference(
-            np, frame.x, frame.y, frame.z, frame.bounds, shape, substrate_height_map
+            surface_reference_depth,
         )
         hydrogen_mask = np.asarray(
             [type_elements.get(int(atom_type)) == "H" for atom_type in frame.atom_types],
@@ -865,7 +920,15 @@ def analyze_coverage(
             frame.bounds,
             shape,
         )
+        near_surface_probability_sum += near_surface_mask
+        p_near_surface_probability_sum += anchor_conditioned_mask
         patch_sizes = _periodic_patch_sizes(np, label, ~total_mask)
+        near_surface_patch_sizes = _periodic_patch_sizes(
+            np, label, ~near_surface_mask
+        )
+        p_near_surface_patch_sizes = _periodic_patch_sizes(
+            np, label, ~anchor_conditioned_mask
+        )
         total_cells = total_mask.size
         height_map = _periodic_height_map(
             np, frame.x, frame.y, frame.z, frame.bounds, roughness_shape
@@ -895,13 +958,31 @@ def analyze_coverage(
             "coverage_anchor_conditioned_percent": float(
                 anchor_conditioned_mask.mean() * 100.0
             ),
+            "near_surface_void_patch_count": len(near_surface_patch_sizes),
+            "near_surface_void_largest_patch_percent": (
+                100.0 * max(near_surface_patch_sizes) / total_cells
+                if near_surface_patch_sizes
+                else 0.0
+            ),
+            "p_near_surface_void_patch_count": len(p_near_surface_patch_sizes),
+            "p_near_surface_void_largest_patch_percent": (
+                100.0 * max(p_near_surface_patch_sizes) / total_cells
+                if p_near_surface_patch_sizes
+                else 0.0
+            ),
         }
         for component, mask in zip(components, component_masks):
             row[f"coverage_{component.key}_percent"] = float(mask.mean() * 100.0)
         rows.append(row)
         analyzed_indices.append(frame.index)
 
-    if not rows or shape is None or probability_sum is None:
+    if (
+        not rows
+        or shape is None
+        or probability_sum is None
+        or near_surface_probability_sum is None
+        or p_near_surface_probability_sum is None
+    ):
         raise ValueError("frame selection produced no trajectory frames")
 
     fieldnames = list(rows[0])
@@ -912,9 +993,13 @@ def analyze_coverage(
         writer.writerows(rows)
 
     probability = probability_sum / len(rows)
+    near_surface_probability = near_surface_probability_sum / len(rows)
+    p_near_surface_probability = p_near_surface_probability_sum / len(rows)
     np.savez_compressed(
         output / "coverage_probability.npz",
         probability=probability,
+        near_surface_probability=near_surface_probability,
+        p_near_surface_conditioned_probability=p_near_surface_probability,
         fractional_x=(np.arange(shape[1]) + 0.5) / shape[1],
         fractional_y=(np.arange(shape[0]) + 0.5) / shape[0],
     )
@@ -968,6 +1053,27 @@ def analyze_coverage(
         "anchor_conditioned": _block_statistics(
             np, [row["coverage_anchor_conditioned_percent"] for row in rows], blocks
         ),
+        "p_near_surface_conditioned": _block_statistics(
+            np, [row["coverage_anchor_conditioned_percent"] for row in rows], blocks
+        ),
+        "near_surface_void_patch_count": _block_average(
+            np, [row["near_surface_void_patch_count"] for row in rows], blocks,
+            suffix="",
+        ),
+        "near_surface_void_largest_patch_percent": _block_statistics(
+            np,
+            [row["near_surface_void_largest_patch_percent"] for row in rows],
+            blocks,
+        ),
+        "p_near_surface_void_patch_count": _block_average(
+            np, [row["p_near_surface_void_patch_count"] for row in rows], blocks,
+            suffix="",
+        ),
+        "p_near_surface_void_largest_patch_percent": _block_statistics(
+            np,
+            [row["p_near_surface_void_largest_patch_percent"] for row in rows],
+            blocks,
+        ),
     }
     component_metrics = {
         component.name: {
@@ -988,6 +1094,8 @@ def analyze_coverage(
         output,
         rows,
         probability,
+        near_surface_probability,
+        p_near_surface_probability,
         last_height_map,
         [component.key for component in components],
         timestep_fs,
@@ -1013,13 +1121,17 @@ def analyze_coverage(
         "vdw_radii_angstrom": VDW_RADII_ANGSTROM,
         "requested_blocks": blocks,
         "near_surface_height_angstrom": near_surface_height,
+        "surface_reference_depth_angstrom": surface_reference_depth,
         "near_surface_reference": (
             "coverage_total_percent/coverage_uncovered_percent/coverage_overlap_percent "
             "are a z-unrestricted canopy metric (any ligand atom anywhere above the cell "
             "counts as covered). near_surface restricts to ligand atoms within "
-            "near_surface_height_angstrom of the local substrate-only height reference; "
-            "anchor_conditioned includes the FULL footprint of any ligand molecule with "
-            "at least one phosphorus atom within that same height gate. Both address the "
+            "near_surface_height_angstrom of the nearest periodic atom in the local "
+            "substrate top band; p_near_surface_conditioned (legacy JSON key: "
+            "anchor_conditioned) includes the FULL footprint of any ligand molecule "
+            "with at least one phosphorus atom within that same height gate. This is a "
+            "geometric P-near-surface condition, not a chemically validated anchor "
+            "bond. Both address the "
             "case where a lifted-off or drifting clump still reads as canopy coverage."
         ),
         "metrics": metrics,

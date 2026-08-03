@@ -51,9 +51,19 @@ sensitivity_cutoffs="${SENSITIVITY_CUTOFFS:-3.0,3.25,3.5}"
 surface_coordination_cutoff="${SURFACE_COORDINATION_CUTOFF:-2.8}"
 persistence_threshold="${PERSISTENCE_THRESHOLD:-0.50}"
 rdf_rmax="${RDF_RMAX:-15.0}"
+exchange_min_dwell_frames="${EXCHANGE_MIN_DWELL_FRAMES:-2}"
+exchange_max_vacancy_gap_frames="${EXCHANGE_MAX_VACANCY_GAP_FRAMES:-3}"
 
 if [[ ! "${last_frames}" =~ ^[0-9]+$ ]]; then
     echo "ERROR: LAST_FRAMES must be a non-negative integer." >&2
+    exit 1
+fi
+if [[ ! "${exchange_min_dwell_frames}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: EXCHANGE_MIN_DWELL_FRAMES must be a positive integer." >&2
+    exit 1
+fi
+if [[ ! "${exchange_max_vacancy_gap_frames}" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: EXCHANGE_MAX_VACANCY_GAP_FRAMES must be a non-negative integer." >&2
     exit 1
 fi
 
@@ -64,6 +74,8 @@ echo "PREPARED_ROOT: ${prepared_root}"
 echo "LAST_FRAMES: ${last_frames} (0 means all frames)"
 echo "BLOCKS: ${blocks}"
 echo "CONTACT_CUTOFF: ${contact_cutoff} A"
+echo "EXCHANGE_MIN_DWELL_FRAMES: ${exchange_min_dwell_frames}"
+echo "EXCHANGE_MAX_VACANCY_GAP_FRAMES: ${exchange_max_vacancy_gap_frames}"
 
 found=0
 completed=0
@@ -101,6 +113,8 @@ while IFS= read -r -d '' trajectory; do
         --sensitivity-cutoffs "${sensitivity_cutoffs}" \
         --surface-coordination-cutoff "${surface_coordination_cutoff}" \
         --persistence-threshold "${persistence_threshold}" \
+        --exchange-min-dwell-frames "${exchange_min_dwell_frames}" \
+        --exchange-max-vacancy-gap-frames "${exchange_max_vacancy_gap_frames}" \
         --rdf-rmax "${rdf_rmax}" \
         --timestep-fs 0.5; then
         elapsed="${SECONDS}"

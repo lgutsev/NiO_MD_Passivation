@@ -48,6 +48,23 @@ def _fixture_rows():
         p_height,
         tilt,
     ) in enumerate(systems):
+        trajectory_sha256 = f"trajectory-{index}"
+        topology_sha256 = f"topology-{index}"
+        manifest_sha256 = f"manifest-{index}"
+        shared_provenance = {
+            "frames": 501,
+            "first_step": 0,
+            "last_step": 500000,
+            "stride": 1,
+            "schema_version": "2",
+            "git_commit": "abc123",
+            "trajectory_sha256": trajectory_sha256,
+            "trajectory_size_bytes": 123456,
+            "trajectory_mtime_utc": "2026-07-30T12:00:00+00:00",
+            "topology_sha256": topology_sha256,
+            "manifest_sha256": manifest_sha256,
+            "requested_blocks": 5,
+        }
         coverage.append(
             {
                 "system": system,
@@ -66,8 +83,18 @@ def _fixture_rows():
                 "roughness_rms": 3.0 if index == 0 else 2.0,
                 "roughness_mean_absolute": 2.0 if index == 0 else 1.0,
                 "roughness_peak_to_valley": 10.0 if index == 0 else 7.0,
+                "near_surface": 61.0 if index == 0 else 70.0,
+                "anchor_conditioned": 45.0 if index == 0 else 56.0,
+                "near_surface_void_largest_patch": 18.0 if index == 0 else 8.0,
+                "p_near_surface_void_largest_patch": 25.0 if index == 0 else 12.0,
+                "grid": 0.2,
+                "radius_scale": 1.0,
+                "hydrogen_included": True,
+                "near_surface_height": 5.0,
+                "surface_reference_depth": 4.0,
                 "run_directory": system,
                 "status": "OK",
+                **shared_provenance,
             }
         )
         interface.append(
@@ -89,8 +116,15 @@ def _fixture_rows():
                 "z_dipole_potential_step_volts": -0.4 + 0.1 * index,
                 "packmol_seed": 202607242 + index,
                 "velocity_seed": 31415927 + index,
+                "cutoff": 3.25,
+                "cutoff_method": "Ni-O distance",
+                "surface_sites": 600,
+                "persistence_threshold": 0.5,
+                "exchange_min_dwell_frames": 2,
+                "exchange_max_vacancy_gap_frames": 3,
                 "run_directory": system,
                 "status": "OK",
+                **shared_provenance,
             }
         )
         interface.append(
@@ -142,6 +176,8 @@ def test_build_publication_rows_pairs_sequential_and_cosam():
     assert comparison[0]["delta_secondary_p_height"] == pytest.approx(-5.0)
     assert comparison[0]["delta_roughness_rms"] == pytest.approx(-1.0)
     assert comparison[0]["delta_deposition_exchange_rate"] == pytest.approx(0.3)
+    assert comparison[0]["delta_near_surface_coverage"] == pytest.approx(9.0)
+    assert comparison[0]["delta_p_near_surface_coverage"] == pytest.approx(11.0)
 
 
 def test_create_publication_workbook_has_draft_tables(tmp_path, monkeypatch):
@@ -184,6 +220,7 @@ def test_create_publication_workbook_has_draft_tables(tmp_path, monkeypatch):
     assert workbook["Draft Summary"]["D2"].value == "71.00 ± 0.70"
     assert workbook["Draft Summary"]["M2"].value == "20.00 / 65.00 / 15.00"
     assert workbook["Draft Summary"]["P2"].value == "OK"
+    assert workbook["Draft Summary"]["Q2"].value == pytest.approx(61.0)
     assert workbook["CoSAM vs Sequential"]["G2"].value == pytest.approx(5.0)
     assert "available MD seed" in workbook["Methods"]["B3"].value
 
@@ -243,6 +280,7 @@ def test_create_publication_workbook_adds_correlation_sheet_when_experimental_cs
     assert rows["CoSAM"][24].value == 1
     assert rows["CoSAM"][25].value == 2
     assert rows["Sequential"][21].value == pytest.approx(9.75)
+    assert rows["CoSAM"][26].value == pytest.approx(61.0)
     assert len(sheet._charts) == 3
     assert "Correlated rows" in {row[0].value for row in workbook["Methods"].iter_rows()}
 
@@ -272,9 +310,8 @@ def test_build_publication_rows_marks_mismatched_frame_windows_incomparable():
         row for row in summary if row["system_key"] == coverage[0]["system"]
     )
     assert mismatched["status"] == "INCOMPARABLE"
-    assert "frame window mismatch" in mismatched["comparability_note"]
-    assert "501 frames" in mismatched["comparability_note"]
-    assert "101 frames" in mismatched["comparability_note"]
+    assert "coverage/interface provenance mismatch" in mismatched["comparability_note"]
+    assert "frames=501/101" in mismatched["comparability_note"]
     # The mismatched pair's comparison row must be excluded outright, not
     # merely blanked -- only the still-comparable system remains.
     assert len(comparison) == 0
@@ -284,6 +321,27 @@ def test_build_publication_rows_marks_mismatched_frame_windows_incomparable():
     )
     assert other["status"] == "OK"
     assert other["comparability_note"] is None
+
+
+def test_build_publication_rows_rejects_cross_assembly_window_mismatch():
+    coverage, interface, components, terminals = _fixture_rows()
+    sequential_system = "me-4pacz-then-dcz-4p"
+    for rows in (coverage, interface):
+        for row in rows:
+            if row.get("system") == sequential_system and row.get("stage") == "hold-300K":
+                row["frames"] = 101
+                row["last_step"] = 100000
+
+    summary, comparison = build_publication_rows(
+        coverage, interface, components, terminals
+    )
+
+    assert comparison == []
+    assert {row["status"] for row in summary} == {"INCOMPARABLE"}
+    assert all(
+        "cross-assembly coverage mismatch" in row["comparability_note"]
+        for row in summary
+    )
 
 
 def test_build_correlation_rows_keeps_states_and_averages_md_seeds():
