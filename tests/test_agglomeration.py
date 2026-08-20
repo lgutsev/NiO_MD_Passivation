@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import json
 import math
+import shutil
 from pathlib import Path
 
 import pytest
 
-from nio_md_prep.agglomeration import prepare_agglomeration
+from nio_md_prep.agglomeration import (
+    MoleculeInstance,
+    _compact_molecule_centers,
+    prepare_agglomeration,
+)
 from nio_md_prep.geometry import elements
 from nio_md_prep.lammps import atom_coordinates, parse
 
@@ -83,6 +88,29 @@ def _potcar(path: Path, elements: list[str]) -> Path:
     return path
 
 
+def test_adaptive_compaction_connects_an_isolated_molecule_without_overlap():
+    instances = [
+        MoleculeInstance("toy", index + 1, index, index + 1, (1.0,))
+        for index in range(3)
+    ]
+    compacted, _ = _compact_molecule_centers(
+        [(0.0, 0.0, 0.0), (3.0, 0.0, 0.0), (20.0, 0.0, 0.0)],
+        ["H", "H", "H"],
+        instances,
+        3.0,
+    )
+    distances = [
+        min(
+            _distance(compacted[index], compacted[other])
+            for other in range(3)
+            if other != index
+        )
+        for index in range(3)
+    ]
+    assert min(distances) >= 3.0 - 1.0e-7
+    assert max(distances) <= 3.0 + 1.0e-7
+
+
 def test_agglomeration_builds_fixed_cell_center_scaled_vasp_cases(tmp_path):
     reference = tmp_path / "reference"
     reference.mkdir()
@@ -148,6 +176,85 @@ def test_agglomeration_packmol_inputs_can_be_resumed(tmp_path, monkeypatch):
     second = prepare_agglomeration(config, output, structures_only=True)
     assert json.loads(second.read_text())["status"] == "COMPLETE"
     assert len(list((output / "structures").iterdir())) == 2
+
+
+def test_xtb_stage_resumes_into_300_and_400_kelvin_vasp_runs(tmp_path):
+    config = tmp_path / "xtb.toml"
+    config.write_text(
+        """[agglomeration]
+replicas = 1
+base_seed = 12345
+radius_angstrom = 15.0
+packmol_tolerance_angstrom = 3.0
+vacuum_angstrom = 8.0
+minimum_distance_angstrom = 2.5
+compact_to_distance_angstrom = 3.0
+center_scales = [1.0]
+
+[xtb]
+enabled = true
+minimum_oxygen_oxygen_distance_angstrom = 2.2
+
+[vasp_md]
+heating_steps = 111
+hold_steps = 222
+
+[[molecules]]
+slug = "me-4pacz"
+count = 2
+""",
+        encoding="utf-8",
+    )
+    reference = tmp_path / "reference"
+    reference.mkdir()
+    (reference / "INCAR").write_text(
+        "ENCUT = 520\nNSW = 999\nTEBEG = 1\nTEEND = 2\n",
+        encoding="utf-8",
+    )
+    (reference / "KPOINTS").write_text(
+        "Gamma\n0\nGamma\n1 1 1\n0 0 0\n", encoding="utf-8"
+    )
+    launcher = reference / "runvasp.sh"
+    launcher.write_text(
+        "#!/bin/bash\n#SBATCH -J old\nSECONDS=0\nsrun -n128 vasp_gam\n",
+        encoding="utf-8",
+    )
+    launcher.chmod(0o755)
+    _potcar(reference / "POTCAR", ["C", "H", "N", "O", "P"])
+    output = tmp_path / "campaign"
+    first = prepare_agglomeration(
+        config,
+        output,
+        reference_dir=reference,
+        packed_xyz=_packed(tmp_path / "packed.xyz"),
+    )
+    assert json.loads(first.read_text())["status"] == "XTB_REQUIRED"
+    assert (output / "run_xtb_array.sbatch").is_file()
+    assert not (output / "vasp_runs/r000_s00_1p000/POSCAR").exists()
+    xtb_work = output / "xtb/r000_s00_1p000"
+    shutil.copy2(xtb_work / "input.xyz", xtb_work / "xtbopt.xyz")
+
+    second = prepare_agglomeration(
+        config,
+        output,
+        reference_dir=reference,
+        packed_xyz=_packed(tmp_path / "packed-again.xyz"),
+    )
+    assert json.loads(second.read_text())["status"] == "COMPLETE"
+    case = output / "vasp_runs/r000_s00_1p000"
+    incar300 = (case / "300K/INCAR").read_text()
+    assert "NSW = 222" in incar300
+    assert "TEBEG = 300" in incar300 and "TEEND = 300" in incar300
+    incar_heat = (case / "400K/01_heat_300_to_400K/INCAR").read_text()
+    assert "NSW = 111" in incar_heat
+    assert "TEBEG = 300" in incar_heat and "TEEND = 400" in incar_heat
+    incar400 = (case / "400K/02_hold_400K/INCAR").read_text()
+    assert "NSW = 222" in incar400
+    assert "TEBEG = 400" in incar400 and "TEEND = 400" in incar400
+    assert "cp ../01_heat_300_to_400K/CONTCAR POSCAR" in (
+        case / "400K/02_hold_400K/runvasp.sh"
+    ).read_text()
+    assert (case / "submit_temperature_jobs.sh").stat().st_mode & 0o111
 
 
 def test_agglomeration_uses_loose_cost_conscious_defaults(tmp_path):

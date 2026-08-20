@@ -22,13 +22,14 @@ new tasks.
 
 For MLIP dataset construction, the repository also includes a reproducible
 phosphonate agglomeration generator. With a complete VASP reference directory,
-it creates independently randomized multi-molecule clusters and rigid
-compression/separation families as launch-ready VASP run directories containing
-the generated `POSCAR` plus the reference `INCAR`, `KPOINTS`, `POTCAR`, and
-launcher files, with molecule-level provenance and
-split-group metadata. Automatic fail-closed checks verify cell containment,
-requested vacuum, periodic-image clearance, molecular rigidity, contact
-distances, and POSCAR/POTCAR element-order compatibility. See
+it creates independently randomized multi-molecule clusters, adaptively compacts
+them without crossing the contact floor, and stages a GFN2-xTB relaxation array.
+Validated xTB structures become launch-ready 300 K, 300-to-400 K heating, and
+400 K VASP directories containing the generated `POSCAR` plus the reference
+`INCAR`, `KPOINTS`, `POTCAR`, and launcher files. Automatic fail-closed checks
+verify cell containment, requested vacuum, periodic-image clearance, contact
+distances (including intermolecular O--O), atom order, and POSCAR/POTCAR element
+compatibility. See
 [`docs/agglomeration-training.md`](docs/agglomeration-training.md).
 
 ## Scientific picture

@@ -48,6 +48,7 @@ class AgglomerateSpec:
     tolerance: float
     vacuum: float
     minimum_distance: float
+    compact_to_distance: float | None
     scales: tuple[float, ...]
 
 
@@ -163,6 +164,13 @@ def _agglomerate_specs(config: dict) -> tuple[list[AgglomerateSpec], bool]:
                 defaults.get("minimum_distance_angstrom", 2.5),
             )
         )
+        compact_value = raw.get(
+            "compact_to_distance_angstrom",
+            defaults.get("compact_to_distance_angstrom"),
+        )
+        compact_to_distance = (
+            None if compact_value is None else float(compact_value)
+        )
         scales = tuple(
             float(value)
             for value in raw.get(
@@ -177,6 +185,11 @@ def _agglomerate_specs(config: dict) -> tuple[list[AgglomerateSpec], bool]:
         if radius <= 0 or tolerance <= 0 or vacuum <= 0 or minimum_distance <= 0:
             raise ValueError(
                 f"{name}: radius, tolerance, vacuum, and minimum distance must be positive"
+            )
+        if compact_to_distance is not None and compact_to_distance < minimum_distance:
+            raise ValueError(
+                f"{name}: compact_to_distance_angstrom must be at least "
+                "minimum_distance_angstrom"
             )
         if (
             not scales
@@ -206,6 +219,7 @@ def _agglomerate_specs(config: dict) -> tuple[list[AgglomerateSpec], bool]:
                 tolerance=tolerance,
                 vacuum=vacuum,
                 minimum_distance=minimum_distance,
+                compact_to_distance=compact_to_distance,
                 scales=scales,
             )
         )
@@ -333,6 +347,138 @@ def _scale_molecule_centers(
     return result
 
 
+def _compact_molecule_centers(
+    coordinates: list[tuple[float, float, float]],
+    symbols: list[str],
+    instances: list[MoleculeInstance],
+    target_distance: float | None,
+) -> tuple[list[tuple[float, float, float]], float]:
+    """Compact and connect a Packmol cluster without crossing its contact floor."""
+    if target_distance is None:
+        return list(coordinates), 1.0
+    current = _closest_intermolecular_pair(coordinates, symbols, instances)[
+        "minimum_distance_angstrom"
+    ]
+    contact_floor = min(current, target_distance)
+    low, high = 0.0, 1.0
+    if current > target_distance:
+        # Find the smallest global center scale whose closest intermolecular
+        # contact remains at the target. Intramolecular geometries are untouched.
+        for _ in range(60):
+            middle = (low + high) / 2.0
+            candidate = _scale_molecule_centers(coordinates, instances, middle)
+            nearest = _closest_intermolecular_pair(candidate, symbols, instances)[
+                "minimum_distance_angstrom"
+            ]
+            if nearest >= contact_floor:
+                high = middle
+            else:
+                low = middle
+        result = _scale_molecule_centers(coordinates, instances, high)
+    else:
+        result = list(coordinates)
+
+    def instance_distance(left: int, right: int) -> tuple[float, int, int]:
+        best = (math.inf, -1, -1)
+        first = instances[left]
+        second = instances[right]
+        for left_atom in range(first.start, first.stop):
+            for right_atom in range(second.start, second.stop):
+                distance = _distance(result[left_atom], result[right_atom])
+                if distance < best[0]:
+                    best = (distance, left_atom, right_atom)
+        return best
+
+    # A global scale can leave one molecule isolated when another pair reaches
+    # the contact floor first. Grow a connected cluster by pulling the nearest
+    # outsider along its closest atom-pair vector. Every move is bounded by the
+    # first safe contact, so this cannot recreate short O--O overlaps.
+    def components() -> list[set[int]]:
+        remaining = set(range(len(instances)))
+        groups: list[set[int]] = []
+        while remaining:
+            group = {remaining.pop()}
+            changed = True
+            while changed:
+                changed = False
+                neighbors = {
+                    candidate
+                    for candidate in remaining
+                    if any(
+                        instance_distance(candidate, member)[0]
+                        <= contact_floor + 1.0e-5
+                        for member in group
+                    )
+                }
+                if neighbors:
+                    group.update(neighbors)
+                    remaining.difference_update(neighbors)
+                    changed = True
+            groups.append(group)
+        return groups
+
+    groups = components()
+    while len(groups) > 1:
+        distance, left_atom, right_atom, moving_group = min(
+            (*instance_distance(left, right), right_group)
+            for left_group in groups
+            for right_group in groups
+            if left_group is not right_group
+            for left in left_group
+            for right in right_group
+        )
+        delta = tuple(
+            (result[right_atom][axis] - result[left_atom][axis])
+            * (contact_floor - distance)
+            / distance
+            for axis in range(3)
+        )
+        moving_atoms = [
+            atom
+            for molecule in moving_group
+            for atom in range(instances[molecule].start, instances[molecule].stop)
+        ]
+        stationary_atoms = [
+            atom
+            for molecule in range(len(instances))
+            if molecule not in moving_group
+            for atom in range(instances[molecule].start, instances[molecule].stop)
+        ]
+
+        def moved_clearance(fraction: float) -> float:
+            minimum = math.inf
+            for atom in moving_atoms:
+                point = tuple(
+                    result[atom][axis] + fraction * delta[axis]
+                    for axis in range(3)
+                )
+                for other_atom in stationary_atoms:
+                    minimum = min(minimum, _distance(point, result[other_atom]))
+            return minimum
+
+        move_low, move_high = 0.0, 1.0
+        if moved_clearance(1.0) < contact_floor:
+            for _ in range(60):
+                middle = (move_low + move_high) / 2.0
+                if moved_clearance(middle) >= contact_floor:
+                    move_low = middle
+                else:
+                    move_high = middle
+            fraction = move_low
+        else:
+            fraction = 1.0
+        for atom in moving_atoms:
+            result[atom] = tuple(
+                result[atom][axis] + fraction * delta[axis]
+                for axis in range(3)
+            )
+        new_groups = components()
+        if len(new_groups) >= len(groups):
+            raise RuntimeError("adaptive compaction could not connect molecule groups")
+        groups = new_groups
+    return result, high
+
+
 def _closest_intermolecular_pair(
     coordinates: list[tuple[float, float, float]],
     symbols: list[str],
@@ -384,6 +530,24 @@ def _closest_intermolecular_pair(
         ),
         "closest_oxygen_oxygen_pair": describe(oo_pair, minimum_oo),
     }
+
+
+def _maximum_nearest_molecule_distance(
+    coordinates: list[tuple[float, float, float]],
+    instances: list[MoleculeInstance],
+) -> float:
+    nearest = [math.inf] * len(instances)
+    for left, first in enumerate(instances):
+        for right in range(left + 1, len(instances)):
+            second = instances[right]
+            distance = min(
+                _distance(coordinates[a], coordinates[b])
+                for a in range(first.start, first.stop)
+                for b in range(second.start, second.stop)
+            )
+            nearest[left] = min(nearest[left], distance)
+            nearest[right] = min(nearest[right], distance)
+    return max(nearest)
 
 
 def _fixed_cell(
@@ -499,6 +663,9 @@ def _structure_sanity(
     reference_sanity: dict,
     expected_elements: list[str],
     written_element_order: list[str],
+    minimum_oxygen_oxygen_distance: float | None = None,
+    maximum_nearest_molecule_distance: float | None = None,
+    require_rigid_molecules: bool = True,
 ) -> dict:
     tolerance = 1.0e-7
     bounds = [
@@ -515,6 +682,7 @@ def _structure_sanity(
     periodic_image_lower_bound = min(cell - span for span in spans)
     contact = _closest_intermolecular_pair(coordinates, symbols, instances)
     nearest = contact["minimum_distance_angstrom"]
+    farthest_nearest = _maximum_nearest_molecule_distance(coordinates, instances)
     rigidity_error = _maximum_intramolecular_distance_deviation(
         coordinates, instances, templates
     )
@@ -539,7 +707,19 @@ def _structure_sanity(
             periodic_image_lower_bound + tolerance >= 2.0 * requested_vacuum
         ),
         "intermolecular_distance_safe": nearest + tolerance >= minimum_distance,
-        "intramolecular_geometry_preserved": rigidity_error <= 1.0e-5,
+        "oxygen_oxygen_distance_safe": (
+            minimum_oxygen_oxygen_distance is None
+            or contact["minimum_oxygen_oxygen_distance_angstrom"] is None
+            or contact["minimum_oxygen_oxygen_distance_angstrom"] + tolerance
+            >= minimum_oxygen_oxygen_distance
+        ),
+        "all_molecules_associated": (
+            maximum_nearest_molecule_distance is None
+            or farthest_nearest <= maximum_nearest_molecule_distance + tolerance
+        ),
+        "intramolecular_geometry_preserved": (
+            not require_rigid_molecules or rigidity_error <= 1.0e-5
+        ),
         "poscar_element_order_correct": written_element_order == expected_elements,
         "potcar_order_compatible": reference_sanity["potcar_status"] in {
             "PASS",
@@ -577,6 +757,13 @@ def _structure_sanity(
             "closest_oxygen_oxygen_pair"
         ],
         "required_minimum_intermolecular_distance_angstrom": minimum_distance,
+        "required_minimum_intermolecular_oxygen_oxygen_distance_angstrom": (
+            minimum_oxygen_oxygen_distance
+        ),
+        "maximum_nearest_molecule_distance_angstrom": farthest_nearest,
+        "required_maximum_nearest_molecule_distance_angstrom": (
+            maximum_nearest_molecule_distance
+        ),
         "maximum_intramolecular_distance_deviation_angstrom": rigidity_error,
         "vasp_reference": reference_sanity,
     }
@@ -611,6 +798,10 @@ def _write_sanity_report(case: Path, report: dict) -> None:
                 is not None
                 else "NOT_PRESENT"
             )
+        ),
+        (
+            "maximum_nearest_molecule_distance_angstrom="
+            f"{report['maximum_nearest_molecule_distance_angstrom']:.8f}"
         ),
         (
             "maximum_intramolecular_distance_deviation_angstrom="
@@ -678,6 +869,196 @@ def _write_xyz(atoms: list[dict], path: Path, comment: str) -> None:
     path.write_text(f"{len(rows)}\n{comment}\n" + "\n".join(rows) + "\n", encoding="utf-8")
 
 
+def _write_raw_xyz(
+    symbols: list[str],
+    coordinates: list[tuple[float, float, float]],
+    path: Path,
+    comment: str,
+) -> None:
+    rows = [
+        f"{symbol} {point[0]:.10f} {point[1]:.10f} {point[2]:.10f}"
+        for symbol, point in zip(symbols, coordinates)
+    ]
+    path.write_text(
+        f"{len(rows)}\n{comment}\n" + "\n".join(rows) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _replace_incar_tags(path: Path, updates: dict[str, int | float]) -> None:
+    text = path.read_text(encoding="utf-8")
+    keys = {key.upper() for key in updates}
+    kept = [
+        line
+        for line in text.splitlines()
+        if not (
+            "=" in line
+            and line.split("=", 1)[0].strip().upper() in keys
+        )
+    ]
+    kept.extend(["", "# Generated agglomeration MD schedule"])
+    kept.extend(f"{key} = {value}" for key, value in updates.items())
+    path.write_text("\n".join(kept).rstrip() + "\n", encoding="utf-8")
+
+
+def _set_slurm_job_name(path: Path, job_name: str) -> None:
+    if not path.is_file():
+        return
+    text = path.read_text(encoding="utf-8")
+    replacement = f'#SBATCH -J "{job_name}"'
+    if re.search(r"^#SBATCH\s+(?:-J|--job-name(?:=|\s))", text, re.MULTILINE):
+        text = re.sub(
+            r"^#SBATCH\s+(?:-J\s+.*|--job-name(?:=|\s).*)$",
+            replacement,
+            text,
+            count=1,
+            flags=re.MULTILINE,
+        )
+    else:
+        lines = text.splitlines()
+        lines.insert(1, replacement)
+        text = "\n".join(lines) + "\n"
+    path.write_text(text, encoding="utf-8")
+
+
+def _prepare_vasp_schedule(
+    case: Path,
+    reference: Path,
+    poscar: Path,
+    *,
+    job_prefix: str,
+    hold_steps: int,
+    heating_steps: int,
+) -> list[dict]:
+    runs = [
+        (case / "300K", 300, 300, hold_steps, f"{job_prefix}_300K"),
+        (
+            case / "400K/01_heat_300_to_400K",
+            300,
+            400,
+            heating_steps,
+            f"{job_prefix}_heat",
+        ),
+        (
+            case / "400K/02_hold_400K",
+            400,
+            400,
+            hold_steps,
+            f"{job_prefix}_400K",
+        ),
+    ]
+    records: list[dict] = []
+    for directory, start, end, steps, job_name in runs:
+        directory.mkdir(parents=True, exist_ok=True)
+        copied = _copy_reference(reference, directory)
+        shutil.copy2(poscar, directory / "POSCAR")
+        _replace_incar_tags(
+            directory / "INCAR",
+            {"IBRION": 0, "NSW": steps, "TEBEG": start, "TEEND": end},
+        )
+        _set_slurm_job_name(directory / "runvasp.sh", job_name[:64])
+        records.append(
+            {
+                "path": str(directory.relative_to(case)),
+                "temperature_start_K": start,
+                "temperature_end_K": end,
+                "steps": steps,
+                "reference_files": copied,
+            }
+        )
+    submit = case / "submit_temperature_jobs.sh"
+    submit.write_text(
+        """#!/bin/bash
+set -euo pipefail
+root=$(cd "$(dirname "$0")" && pwd)
+job300=$(cd "$root/300K" && sbatch --parsable runvasp.sh)
+jobheat=$(cd "$root/400K/01_heat_300_to_400K" && sbatch --parsable runvasp.sh)
+job400=$(cd "$root/400K/02_hold_400K" && sbatch --parsable "--dependency=afterok:${jobheat}" runvasp.sh)
+printf 'submitted 300K=%s heat=%s 400K-hold=%s\n' "$job300" "$jobheat" "$job400"
+""",
+        encoding="utf-8",
+    )
+    submit.chmod(0o755)
+    hold_launcher = case / "400K/02_hold_400K/runvasp.sh"
+    if hold_launcher.is_file():
+        text = hold_launcher.read_text(encoding="utf-8")
+        marker = "set -e\ncp ../01_heat_300_to_400K/CONTCAR POSCAR\n"
+        lines = text.splitlines(keepends=True)
+        insert_at = 1
+        for index, line in enumerate(lines[1:], 1):
+            if line.startswith("#SBATCH") or not line.strip():
+                insert_at = index + 1
+                continue
+            break
+        lines.insert(insert_at, marker)
+        hold_launcher.write_text("".join(lines), encoding="utf-8")
+    return records
+
+
+def _write_xtb_batch(output: Path, cases: list[dict], settings: dict) -> None:
+    case_list = output / "xtb_cases.tsv"
+    case_list.write_text(
+        "".join(
+            f"{item['path']}\t{item['charge']}\t{item['uhf']}\n" for item in cases
+        ),
+        encoding="utf-8",
+    )
+    account = str(settings.get("account", "loni_perovsk27"))
+    partition = str(settings.get("partition", "workq"))
+    cpus = int(settings.get("cpus", 8))
+    walltime = str(settings.get("walltime", "12:00:00"))
+    gfn = int(settings.get("gfn", 2))
+    opt_level = str(settings.get("opt_level", "loose"))
+    max_cycles = int(settings.get("max_cycles", 100))
+    concurrency = int(settings.get("array_concurrency", 4))
+    script = output / "run_xtb_array.sbatch"
+    script.write_text(
+        f"""#!/bin/bash
+#SBATCH -p {partition}
+#SBATCH -N 1
+#SBATCH -n 1
+#SBATCH -c {cpus}
+#SBATCH -t {walltime}
+#SBATCH -A {account}
+#SBATCH -J "me4pacz_xtb"
+#SBATCH -o xtb.%A_%a.out
+#SBATCH --array=0-{len(cases) - 1}%{concurrency}
+
+set -euo pipefail
+root=$(cd "$(dirname "$0")" && pwd)
+line=$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "$root/xtb_cases.tsv")
+IFS=$'\\t' read -r relative charge uhf <<< "$line"
+work="$root/$relative"
+cd "$work"
+if [[ -s xtbopt.xyz ]]; then
+  echo "already complete: $relative"
+  exit 0
+fi
+
+: "${{XTB_EXE:=xtb}}"
+if ! command -v "$XTB_EXE" >/dev/null 2>&1; then
+  : "${{CONDA_SH:=$HOME/miniconda3/etc/profile.d/conda.sh}}"
+  : "${{XTB_ENV:=xtb}}"
+  if [[ -f "$CONDA_SH" ]]; then
+    source "$CONDA_SH"
+    conda activate "$XTB_ENV"
+  fi
+fi
+if ! command -v "$XTB_EXE" >/dev/null 2>&1; then
+  echo "xTB not found; set XTB_EXE or provide CONDA_SH and XTB_ENV" >&2
+  exit 127
+fi
+export OMP_NUM_THREADS=${{SLURM_CPUS_PER_TASK:-{cpus}}}
+export MKL_NUM_THREADS=1
+ulimit -s unlimited
+"$XTB_EXE" input.xyz --gfn {gfn} --chrg "$charge" --uhf "$uhf" --opt {opt_level} --cycles {max_cycles} > xtb.out 2> xtb.err
+test -s xtbopt.xyz
+""",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+
+
 def _copy_reference(reference: Path | None, destination: Path) -> list[dict]:
     if reference is None:
         return []
@@ -710,7 +1091,7 @@ def prepare_agglomeration(
         if manifest_path.is_file():
             previous = json.loads(manifest_path.read_text(encoding="utf-8"))
             resume = (
-                previous.get("status") == "PACKMOL_REQUIRED"
+                previous.get("status") in {"PACKMOL_REQUIRED", "XTB_REQUIRED"}
                 and previous.get("config_sha256") == _sha256(config_path)
             )
         if not resume:
@@ -719,6 +1100,13 @@ def prepare_agglomeration(
     with config_path.open("rb") as handle:
         config = tomllib.load(handle)
     specs, grouped = _agglomerate_specs(config)
+    xtb_settings = config.get("xtb", {})
+    xtb_enabled = bool(xtb_settings.get("enabled", False))
+    md_settings = config.get("vasp_md", {})
+    hold_steps = int(md_settings.get("hold_steps", 3000))
+    heating_steps = int(md_settings.get("heating_steps", 1000))
+    if hold_steps < 1 or heating_steps < 1:
+        raise ValueError("vasp_md hold_steps and heating_steps must be positive")
     total_replicas = sum(spec.replicas for spec in specs)
     if packed_xyz is not None and total_replicas != 1:
         raise ValueError(
@@ -751,6 +1139,7 @@ def prepare_agglomeration(
     index_rows: list[dict] = []
     sanity_rows: list[dict] = []
     replica_records: list[dict] = []
+    xtb_cases: list[dict] = []
     status = "COMPLETE"
 
     for spec in specs:
@@ -821,18 +1210,77 @@ def prepare_agglomeration(
                     f"{packed}: atom ordering differs from the configured "
                     "LigParGen templates"
                 )
+            coordinates, compact_scale = _compact_molecule_centers(
+                coordinates,
+                symbols,
+                instances,
+                spec.compact_to_distance,
+            )
             uncentered_variants = {
                 scale: _scale_molecule_centers(coordinates, instances, scale)
                 for scale in spec.scales
             }
-            cell = _fixed_cell(uncentered_variants, spec.vacuum)
+            fixed_unrelaxed_cell = _fixed_cell(uncentered_variants, spec.vacuum)
             structures: list[dict] = []
             for variant_index, scale in enumerate(spec.scales):
-                variant = _center_in_cell(uncentered_variants[scale], cell)
                 case_name = (
                     f"r{replica:03d}_s{variant_index:02d}_{scale:.3f}"
                     .replace(".", "p")
                 )
+                raw_variant = uncentered_variants[scale]
+                xtb_relative: Path | None = None
+                if xtb_enabled:
+                    xtb_work = output / "xtb"
+                    if grouped:
+                        xtb_work /= spec.name
+                    xtb_work /= case_name
+                    xtb_work.mkdir(parents=True, exist_ok=True)
+                    xtb_relative = xtb_work.relative_to(output)
+                    xtb_input = xtb_work / "input.xyz"
+                    _write_raw_xyz(
+                        symbols,
+                        raw_variant,
+                        xtb_input,
+                        f"Packmol seed {seed}; adaptive center scale {compact_scale:.8f}",
+                    )
+                    total_charge = sum(
+                        template.count * template.net_charge
+                        for template in spec.templates
+                    )
+                    rounded_charge = round(total_charge)
+                    if abs(total_charge - rounded_charge) > 1.0e-2:
+                        raise ValueError(
+                            f"{spec.name}: xTB total charge {total_charge} is not integral"
+                        )
+                    xtb_cases.append(
+                        {
+                            "path": str(xtb_relative),
+                            "charge": rounded_charge,
+                            "uhf": int(xtb_settings.get("uhf", 0)),
+                        }
+                    )
+                    optimized = xtb_work / "xtbopt.xyz"
+                    if not optimized.is_file():
+                        status = "XTB_REQUIRED"
+                        structures.append(
+                            {
+                                "case": case_name,
+                                "status": "XTB_REQUIRED",
+                                "xtb_working_directory": str(xtb_relative),
+                            }
+                        )
+                        continue
+                    optimized_symbols, raw_variant = _read_xyz(optimized)
+                    if optimized_symbols != expected_symbols:
+                        raise ValueError(
+                            f"{optimized}: xTB changed atom ordering or element identities"
+                        )
+                cell = (
+                    _fixed_cell({1.0: raw_variant}, spec.vacuum)
+                    if xtb_enabled
+                    else fixed_unrelaxed_cell
+                )
+                variant = _center_in_cell(raw_variant, cell)
                 case = family_cases / case_name
                 case.mkdir(parents=True, exist_ok=resume)
                 ordered = _ordered_atoms(symbols, variant, instances)
@@ -856,7 +1304,7 @@ def prepare_agglomeration(
                     }
                     for index, atom in enumerate(ordered, 1)
                 ]
-                copied = _copy_reference(reference_dir, case)
+                copied = []
                 sanity = _structure_sanity(
                     variant,
                     symbols,
@@ -864,10 +1312,33 @@ def prepare_agglomeration(
                     list(spec.templates),
                     cell=cell,
                     requested_vacuum=spec.vacuum,
-                    minimum_distance=spec.minimum_distance,
+                    minimum_distance=(
+                        float(xtb_settings.get("minimum_distance_angstrom", 0.70))
+                        if xtb_enabled
+                        else spec.minimum_distance
+                    ),
                     reference_sanity=reference_validation,
                     expected_elements=expected_elements,
                     written_element_order=written_element_order,
+                    minimum_oxygen_oxygen_distance=(
+                        float(
+                            xtb_settings.get(
+                                "minimum_oxygen_oxygen_distance_angstrom", 2.20
+                            )
+                        )
+                        if xtb_enabled
+                        else None
+                    ),
+                    maximum_nearest_molecule_distance=(
+                        float(
+                            xtb_settings.get(
+                                "maximum_nearest_molecule_distance_angstrom", 6.0
+                            )
+                        )
+                        if xtb_enabled
+                        else None
+                    ),
+                    require_rigid_molecules=not xtb_enabled,
                 )
                 _write_sanity_report(case, sanity)
                 if sanity["status"] != "PASS":
@@ -883,6 +1354,18 @@ def prepare_agglomeration(
                     {"slug": template.slug, "count": template.count}
                     for template in spec.templates
                 ]
+                schedules = []
+                if not structures_only and xtb_enabled:
+                    schedules = _prepare_vasp_schedule(
+                        case,
+                        reference_dir,
+                        case / "POSCAR",
+                        job_prefix=f"{spec.name}_r{replica:03d}",
+                        hold_steps=hold_steps,
+                        heating_steps=heating_steps,
+                    )
+                elif not structures_only:
+                    copied = _copy_reference(reference_dir, case)
                 case_manifest = {
                     "schema_version": 3,
                     "generator": "nio-md-prep prepare-agglomeration",
@@ -891,6 +1374,19 @@ def prepare_agglomeration(
                     "replica": replica,
                     "packmol_seed": seed,
                     "center_scale": scale,
+                    "adaptive_compaction_scale": compact_scale,
+                    "xtb": (
+                        {
+                            "enabled": True,
+                            "working_directory": str(xtb_relative),
+                            "optimized_xyz_sha256": _sha256(
+                                output / xtb_relative / "xtbopt.xyz"
+                            ),
+                        }
+                        if xtb_enabled
+                        else {"enabled": False}
+                    ),
+                    "vasp_md_schedule": schedules,
                     "cell_angstrom": [cell, cell, cell],
                     "minimum_intermolecular_distance_angstrom": nearest,
                     "sanity_status": sanity["status"],
@@ -931,6 +1427,9 @@ def prepare_agglomeration(
                         "minimum_intermolecular_oxygen_oxygen_distance_angstrom": sanity[
                             "minimum_intermolecular_oxygen_oxygen_distance_angstrom"
                         ],
+                        "maximum_nearest_molecule_distance_angstrom": sanity[
+                            "maximum_nearest_molecule_distance_angstrom"
+                        ],
                         "potcar_status": sanity["vasp_reference"]["potcar_status"],
                         "sanity_status": sanity["status"],
                     }
@@ -958,6 +1457,9 @@ def prepare_agglomeration(
                         "minimum_intermolecular_oxygen_oxygen_distance_angstrom": sanity[
                             "minimum_intermolecular_oxygen_oxygen_distance_angstrom"
                         ],
+                        "maximum_nearest_molecule_distance_angstrom": sanity[
+                            "maximum_nearest_molecule_distance_angstrom"
+                        ],
                         "potcar_status": sanity["vasp_reference"]["potcar_status"],
                     }
                 )
@@ -975,12 +1477,19 @@ def prepare_agglomeration(
                     "agglomerate": spec.name,
                     "replica": replica,
                     "seed": seed,
-                    "status": "COMPLETE",
+                    "status": (
+                        "XTB_REQUIRED"
+                        if any(item.get("status") == "XTB_REQUIRED" for item in structures)
+                        else "COMPLETE"
+                    ),
                     "packed_xyz_sha256": _sha256(packed),
-                    "cell_angstrom": cell,
+                    "adaptive_compaction_scale": compact_scale,
                     "structures": structures,
                 }
             )
+
+    if xtb_enabled and xtb_cases:
+        _write_xtb_batch(output, xtb_cases, xtb_settings)
 
     if index_rows:
         with (output / "agglomeration_index.csv").open("w", newline="", encoding="utf-8") as handle:
@@ -1001,7 +1510,9 @@ def prepare_agglomeration(
         "status": status,
         "sanity_status": (
             "PASS"
-            if sanity_rows and all(row["status"] == "PASS" for row in sanity_rows)
+            if status == "COMPLETE"
+            and sanity_rows
+            and all(row["status"] == "PASS" for row in sanity_rows)
             else "PENDING"
         ),
         "config": str(config_path),
@@ -1014,12 +1525,19 @@ def prepare_agglomeration(
                 "packmol_tolerance_angstrom": specs[0].tolerance,
                 "vacuum_angstrom": specs[0].vacuum,
                 "minimum_distance_angstrom": specs[0].minimum_distance,
+                "compact_to_distance_angstrom": specs[0].compact_to_distance,
                 "center_scales": specs[0].scales,
             }
             if not grouped
             else config.get("agglomeration", {})
         ),
         "vasp_reference_sanity": reference_validation,
+        "xtb": xtb_settings | {"enabled": xtb_enabled},
+        "vasp_md": {
+            "hold_steps": hold_steps,
+            "heating_steps": heating_steps,
+            "schedules": ["300K", "300K_to_400K", "400K"],
+        },
         "output_mode": "structures_only" if structures_only else "vasp_runs",
         "case_root": case_root_name,
         "templates": [
@@ -1056,6 +1574,7 @@ def prepare_agglomeration(
                 "packmol_tolerance_angstrom": spec.tolerance,
                 "vacuum_angstrom": spec.vacuum,
                 "minimum_distance_angstrom": spec.minimum_distance,
+                "compact_to_distance_angstrom": spec.compact_to_distance,
                 "center_scales": spec.scales,
                 "composition": [
                     {"slug": template.slug, "count": template.count}

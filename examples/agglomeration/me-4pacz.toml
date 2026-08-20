@@ -4,7 +4,28 @@
 packmol_tolerance_angstrom = 3.0
 vacuum_angstrom = 8.0
 minimum_distance_angstrom = 2.5
+compact_to_distance_angstrom = 3.0
 center_scales = [1.00]
+
+[xtb]
+enabled = true
+gfn = 2
+opt_level = "loose"
+max_cycles = 100
+minimum_distance_angstrom = 0.70
+minimum_oxygen_oxygen_distance_angstrom = 2.20
+maximum_nearest_molecule_distance_angstrom = 6.0
+cpus = 8
+walltime = "12:00:00"
+partition = "workq"
+account = "loni_perovsk27"
+array_concurrency = 4
+
+[vasp_md]
+# Hold lengths can be increased after the pilot. The heating branch linearly
+# changes TEBEG=300 to TEEND=400 before its dependent 400 K hold starts.
+heating_steps = 1000
+hold_steps = 3000
 
 [[agglomerates]]
 name = "n02"

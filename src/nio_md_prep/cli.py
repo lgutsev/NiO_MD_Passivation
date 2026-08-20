@@ -140,6 +140,8 @@ def main(argv=None)->int:
             status=json.loads(manifest.read_text(encoding="utf-8"))["status"]
             if status=="PACKMOL_REQUIRED":
                 print(f"Agglomeration Packmol inputs written to {a.output}; run packmol in each replica directory and rerun this command with the same output path")
+            elif status=="XTB_REQUIRED":
+                print(f"Agglomeration xTB inputs written to {a.output}; submit run_xtb_array.sbatch and rerun this command with the same output path after the array finishes")
             else:
                 mode="structures" if a.structures_only else "launch-ready VASP runs"
                 print(f"Agglomeration {mode} written to {a.output}")
