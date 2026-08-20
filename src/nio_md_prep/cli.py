@@ -1,8 +1,11 @@
 from __future__ import annotations
+
 import argparse
+import json
 from pathlib import Path
+
 from .build import build, refresh_inputs
-from .config import molecule_dir, molecule_manifest, missing_ligpargen
+from .config import missing_ligpargen, molecule_dir, molecule_manifest
 from .geometry import elements
 from .lammps import charge, parse
 from .validate import validate
@@ -16,6 +19,11 @@ def main(argv=None)->int:
     i=sub.add_parser("build"); i.add_argument("config",type=Path); i.add_argument("--output",type=Path,required=True); i.add_argument("--packed-xyz",type=Path); i.add_argument("--packmol-seed",type=int); i.add_argument("--velocity-seed",type=int)
     i=sub.add_parser("refresh-inputs"); i.add_argument("config",type=Path); i.add_argument("--output",type=Path,required=True)
     i=sub.add_parser("validate"); i.add_argument("output",type=Path); i.add_argument("--primary-final",type=Path)
+    i=sub.add_parser("prepare-agglomeration")
+    i.add_argument("config",type=Path)
+    i.add_argument("--output",type=Path,required=True)
+    i.add_argument("--reference-dir",type=Path,help="copy reusable top-level VASP input files into every case")
+    i.add_argument("--packed-xyz",type=Path,help="use a supplied ordered Packmol XYZ for a one-replica offline build")
     i=sub.add_parser("archive-runs")
     i.add_argument("roots",nargs="+",type=Path,help="prepared/work roots to archive")
     i.add_argument("--output",type=Path,required=True)
@@ -116,6 +124,19 @@ def main(argv=None)->int:
         elif a.command=="build": build(a.config,a.output,packed_xyz=a.packed_xyz,packmol_seed=a.packmol_seed,velocity_seed=a.velocity_seed); print(f"Build plan written to {a.output}")
         elif a.command=="refresh-inputs": refresh_inputs(a.config,a.output); print(f"Stage inputs refreshed in {a.output}; simulation data were not modified")
         elif a.command=="validate": validate(a.output,primary_final=a.primary_final); print((a.output/"validation_report.txt").read_text(),end="")
+        elif a.command=="prepare-agglomeration":
+            from .agglomeration import prepare_agglomeration
+            manifest=prepare_agglomeration(
+                a.config,
+                a.output,
+                reference_dir=a.reference_dir,
+                packed_xyz=a.packed_xyz,
+            )
+            status=json.loads(manifest.read_text(encoding="utf-8"))["status"]
+            if status=="PACKMOL_REQUIRED":
+                print(f"Agglomeration Packmol inputs written to {a.output}; run packmol in each replica directory and rerun this command with the same output path")
+            else:
+                print(f"Agglomeration VASP structures written to {a.output}")
         elif a.command=="archive-runs":
             from .archive import create_run_archive
             result=create_run_archive(a.roots,a.output,force=a.force)

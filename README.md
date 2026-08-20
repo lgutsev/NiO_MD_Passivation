@@ -20,6 +20,12 @@ The repository is provided as-is so that the published calculations can be
 reproduced and the surface, passivants, loading, or protocol can be adapted to
 new tasks.
 
+For MLIP dataset construction, the repository also includes a reproducible
+phosphonate agglomeration generator. It creates independently randomized
+multi-molecule clusters and rigid compression/separation families as
+alphabetically ordered VASP `POSCAR` files, with molecule-level provenance and
+split-group metadata. See [`docs/agglomeration-training.md`](docs/agglomeration-training.md).
+
 ## Scientific picture
 
 The corrugated NiO surface was constructed from the NiO(110) model with Atomic
