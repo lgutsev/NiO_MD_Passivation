@@ -146,6 +146,32 @@ def test_agglomeration_packmol_inputs_can_be_resumed(tmp_path, monkeypatch):
     assert len(list((output / "structures").iterdir())) == 2
 
 
+def test_agglomeration_uses_loose_cost_conscious_defaults(tmp_path):
+    config = tmp_path / "defaults.toml"
+    config.write_text(
+        """[agglomeration]
+replicas = 1
+
+[[molecules]]
+slug = "me-4pacz"
+count = 2
+""",
+        encoding="utf-8",
+    )
+    manifest = prepare_agglomeration(
+        config,
+        tmp_path / "output",
+        packed_xyz=_packed(tmp_path / "packed.xyz"),
+        structures_only=True,
+    )
+    settings = json.loads(manifest.read_text())["settings"]
+    assert settings["radius_angstrom"] == 14.0
+    assert settings["packmol_tolerance_angstrom"] == 3.0
+    assert settings["vacuum_angstrom"] == 8.0
+    assert settings["minimum_distance_angstrom"] == 2.5
+    assert settings["center_scales"] == [1.0]
+
+
 def test_agglomeration_requires_complete_vasp_reference_by_default(tmp_path):
     with pytest.raises(ValueError, match="complete VASP --reference-dir is required"):
         prepare_agglomeration(

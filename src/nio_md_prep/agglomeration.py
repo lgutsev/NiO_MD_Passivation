@@ -570,11 +570,11 @@ def prepare_agglomeration(
     templates = _load_templates(config)
     replicas = int(settings.get("replicas", 4))
     base_seed = int(settings.get("base_seed", 2405367))
-    radius = float(settings.get("radius_angstrom", 12.0))
-    tolerance = float(settings.get("packmol_tolerance_angstrom", 2.0))
-    vacuum = float(settings.get("vacuum_angstrom", 12.0))
-    minimum_distance = float(settings.get("minimum_distance_angstrom", 1.1))
-    scales = tuple(float(value) for value in settings.get("center_scales", [0.9, 1.0, 1.3, 1.8]))
+    radius = float(settings.get("radius_angstrom", 14.0))
+    tolerance = float(settings.get("packmol_tolerance_angstrom", 3.0))
+    vacuum = float(settings.get("vacuum_angstrom", 8.0))
+    minimum_distance = float(settings.get("minimum_distance_angstrom", 2.5))
+    scales = tuple(float(value) for value in settings.get("center_scales", [1.0]))
     if replicas < 1 or not 0 < base_seed < 900000000:
         raise ValueError("replicas must be positive and base_seed must be between 1 and 899999999")
     if radius <= 0 or tolerance <= 0 or vacuum <= 0 or minimum_distance <= 0:

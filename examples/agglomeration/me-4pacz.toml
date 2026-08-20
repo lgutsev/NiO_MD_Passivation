@@ -1,13 +1,13 @@
 [agglomeration]
-# Independent Packmol arrangements. Every replica receives the complete set of
-# rigid center-of-mass separation/compression variants below.
+# Independent, moderately loose Packmol arrangements. DFT-MD is expected to
+# generate the approach and agglomeration pathway dynamically.
 replicas = 6
 base_seed = 2405367
-radius_angstrom = 12.0
-packmol_tolerance_angstrom = 2.0
-vacuum_angstrom = 12.0
-minimum_distance_angstrom = 1.10
-center_scales = [0.90, 1.00, 1.30, 1.80]
+radius_angstrom = 14.0
+packmol_tolerance_angstrom = 3.0
+vacuum_angstrom = 8.0
+minimum_distance_angstrom = 2.5
+center_scales = [1.00]
 
 [[molecules]]
 slug = "me-4pacz"

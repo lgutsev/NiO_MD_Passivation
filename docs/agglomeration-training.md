@@ -12,11 +12,16 @@ MD starting state.
 ## Generated ensemble
 
 For each replica, the command asks Packmol for an independently randomized
-spherical cluster. It then translates whole molecules so that their centers of
-mass are multiplied by every configured `center_scale` about the cluster center.
-Intramolecular coordinates are never scaled. Values below one create controlled
-compression, one preserves the Packmol cluster, and values above one provide
-partially and strongly separated controls.
+spherical cluster. The supplied Me-4PACz recipe uses only `center_scale = 1.0`:
+the molecules begin moderately separated and DFT-MD generates their approach
+and association. This avoids paying for several correlated static variants and
+prevents a strongly separated variant from inflating every cell in its family.
+
+Optional scale families remain supported. The generator translates whole
+molecules so their centers of mass are multiplied by every configured
+`center_scale` about the cluster center. Intramolecular coordinates are never
+scaled. Values below one create controlled compression, one preserves the
+Packmol cluster, and values above one provide separated controls.
 
 Every scale belonging to one replica uses the same cubic cell. Consequently,
 energy differences within that replica do not contain a changing-cell artifact.
@@ -33,6 +38,11 @@ The written POSCAR header is checked against the alphabetical element order.
 
 Normal operation requires a complete, working VASP reference directory and
 creates launch-ready calculation packages:
+
+The supplied pilot uses six independent loose-start calculations rather than
+four scale variants per packing. Its 8 A face vacuum is a cost-conscious
+starting point; compare a small subset against 10 A before treating absolute
+cluster energies as converged isolated-cluster values.
 
 ```bash
 nio-md-prep prepare-agglomeration \
@@ -79,11 +89,11 @@ for a one-replica offline or externally packed build.
 [agglomeration]
 replicas = 6
 base_seed = 2405367
-radius_angstrom = 12.0
-packmol_tolerance_angstrom = 2.0
-vacuum_angstrom = 12.0
-minimum_distance_angstrom = 1.10
-center_scales = [0.90, 1.00, 1.30, 1.80]
+radius_angstrom = 14.0
+packmol_tolerance_angstrom = 3.0
+vacuum_angstrom = 8.0
+minimum_distance_angstrom = 2.5
+center_scales = [1.00]
 
 [[molecules]]
 slug = "me-4pacz"
