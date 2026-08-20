@@ -5,6 +5,7 @@ import csv
 import hashlib
 import json
 import math
+import re
 import shutil
 import subprocess
 import tomllib
@@ -274,6 +275,193 @@ def _center_in_cell(
     ]
 
 
+def _distance(
+    first: tuple[float, float, float], second: tuple[float, float, float]
+) -> float:
+    return math.sqrt(sum((a - b) ** 2 for a, b in zip(first, second)))
+
+
+def _maximum_intramolecular_distance_deviation(
+    coordinates: list[tuple[float, float, float]],
+    instances: list[MoleculeInstance],
+    templates: list[MoleculeTemplate],
+) -> float:
+    by_slug = {template.slug: template for template in templates}
+    maximum = 0.0
+    for instance in instances:
+        actual = coordinates[instance.start:instance.stop]
+        reference = by_slug[instance.slug].coordinates
+        for left in range(len(actual)):
+            for right in range(left + 1, len(actual)):
+                maximum = max(
+                    maximum,
+                    abs(
+                        _distance(actual[left], actual[right])
+                        - _distance(reference[left], reference[right])
+                    ),
+                )
+    return maximum
+
+
+def _potcar_elements(path: Path) -> list[str]:
+    text = path.read_text(encoding="utf-8", errors="replace")
+    return re.findall(r"^\s*TITEL\s*=\s*\S+\s+([A-Z][a-z]?)", text, re.MULTILINE)
+
+
+def _reference_sanity(
+    reference: Path | None, expected_elements: list[str]
+) -> dict:
+    if reference is None:
+        return {
+            "status": "NOT_SUPPLIED",
+            "potcar_status": "NOT_SUPPLIED",
+            "expected_elements": expected_elements,
+        }
+    if not reference.is_dir():
+        raise FileNotFoundError(f"VASP reference directory not found: {reference}")
+    potcar = reference / "POTCAR"
+    if not potcar.is_file():
+        return {
+            "status": "PARTIAL",
+            "potcar_status": "NOT_SUPPLIED",
+            "expected_elements": expected_elements,
+        }
+    actual_elements = _potcar_elements(potcar)
+    if actual_elements != expected_elements:
+        raise ValueError(
+            f"{potcar}: POTCAR element order {actual_elements} does not match "
+            f"generated POSCAR order {expected_elements}"
+        )
+    return {
+        "status": "PASS",
+        "potcar_status": "PASS",
+        "expected_elements": expected_elements,
+        "potcar_elements": actual_elements,
+        "potcar_sha256": _sha256(potcar),
+    }
+
+
+def _structure_sanity(
+    coordinates: list[tuple[float, float, float]],
+    symbols: list[str],
+    instances: list[MoleculeInstance],
+    templates: list[MoleculeTemplate],
+    *,
+    cell: float,
+    requested_vacuum: float,
+    minimum_distance: float,
+    reference_sanity: dict,
+    expected_elements: list[str],
+    written_element_order: list[str],
+) -> dict:
+    tolerance = 1.0e-7
+    bounds = [
+        (
+            min(point[axis] for point in coordinates),
+            max(point[axis] for point in coordinates),
+        )
+        for axis in range(3)
+    ]
+    spans = [upper - lower for lower, upper in bounds]
+    lower_clearance = [lower for lower, _ in bounds]
+    upper_clearance = [cell - upper for _, upper in bounds]
+    minimum_face_clearance = min(lower_clearance + upper_clearance)
+    periodic_image_lower_bound = min(cell - span for span in spans)
+    nearest = _minimum_intermolecular_distance(coordinates, instances)
+    rigidity_error = _maximum_intramolecular_distance_deviation(
+        coordinates, instances, templates
+    )
+    expected_atom_count = sum(
+        template.count * len(template.symbols) for template in templates
+    )
+    checks = {
+        "finite_coordinates": all(
+            math.isfinite(value) for point in coordinates for value in point
+        ),
+        "positive_cell": math.isfinite(cell) and cell > 0.0,
+        "atom_count_matches": len(coordinates) == len(symbols) == expected_atom_count,
+        "all_atoms_inside_cell": all(
+            -tolerance <= value <= cell + tolerance
+            for point in coordinates
+            for value in point
+        ),
+        "requested_face_vacuum_present": (
+            minimum_face_clearance + tolerance >= requested_vacuum
+        ),
+        "periodic_image_clearance_present": (
+            periodic_image_lower_bound + tolerance >= 2.0 * requested_vacuum
+        ),
+        "intermolecular_distance_safe": nearest + tolerance >= minimum_distance,
+        "intramolecular_geometry_preserved": rigidity_error <= 1.0e-5,
+        "poscar_element_order_correct": written_element_order == expected_elements,
+        "potcar_order_compatible": reference_sanity["potcar_status"] in {
+            "PASS",
+            "NOT_SUPPLIED",
+        },
+    }
+    return {
+        "schema_version": 1,
+        "status": "PASS" if all(checks.values()) else "FAIL",
+        "checks": checks,
+        "atom_count": len(coordinates),
+        "element_order": written_element_order,
+        "expected_element_order": expected_elements,
+        "cell_angstrom": [cell, cell, cell],
+        "coordinate_bounds_angstrom": {
+            axis: [bounds[index][0], bounds[index][1]]
+            for index, axis in enumerate("xyz")
+        },
+        "span_angstrom": {axis: spans[index] for index, axis in enumerate("xyz")},
+        "lower_face_clearance_angstrom": {
+            axis: lower_clearance[index] for index, axis in enumerate("xyz")
+        },
+        "upper_face_clearance_angstrom": {
+            axis: upper_clearance[index] for index, axis in enumerate("xyz")
+        },
+        "requested_vacuum_angstrom": requested_vacuum,
+        "minimum_face_clearance_angstrom": minimum_face_clearance,
+        "periodic_image_separation_lower_bound_angstrom": periodic_image_lower_bound,
+        "minimum_intermolecular_distance_angstrom": nearest,
+        "required_minimum_intermolecular_distance_angstrom": minimum_distance,
+        "maximum_intramolecular_distance_deviation_angstrom": rigidity_error,
+        "vasp_reference": reference_sanity,
+    }
+
+
+def _write_sanity_report(case: Path, report: dict) -> None:
+    (case / "sanity_report.json").write_text(
+        json.dumps(report, indent=2) + "\n", encoding="utf-8"
+    )
+    lines = [
+        report["status"],
+        f"atoms={report['atom_count']}",
+        f"elements={' '.join(report['element_order'])}",
+        f"cell_angstrom={report['cell_angstrom'][0]:.8f}",
+        (
+            "minimum_face_clearance_angstrom="
+            f"{report['minimum_face_clearance_angstrom']:.8f}"
+        ),
+        (
+            "periodic_image_separation_lower_bound_angstrom="
+            f"{report['periodic_image_separation_lower_bound_angstrom']:.8f}"
+        ),
+        (
+            "minimum_intermolecular_distance_angstrom="
+            f"{report['minimum_intermolecular_distance_angstrom']:.8f}"
+        ),
+        (
+            "maximum_intramolecular_distance_deviation_angstrom="
+            f"{report['maximum_intramolecular_distance_deviation_angstrom']:.10e}"
+        ),
+        f"potcar_status={report['vasp_reference']['potcar_status']}",
+    ]
+    lines.extend(
+        f"check.{name}={'PASS' if passed else 'FAIL'}"
+        for name, passed in report["checks"].items()
+    )
+    (case / "sanity_report.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def _ordered_atoms(
     symbols: list[str],
     coordinates: list[tuple[float, float, float]],
@@ -390,8 +578,11 @@ def prepare_agglomeration(
         _write_template_xyz(template, path)
         template_paths[template.slug] = path
     expected_symbols, instances = _expected_layout(templates)
+    expected_elements = sorted(set(expected_symbols))
+    reference_validation = _reference_sanity(reference_dir, expected_elements)
     executable = shutil.which("packmol")
     index_rows: list[dict] = []
+    sanity_rows: list[dict] = []
     replica_records: list[dict] = []
     status = "COMPLETE"
 
@@ -458,12 +649,6 @@ def prepare_agglomeration(
         structures: list[dict] = []
         for variant_index, scale in enumerate(scales):
             variant = _center_in_cell(uncentered_variants[scale], cell)
-            nearest = _minimum_intermolecular_distance(variant, instances)
-            if nearest < minimum_distance:
-                raise ValueError(
-                    f"replica {replica} scale {scale:g} has an intermolecular distance "
-                    f"of {nearest:.3f} A below the {minimum_distance:.3f} A safety limit"
-                )
             case_name = f"r{replica:03d}_s{variant_index:02d}_{scale:.3f}".replace(".", "p")
             case = output / "structures" / case_name
             case.mkdir(parents=True, exist_ok=resume)
@@ -471,6 +656,9 @@ def prepare_agglomeration(
             title = f"phosphonate agglomeration replica={replica} center_scale={scale:g}"
             _write_poscar(ordered, cell, case / "POSCAR", title)
             _write_xyz(ordered, case / "structure.xyz", title)
+            written_element_order = (case / "POSCAR").read_text(
+                encoding="utf-8"
+            ).splitlines()[5].split()
             atom_map = [
                 {
                     "poscar_index": index,
@@ -483,8 +671,30 @@ def prepare_agglomeration(
                 for index, atom in enumerate(ordered, 1)
             ]
             copied = _copy_reference(reference_dir, case)
+            sanity = _structure_sanity(
+                variant,
+                symbols,
+                instances,
+                templates,
+                cell=cell,
+                requested_vacuum=vacuum,
+                minimum_distance=minimum_distance,
+                reference_sanity=reference_validation,
+                expected_elements=expected_elements,
+                written_element_order=written_element_order,
+            )
+            _write_sanity_report(case, sanity)
+            if sanity["status"] != "PASS":
+                failed = [
+                    name for name, passed in sanity["checks"].items() if not passed
+                ]
+                raise ValueError(
+                    f"{case}: structural sanity check failed: {', '.join(failed)}; "
+                    "see sanity_report.json"
+                )
+            nearest = sanity["minimum_intermolecular_distance_angstrom"]
             case_manifest = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "generator": "nio-md-prep prepare-agglomeration",
                 "tool_version": __version__,
                 "replica": replica,
@@ -492,6 +702,8 @@ def prepare_agglomeration(
                 "center_scale": scale,
                 "cell_angstrom": [cell, cell, cell],
                 "minimum_intermolecular_distance_angstrom": nearest,
+                "sanity_status": sanity["status"],
+                "sanity_report": "sanity_report.json",
                 "composition": [
                     {"slug": template.slug, "count": template.count}
                     for template in templates
@@ -514,6 +726,37 @@ def prepare_agglomeration(
                     "molecules": len(instances),
                     "cell_angstrom": cell,
                     "minimum_intermolecular_distance_angstrom": nearest,
+                    "minimum_face_clearance_angstrom": sanity[
+                        "minimum_face_clearance_angstrom"
+                    ],
+                    "periodic_image_separation_lower_bound_angstrom": sanity[
+                        "periodic_image_separation_lower_bound_angstrom"
+                    ],
+                    "maximum_intramolecular_distance_deviation_angstrom": sanity[
+                        "maximum_intramolecular_distance_deviation_angstrom"
+                    ],
+                    "potcar_status": sanity["vasp_reference"]["potcar_status"],
+                    "sanity_status": sanity["status"],
+                }
+            )
+            sanity_rows.append(
+                {
+                    "case": case_name,
+                    "path": str(relative),
+                    "status": sanity["status"],
+                    "minimum_face_clearance_angstrom": sanity[
+                        "minimum_face_clearance_angstrom"
+                    ],
+                    "requested_vacuum_angstrom": vacuum,
+                    "periodic_image_separation_lower_bound_angstrom": sanity[
+                        "periodic_image_separation_lower_bound_angstrom"
+                    ],
+                    "minimum_intermolecular_distance_angstrom": nearest,
+                    "required_minimum_intermolecular_distance_angstrom": minimum_distance,
+                    "maximum_intramolecular_distance_deviation_angstrom": sanity[
+                        "maximum_intramolecular_distance_deviation_angstrom"
+                    ],
+                    "potcar_status": sanity["vasp_reference"]["potcar_status"],
                 }
             )
             structures.append(
@@ -522,6 +765,7 @@ def prepare_agglomeration(
                     "path": str(relative),
                     "center_scale": scale,
                     "minimum_intermolecular_distance_angstrom": nearest,
+                    "sanity_status": sanity["status"],
                 }
             )
         replica_records.append(
@@ -540,11 +784,23 @@ def prepare_agglomeration(
             writer = csv.DictWriter(handle, fieldnames=list(index_rows[0]))
             writer.writeheader()
             writer.writerows(index_rows)
+    if sanity_rows:
+        with (output / "agglomeration_sanity.csv").open(
+            "w", newline="", encoding="utf-8"
+        ) as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(sanity_rows[0]))
+            writer.writeheader()
+            writer.writerows(sanity_rows)
     root_manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "generator": "nio-md-prep prepare-agglomeration",
         "tool_version": __version__,
         "status": status,
+        "sanity_status": (
+            "PASS"
+            if sanity_rows and all(row["status"] == "PASS" for row in sanity_rows)
+            else "PENDING"
+        ),
         "config": str(config_path),
         "config_sha256": _sha256(config_path),
         "settings": {
@@ -556,6 +812,7 @@ def prepare_agglomeration(
             "minimum_distance_angstrom": minimum_distance,
             "center_scales": scales,
         },
+        "vasp_reference_sanity": reference_validation,
         "molecules": [
             {
                 "slug": template.slug,

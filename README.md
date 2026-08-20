@@ -24,7 +24,10 @@ For MLIP dataset construction, the repository also includes a reproducible
 phosphonate agglomeration generator. It creates independently randomized
 multi-molecule clusters and rigid compression/separation families as
 alphabetically ordered VASP `POSCAR` files, with molecule-level provenance and
-split-group metadata. See [`docs/agglomeration-training.md`](docs/agglomeration-training.md).
+split-group metadata. Automatic fail-closed checks verify cell containment,
+requested vacuum, periodic-image clearance, molecular rigidity, contact
+distances, and POSCAR/POTCAR element-order compatibility. See
+[`docs/agglomeration-training.md`](docs/agglomeration-training.md).
 
 ## Scientific picture
 

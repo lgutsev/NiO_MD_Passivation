@@ -23,6 +23,14 @@ energy differences within that replica do not contain a changing-cell artifact.
 The generator rejects any compressed variant whose nearest intermolecular atom
 pair is below `minimum_distance_angstrom`.
 
+Every completed case is also required to pass an automatic structural sanity
+check. The check confirms that coordinates and cell dimensions are finite, all
+atoms lie inside the cell, the requested vacuum is present at every cell face,
+the cluster has at least twice that vacuum to its nearest periodic image,
+intermolecular distances remain above the configured safety threshold, and
+Packmol plus the rigid center scaling preserved every intramolecular distance.
+The written POSCAR header is checked against the alphabetical element order.
+
 The supplied pilot is:
 
 ```bash
@@ -45,6 +53,11 @@ Regular top-level reference files are copied into every case, except existing
 VASP structures and calculation outputs such as `POSCAR`, `CONTCAR`, `OUTCAR`,
 `WAVECAR`, and `CHGCAR`. This permits local `POTCAR`, `INCAR`, `KPOINTS`, and
 launcher reuse without placing licensed or generated files in the repository.
+When `POTCAR` is present, its `TITEL` sequence must exactly match the generated
+POSCAR header; a mismatch stops generation before calculations can be launched.
+For the supplied Me-4PACz example, the required order is `C H N O P`. A missing
+POTCAR is reported as `NOT_SUPPLIED` rather than treated as a structural error,
+so structure-only generation remains supported.
 
 If Packmol is unavailable, the command writes one `packmol.inp` directory per
 replica and records `PACKMOL_REQUIRED` in the root manifest. Run
@@ -90,12 +103,15 @@ Counts are explicit. The tool does not infer experimental solution ratios.
 agglomeration/me-4pacz/
   agglomeration_manifest.json
   agglomeration_index.csv
+  agglomeration_sanity.csv
   templates/
   packmol/replica_000/
   structures/r000_s00_0p900/
     POSCAR
     structure.xyz
     agglomeration_manifest.json
+    sanity_report.json
+    sanity_report.txt
 ```
 
 `POSCAR` uses an alphabetical element header and groups coordinates in the same
@@ -103,6 +119,12 @@ order. The per-case manifest maps every POSCAR index back to its molecule slug,
 molecule ID, local atom index, and original packed-XYZ index. The root manifest
 records molecule/configuration hashes, seeds, scales, cell dimensions, and
 minimum intermolecular distances.
+
+`sanity_report.json` contains the individual boolean checks and exact cell,
+bounding-box, face-clearance, periodic-image, intermolecular-distance, and
+intramolecular-rigidity values. `agglomeration_sanity.csv` provides one compact
+row per generated calculation. A case is written as scientifically usable only
+with `sanity_status = PASS`.
 
 All structures derived from the same Packmol replica are correlated and must
 remain in the same training, validation, or test split. A low random-frame

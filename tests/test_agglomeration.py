@@ -74,11 +74,21 @@ def _distance(first, second):
     return math.sqrt(sum((a - b) ** 2 for a, b in zip(first, second)))
 
 
+def _potcar(path: Path, elements: list[str]) -> Path:
+    path.write_text(
+        "\n".join(f"   TITEL  = PAW_PBE {element} 01Jan2001" for element in elements)
+        + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
 def test_agglomeration_builds_fixed_cell_center_scaled_vasp_cases(tmp_path):
     reference = tmp_path / "reference"
     reference.mkdir()
     (reference / "INCAR").write_text("ENCUT = 520\n", encoding="utf-8")
     (reference / "POSCAR").write_text("must not be copied\n", encoding="utf-8")
+    _potcar(reference / "POTCAR", ["C", "H", "N", "O", "P"])
     output = tmp_path / "agglomeration"
     manifest_path = prepare_agglomeration(
         _config(tmp_path / "config.toml"),
@@ -88,6 +98,8 @@ def test_agglomeration_builds_fixed_cell_center_scaled_vasp_cases(tmp_path):
     )
     root_manifest = json.loads(manifest_path.read_text())
     assert root_manifest["status"] == "COMPLETE"
+    assert root_manifest["sanity_status"] == "PASS"
+    assert root_manifest["vasp_reference_sanity"]["potcar_status"] == "PASS"
     cases = sorted((output / "structures").iterdir())
     assert len(cases) == 2
     assert (cases[0] / "INCAR").read_text() == "ENCUT = 520\n"
@@ -101,6 +113,14 @@ def test_agglomeration_builds_fixed_cell_center_scaled_vasp_cases(tmp_path):
     assert separated == pytest.approx(1.5 * base, rel=1e-9)
     assert len(json.loads((cases[0] / "agglomeration_manifest.json").read_text())["atom_map"]) == 90
     assert len((output / "agglomeration_index.csv").read_text().splitlines()) == 3
+    assert len((output / "agglomeration_sanity.csv").read_text().splitlines()) == 3
+    sanity = json.loads((cases[0] / "sanity_report.json").read_text())
+    assert sanity["status"] == "PASS"
+    assert all(sanity["checks"].values())
+    assert sanity["minimum_face_clearance_angstrom"] >= 10.0 - 1.0e-7
+    assert sanity["periodic_image_separation_lower_bound_angstrom"] >= 20.0 - 1.0e-7
+    assert sanity["maximum_intramolecular_distance_deviation_angstrom"] < 1.0e-7
+    assert (cases[0] / "sanity_report.txt").read_text().startswith("PASS\n")
 
 
 def test_agglomeration_packmol_inputs_can_be_resumed(tmp_path, monkeypatch):
@@ -130,3 +150,16 @@ count = 1
     )
     with pytest.raises(ValueError, match="at least two molecules"):
         prepare_agglomeration(config, tmp_path / "output")
+
+
+def test_agglomeration_rejects_wrong_potcar_order(tmp_path):
+    reference = tmp_path / "reference"
+    reference.mkdir()
+    _potcar(reference / "POTCAR", ["H", "C", "N", "O", "P"])
+    with pytest.raises(ValueError, match="POTCAR element order.*does not match"):
+        prepare_agglomeration(
+            _config(tmp_path / "config.toml"),
+            tmp_path / "output",
+            reference_dir=reference,
+            packed_xyz=_packed(tmp_path / "packed.xyz"),
+        )
