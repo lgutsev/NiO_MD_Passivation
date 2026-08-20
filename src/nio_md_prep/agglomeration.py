@@ -38,6 +38,19 @@ class MoleculeInstance:
     masses: tuple[float, ...]
 
 
+@dataclass(frozen=True)
+class AgglomerateSpec:
+    name: str
+    templates: tuple[MoleculeTemplate, ...]
+    replicas: int
+    base_seed: int
+    radius: float
+    tolerance: float
+    vacuum: float
+    minimum_distance: float
+    scales: tuple[float, ...]
+
+
 _VASP_OUTPUTS = {
     "POSCAR", "CONTCAR", "OUTCAR", "XDATCAR", "vasprun.xml", "OSZICAR",
     "WAVECAR", "CHG", "CHGCAR", "EIGENVAL", "DOSCAR", "PROCAR",
@@ -110,6 +123,93 @@ def _load_templates(config: dict) -> list[MoleculeTemplate]:
     if total < 2:
         raise ValueError("agglomeration generation requires at least two molecules")
     return templates
+
+
+def _agglomerate_specs(config: dict) -> tuple[list[AgglomerateSpec], bool]:
+    defaults = config.get("agglomeration", {})
+    explicit = config.get("agglomerates", [])
+    raw_specs = explicit or [
+        {
+            "name": "default",
+            "molecules": config.get("molecules", []),
+        }
+    ]
+    specs: list[AgglomerateSpec] = []
+    names: set[str] = set()
+    seeds: set[int] = set()
+    for index, raw in enumerate(raw_specs):
+        name = str(raw.get("name", f"set-{index:02d}")).strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name):
+            raise ValueError(
+                f"invalid agglomerate name {name!r}; use letters, numbers, '_' or '-'"
+            )
+        if name in names:
+            raise ValueError(f"duplicate agglomerate name: {name}")
+        names.add(name)
+        templates = tuple(_load_templates({"molecules": raw.get("molecules", [])}))
+        replicas = int(raw.get("replicas", defaults.get("replicas", 4)))
+        base_seed = int(raw.get("base_seed", defaults.get("base_seed", 2405367)))
+        radius = float(raw.get("radius_angstrom", defaults.get("radius_angstrom", 14.0)))
+        tolerance = float(
+            raw.get(
+                "packmol_tolerance_angstrom",
+                defaults.get("packmol_tolerance_angstrom", 3.0),
+            )
+        )
+        vacuum = float(raw.get("vacuum_angstrom", defaults.get("vacuum_angstrom", 8.0)))
+        minimum_distance = float(
+            raw.get(
+                "minimum_distance_angstrom",
+                defaults.get("minimum_distance_angstrom", 2.5),
+            )
+        )
+        scales = tuple(
+            float(value)
+            for value in raw.get(
+                "center_scales", defaults.get("center_scales", [1.0])
+            )
+        )
+        if replicas < 1 or not 0 < base_seed < 900000000:
+            raise ValueError(
+                f"{name}: replicas must be positive and base_seed must be between "
+                "1 and 899999999"
+            )
+        if radius <= 0 or tolerance <= 0 or vacuum <= 0 or minimum_distance <= 0:
+            raise ValueError(
+                f"{name}: radius, tolerance, vacuum, and minimum distance must be positive"
+            )
+        if (
+            not scales
+            or any(scale <= 0 for scale in scales)
+            or len(set(scales)) != len(scales)
+        ):
+            raise ValueError(
+                f"{name}: center_scales must contain distinct positive values"
+            )
+        resolved_seeds = set(range(base_seed, base_seed + replicas))
+        if max(resolved_seeds) >= 900000000:
+            raise ValueError(f"{name}: resolved Packmol seed exceeds 899999999")
+        overlap = seeds & resolved_seeds
+        if overlap:
+            raise ValueError(
+                f"{name}: Packmol seeds overlap another agglomerate family: "
+                + ", ".join(str(seed) for seed in sorted(overlap))
+            )
+        seeds.update(resolved_seeds)
+        specs.append(
+            AgglomerateSpec(
+                name=name,
+                templates=templates,
+                replicas=replicas,
+                base_seed=base_seed,
+                radius=radius,
+                tolerance=tolerance,
+                vacuum=vacuum,
+                minimum_distance=minimum_distance,
+                scales=scales,
+            )
+        )
+    return specs, bool(explicit)
 
 
 def _write_template_xyz(template: MoleculeTemplate, path: Path) -> None:
@@ -233,22 +333,57 @@ def _scale_molecule_centers(
     return result
 
 
-def _minimum_intermolecular_distance(
+def _closest_intermolecular_pair(
     coordinates: list[tuple[float, float, float]],
+    symbols: list[str],
     instances: list[MoleculeInstance],
-) -> float:
+) -> dict:
     molecule_for_atom = [0] * len(coordinates)
     for item in instances:
         molecule_for_atom[item.start:item.stop] = [item.molecule_id] * (item.stop - item.start)
     minimum = math.inf
+    pair: tuple[int, int] | None = None
+    minimum_oo = math.inf
+    oo_pair: tuple[int, int] | None = None
     for left, first in enumerate(coordinates):
         for right in range(left + 1, len(coordinates)):
             if molecule_for_atom[left] == molecule_for_atom[right]:
                 continue
             second = coordinates[right]
             distance = math.sqrt(sum((a - b) ** 2 for a, b in zip(first, second)))
-            minimum = min(minimum, distance)
-    return minimum
+            if distance < minimum:
+                minimum = distance
+                pair = (left, right)
+            if symbols[left] == symbols[right] == "O" and distance < minimum_oo:
+                minimum_oo = distance
+                oo_pair = (left, right)
+
+    def describe(indices: tuple[int, int] | None, distance: float) -> dict | None:
+        if indices is None:
+            return None
+        left, right = indices
+        return {
+            "distance_angstrom": distance,
+            "left": {
+                "source_atom_index": left + 1,
+                "element": symbols[left],
+                "molecule_id": molecule_for_atom[left],
+            },
+            "right": {
+                "source_atom_index": right + 1,
+                "element": symbols[right],
+                "molecule_id": molecule_for_atom[right],
+            },
+        }
+
+    return {
+        "minimum_distance_angstrom": minimum,
+        "closest_pair": describe(pair, minimum),
+        "minimum_oxygen_oxygen_distance_angstrom": (
+            minimum_oo if oo_pair is not None else None
+        ),
+        "closest_oxygen_oxygen_pair": describe(oo_pair, minimum_oo),
+    }
 
 
 def _fixed_cell(
@@ -378,7 +513,8 @@ def _structure_sanity(
     upper_clearance = [cell - upper for _, upper in bounds]
     minimum_face_clearance = min(lower_clearance + upper_clearance)
     periodic_image_lower_bound = min(cell - span for span in spans)
-    nearest = _minimum_intermolecular_distance(coordinates, instances)
+    contact = _closest_intermolecular_pair(coordinates, symbols, instances)
+    nearest = contact["minimum_distance_angstrom"]
     rigidity_error = _maximum_intramolecular_distance_deviation(
         coordinates, instances, templates
     )
@@ -433,6 +569,13 @@ def _structure_sanity(
         "minimum_face_clearance_angstrom": minimum_face_clearance,
         "periodic_image_separation_lower_bound_angstrom": periodic_image_lower_bound,
         "minimum_intermolecular_distance_angstrom": nearest,
+        "closest_intermolecular_pair": contact["closest_pair"],
+        "minimum_intermolecular_oxygen_oxygen_distance_angstrom": contact[
+            "minimum_oxygen_oxygen_distance_angstrom"
+        ],
+        "closest_intermolecular_oxygen_oxygen_pair": contact[
+            "closest_oxygen_oxygen_pair"
+        ],
         "required_minimum_intermolecular_distance_angstrom": minimum_distance,
         "maximum_intramolecular_distance_deviation_angstrom": rigidity_error,
         "vasp_reference": reference_sanity,
@@ -459,6 +602,15 @@ def _write_sanity_report(case: Path, report: dict) -> None:
         (
             "minimum_intermolecular_distance_angstrom="
             f"{report['minimum_intermolecular_distance_angstrom']:.8f}"
+        ),
+        (
+            "minimum_intermolecular_oxygen_oxygen_distance_angstrom="
+            + (
+                f"{report['minimum_intermolecular_oxygen_oxygen_distance_angstrom']:.8f}"
+                if report["minimum_intermolecular_oxygen_oxygen_distance_angstrom"]
+                is not None
+                else "NOT_PRESENT"
+            )
         ),
         (
             "maximum_intramolecular_distance_deviation_angstrom="
@@ -549,7 +701,7 @@ def prepare_agglomeration(
     packed_xyz: Path | None = None,
     structures_only: bool = False,
 ) -> Path:
-    """Prepare compact and separated molecular clusters as VASP run packages."""
+    """Prepare size-stratified molecular clusters as VASP run packages."""
     if reference_dir is not None and structures_only:
         raise ValueError("--reference-dir and --structures-only are mutually exclusive")
     manifest_path = output / "agglomeration_manifest.json"
@@ -566,33 +718,31 @@ def prepare_agglomeration(
     output.mkdir(parents=True, exist_ok=True)
     with config_path.open("rb") as handle:
         config = tomllib.load(handle)
-    settings = config.get("agglomeration", {})
-    templates = _load_templates(config)
-    replicas = int(settings.get("replicas", 4))
-    base_seed = int(settings.get("base_seed", 2405367))
-    radius = float(settings.get("radius_angstrom", 14.0))
-    tolerance = float(settings.get("packmol_tolerance_angstrom", 3.0))
-    vacuum = float(settings.get("vacuum_angstrom", 8.0))
-    minimum_distance = float(settings.get("minimum_distance_angstrom", 2.5))
-    scales = tuple(float(value) for value in settings.get("center_scales", [1.0]))
-    if replicas < 1 or not 0 < base_seed < 900000000:
-        raise ValueError("replicas must be positive and base_seed must be between 1 and 899999999")
-    if radius <= 0 or tolerance <= 0 or vacuum <= 0 or minimum_distance <= 0:
-        raise ValueError("radius, tolerance, vacuum, and minimum distance must be positive")
-    if not scales or any(scale <= 0 for scale in scales) or len(set(scales)) != len(scales):
-        raise ValueError("center_scales must contain distinct positive values")
-    if packed_xyz is not None and replicas != 1:
-        raise ValueError("--packed-xyz can only be used when replicas = 1")
+    specs, grouped = _agglomerate_specs(config)
+    total_replicas = sum(spec.replicas for spec in specs)
+    if packed_xyz is not None and total_replicas != 1:
+        raise ValueError(
+            "--packed-xyz can only be used when the complete campaign has one replica"
+        )
 
     template_dir = output / "templates"
     template_dir.mkdir(exist_ok=True)
     template_paths: dict[str, Path] = {}
-    for template in templates:
+    unique_templates: dict[str, MoleculeTemplate] = {}
+    for spec in specs:
+        for template in spec.templates:
+            unique_templates.setdefault(template.slug, template)
+    for template in unique_templates.values():
         path = template_dir / f"{template.slug}.xyz"
         _write_template_xyz(template, path)
         template_paths[template.slug] = path
-    expected_symbols, instances = _expected_layout(templates)
-    expected_elements = sorted(set(expected_symbols))
+    expected_elements = sorted(
+        {
+            symbol
+            for template in unique_templates.values()
+            for symbol in template.symbols
+        }
+    )
     reference_validation = _reference_sanity(
         reference_dir, expected_elements, structures_only=structures_only
     )
@@ -603,138 +753,159 @@ def prepare_agglomeration(
     replica_records: list[dict] = []
     status = "COMPLETE"
 
-    for replica in range(replicas):
-        seed = base_seed + replica
-        if seed >= 900000000:
-            raise ValueError("resolved Packmol seed exceeds 899999999")
-        work = output / "packmol" / f"replica_{replica:03d}"
-        work.mkdir(parents=True, exist_ok=True)
-        local_templates: dict[str, Path] = {}
-        for slug, source in template_paths.items():
-            destination = work / source.name
-            shutil.copy2(source, destination)
-            local_templates[slug] = destination
-        packed = work / "packed.xyz"
-        packmol_input = _packmol_input(
-            templates, local_templates, packed.name, seed, tolerance, radius
-        )
-        (work / "packmol.inp").write_text(packmol_input, encoding="utf-8")
-        if packed_xyz is not None:
-            shutil.copy2(packed_xyz, packed)
-        elif packed.exists():
-            pass
-        elif executable:
-            with (work / "packmol.inp").open("rb") as source:
-                run = subprocess.run(
-                    [executable],
-                    cwd=work,
-                    stdin=source,
-                    capture_output=True,
-                    text=False,
-                    check=False,
-                )
-            (work / "packmol.stdout").write_bytes(run.stdout)
-            (work / "packmol.stderr").write_bytes(run.stderr)
-            if run.returncode:
-                raise RuntimeError(
-                    f"Packmol failed for replica {replica}: "
-                    + run.stderr.decode(errors="replace")
-                )
-        else:
-            status = "PACKMOL_REQUIRED"
-            replica_records.append(
-                {
-                    "replica": replica,
-                    "seed": seed,
-                    "status": "PACKMOL_REQUIRED",
-                    "command": "packmol < packmol.inp",
-                    "working_directory": str(work.relative_to(output)),
-                }
+    for spec in specs:
+        expected_symbols, instances = _expected_layout(list(spec.templates))
+        family_packmol = output / "packmol"
+        family_cases = output / case_root_name
+        if grouped:
+            family_packmol /= spec.name
+            family_cases /= spec.name
+        for replica in range(spec.replicas):
+            seed = spec.base_seed + replica
+            work = family_packmol / f"replica_{replica:03d}"
+            work.mkdir(parents=True, exist_ok=True)
+            local_templates: dict[str, Path] = {}
+            for template in spec.templates:
+                source = template_paths[template.slug]
+                destination = work / source.name
+                shutil.copy2(source, destination)
+                local_templates[template.slug] = destination
+            packed = work / "packed.xyz"
+            packmol_input = _packmol_input(
+                list(spec.templates),
+                local_templates,
+                packed.name,
+                seed,
+                spec.tolerance,
+                spec.radius,
             )
-            continue
+            (work / "packmol.inp").write_text(packmol_input, encoding="utf-8")
+            if packed_xyz is not None:
+                shutil.copy2(packed_xyz, packed)
+            elif packed.exists():
+                pass
+            elif executable:
+                with (work / "packmol.inp").open("rb") as source:
+                    run = subprocess.run(
+                        [executable],
+                        cwd=work,
+                        stdin=source,
+                        capture_output=True,
+                        text=False,
+                        check=False,
+                    )
+                (work / "packmol.stdout").write_bytes(run.stdout)
+                (work / "packmol.stderr").write_bytes(run.stderr)
+                if run.returncode:
+                    raise RuntimeError(
+                        f"Packmol failed for {spec.name} replica {replica}: "
+                        + run.stderr.decode(errors="replace")
+                    )
+            else:
+                status = "PACKMOL_REQUIRED"
+                replica_records.append(
+                    {
+                        "agglomerate": spec.name,
+                        "replica": replica,
+                        "seed": seed,
+                        "status": "PACKMOL_REQUIRED",
+                        "command": "packmol < packmol.inp",
+                        "working_directory": str(work.relative_to(output)),
+                    }
+                )
+                continue
 
-        symbols, coordinates = _read_xyz(packed)
-        if symbols != expected_symbols:
-            raise ValueError(
-                f"{packed}: atom ordering differs from the configured LigParGen templates"
-            )
-        uncentered_variants = {
-            scale: _scale_molecule_centers(coordinates, instances, scale)
-            for scale in scales
-        }
-        cell = _fixed_cell(uncentered_variants, vacuum)
-        structures: list[dict] = []
-        for variant_index, scale in enumerate(scales):
-            variant = _center_in_cell(uncentered_variants[scale], cell)
-            case_name = f"r{replica:03d}_s{variant_index:02d}_{scale:.3f}".replace(".", "p")
-            case = output / case_root_name / case_name
-            case.mkdir(parents=True, exist_ok=resume)
-            ordered = _ordered_atoms(symbols, variant, instances)
-            title = f"phosphonate agglomeration replica={replica} center_scale={scale:g}"
-            _write_poscar(ordered, cell, case / "POSCAR", title)
-            _write_xyz(ordered, case / "structure.xyz", title)
-            written_element_order = (case / "POSCAR").read_text(
-                encoding="utf-8"
-            ).splitlines()[5].split()
-            atom_map = [
-                {
-                    "poscar_index": index,
-                    "element": atom["element"],
-                    "source_atom_index": atom["source_atom_index"],
-                    "molecule_slug": atom["molecule_slug"],
-                    "molecule_id": atom["molecule_id"],
-                    "local_atom_index": atom["local_atom_index"],
-                }
-                for index, atom in enumerate(ordered, 1)
-            ]
-            copied = _copy_reference(reference_dir, case)
-            sanity = _structure_sanity(
-                variant,
-                symbols,
-                instances,
-                templates,
-                cell=cell,
-                requested_vacuum=vacuum,
-                minimum_distance=minimum_distance,
-                reference_sanity=reference_validation,
-                expected_elements=expected_elements,
-                written_element_order=written_element_order,
-            )
-            _write_sanity_report(case, sanity)
-            if sanity["status"] != "PASS":
-                failed = [
-                    name for name, passed in sanity["checks"].items() if not passed
-                ]
+            symbols, coordinates = _read_xyz(packed)
+            if symbols != expected_symbols:
                 raise ValueError(
-                    f"{case}: structural sanity check failed: {', '.join(failed)}; "
-                    "see sanity_report.json"
+                    f"{packed}: atom ordering differs from the configured "
+                    "LigParGen templates"
                 )
-            nearest = sanity["minimum_intermolecular_distance_angstrom"]
-            case_manifest = {
-                "schema_version": 2,
-                "generator": "nio-md-prep prepare-agglomeration",
-                "tool_version": __version__,
-                "replica": replica,
-                "packmol_seed": seed,
-                "center_scale": scale,
-                "cell_angstrom": [cell, cell, cell],
-                "minimum_intermolecular_distance_angstrom": nearest,
-                "sanity_status": sanity["status"],
-                "sanity_report": "sanity_report.json",
-                "composition": [
-                    {"slug": template.slug, "count": template.count}
-                    for template in templates
-                ],
-                "reference_files": copied,
-                "vasp_ready": not structures_only,
-                "atom_map": atom_map,
+            uncentered_variants = {
+                scale: _scale_molecule_centers(coordinates, instances, scale)
+                for scale in spec.scales
             }
-            (case / "agglomeration_manifest.json").write_text(
-                json.dumps(case_manifest, indent=2) + "\n", encoding="utf-8"
-            )
-            relative = case.relative_to(output)
-            index_rows.append(
-                {
+            cell = _fixed_cell(uncentered_variants, spec.vacuum)
+            structures: list[dict] = []
+            for variant_index, scale in enumerate(spec.scales):
+                variant = _center_in_cell(uncentered_variants[scale], cell)
+                case_name = (
+                    f"r{replica:03d}_s{variant_index:02d}_{scale:.3f}"
+                    .replace(".", "p")
+                )
+                case = family_cases / case_name
+                case.mkdir(parents=True, exist_ok=resume)
+                ordered = _ordered_atoms(symbols, variant, instances)
+                title = (
+                    f"phosphonate agglomeration family={spec.name} "
+                    f"replica={replica} center_scale={scale:g}"
+                )
+                _write_poscar(ordered, cell, case / "POSCAR", title)
+                _write_xyz(ordered, case / "structure.xyz", title)
+                written_element_order = (case / "POSCAR").read_text(
+                    encoding="utf-8"
+                ).splitlines()[5].split()
+                atom_map = [
+                    {
+                        "poscar_index": index,
+                        "element": atom["element"],
+                        "source_atom_index": atom["source_atom_index"],
+                        "molecule_slug": atom["molecule_slug"],
+                        "molecule_id": atom["molecule_id"],
+                        "local_atom_index": atom["local_atom_index"],
+                    }
+                    for index, atom in enumerate(ordered, 1)
+                ]
+                copied = _copy_reference(reference_dir, case)
+                sanity = _structure_sanity(
+                    variant,
+                    symbols,
+                    instances,
+                    list(spec.templates),
+                    cell=cell,
+                    requested_vacuum=spec.vacuum,
+                    minimum_distance=spec.minimum_distance,
+                    reference_sanity=reference_validation,
+                    expected_elements=expected_elements,
+                    written_element_order=written_element_order,
+                )
+                _write_sanity_report(case, sanity)
+                if sanity["status"] != "PASS":
+                    failed = [
+                        name for name, passed in sanity["checks"].items() if not passed
+                    ]
+                    raise ValueError(
+                        f"{case}: structural sanity check failed: "
+                        f"{', '.join(failed)}; see sanity_report.json"
+                    )
+                nearest = sanity["minimum_intermolecular_distance_angstrom"]
+                composition = [
+                    {"slug": template.slug, "count": template.count}
+                    for template in spec.templates
+                ]
+                case_manifest = {
+                    "schema_version": 3,
+                    "generator": "nio-md-prep prepare-agglomeration",
+                    "tool_version": __version__,
+                    "agglomerate": spec.name,
+                    "replica": replica,
+                    "packmol_seed": seed,
+                    "center_scale": scale,
+                    "cell_angstrom": [cell, cell, cell],
+                    "minimum_intermolecular_distance_angstrom": nearest,
+                    "sanity_status": sanity["status"],
+                    "sanity_report": "sanity_report.json",
+                    "composition": composition,
+                    "reference_files": copied,
+                    "vasp_ready": not structures_only,
+                    "atom_map": atom_map,
+                }
+                (case / "agglomeration_manifest.json").write_text(
+                    json.dumps(case_manifest, indent=2) + "\n", encoding="utf-8"
+                )
+                relative = case.relative_to(output)
+                common = {
+                    "agglomerate": spec.name,
                     "case": case_name,
                     "path": str(relative),
                     "replica": replica,
@@ -744,58 +915,72 @@ def prepare_agglomeration(
                     "molecules": len(instances),
                     "cell_angstrom": cell,
                     "minimum_intermolecular_distance_angstrom": nearest,
-                    "minimum_face_clearance_angstrom": sanity[
-                        "minimum_face_clearance_angstrom"
-                    ],
-                    "periodic_image_separation_lower_bound_angstrom": sanity[
-                        "periodic_image_separation_lower_bound_angstrom"
-                    ],
-                    "maximum_intramolecular_distance_deviation_angstrom": sanity[
-                        "maximum_intramolecular_distance_deviation_angstrom"
-                    ],
-                    "potcar_status": sanity["vasp_reference"]["potcar_status"],
-                    "sanity_status": sanity["status"],
                 }
-            )
-            sanity_rows.append(
+                index_rows.append(
+                    common
+                    | {
+                        "minimum_face_clearance_angstrom": sanity[
+                            "minimum_face_clearance_angstrom"
+                        ],
+                        "periodic_image_separation_lower_bound_angstrom": sanity[
+                            "periodic_image_separation_lower_bound_angstrom"
+                        ],
+                        "maximum_intramolecular_distance_deviation_angstrom": sanity[
+                            "maximum_intramolecular_distance_deviation_angstrom"
+                        ],
+                        "minimum_intermolecular_oxygen_oxygen_distance_angstrom": sanity[
+                            "minimum_intermolecular_oxygen_oxygen_distance_angstrom"
+                        ],
+                        "potcar_status": sanity["vasp_reference"]["potcar_status"],
+                        "sanity_status": sanity["status"],
+                    }
+                )
+                sanity_rows.append(
+                    {
+                        "agglomerate": spec.name,
+                        "case": case_name,
+                        "path": str(relative),
+                        "status": sanity["status"],
+                        "minimum_face_clearance_angstrom": sanity[
+                            "minimum_face_clearance_angstrom"
+                        ],
+                        "requested_vacuum_angstrom": spec.vacuum,
+                        "periodic_image_separation_lower_bound_angstrom": sanity[
+                            "periodic_image_separation_lower_bound_angstrom"
+                        ],
+                        "minimum_intermolecular_distance_angstrom": nearest,
+                        "required_minimum_intermolecular_distance_angstrom": (
+                            spec.minimum_distance
+                        ),
+                        "maximum_intramolecular_distance_deviation_angstrom": sanity[
+                            "maximum_intramolecular_distance_deviation_angstrom"
+                        ],
+                        "minimum_intermolecular_oxygen_oxygen_distance_angstrom": sanity[
+                            "minimum_intermolecular_oxygen_oxygen_distance_angstrom"
+                        ],
+                        "potcar_status": sanity["vasp_reference"]["potcar_status"],
+                    }
+                )
+                structures.append(
+                    {
+                        "case": case_name,
+                        "path": str(relative),
+                        "center_scale": scale,
+                        "minimum_intermolecular_distance_angstrom": nearest,
+                        "sanity_status": sanity["status"],
+                    }
+                )
+            replica_records.append(
                 {
-                    "case": case_name,
-                    "path": str(relative),
-                    "status": sanity["status"],
-                    "minimum_face_clearance_angstrom": sanity[
-                        "minimum_face_clearance_angstrom"
-                    ],
-                    "requested_vacuum_angstrom": vacuum,
-                    "periodic_image_separation_lower_bound_angstrom": sanity[
-                        "periodic_image_separation_lower_bound_angstrom"
-                    ],
-                    "minimum_intermolecular_distance_angstrom": nearest,
-                    "required_minimum_intermolecular_distance_angstrom": minimum_distance,
-                    "maximum_intramolecular_distance_deviation_angstrom": sanity[
-                        "maximum_intramolecular_distance_deviation_angstrom"
-                    ],
-                    "potcar_status": sanity["vasp_reference"]["potcar_status"],
+                    "agglomerate": spec.name,
+                    "replica": replica,
+                    "seed": seed,
+                    "status": "COMPLETE",
+                    "packed_xyz_sha256": _sha256(packed),
+                    "cell_angstrom": cell,
+                    "structures": structures,
                 }
             )
-            structures.append(
-                {
-                    "case": case_name,
-                    "path": str(relative),
-                    "center_scale": scale,
-                    "minimum_intermolecular_distance_angstrom": nearest,
-                    "sanity_status": sanity["status"],
-                }
-            )
-        replica_records.append(
-            {
-                "replica": replica,
-                "seed": seed,
-                "status": "COMPLETE",
-                "packed_xyz_sha256": _sha256(packed),
-                "cell_angstrom": cell,
-                "structures": structures,
-            }
-        )
 
     if index_rows:
         with (output / "agglomeration_index.csv").open("w", newline="", encoding="utf-8") as handle:
@@ -810,7 +995,7 @@ def prepare_agglomeration(
             writer.writeheader()
             writer.writerows(sanity_rows)
     root_manifest = {
-        "schema_version": 2,
+        "schema_version": 3,
         "generator": "nio-md-prep prepare-agglomeration",
         "tool_version": __version__,
         "status": status,
@@ -821,28 +1006,63 @@ def prepare_agglomeration(
         ),
         "config": str(config_path),
         "config_sha256": _sha256(config_path),
-        "settings": {
-            "replicas": replicas,
-            "base_seed": base_seed,
-            "radius_angstrom": radius,
-            "packmol_tolerance_angstrom": tolerance,
-            "vacuum_angstrom": vacuum,
-            "minimum_distance_angstrom": minimum_distance,
-            "center_scales": scales,
-        },
+        "settings": (
+            {
+                "replicas": specs[0].replicas,
+                "base_seed": specs[0].base_seed,
+                "radius_angstrom": specs[0].radius,
+                "packmol_tolerance_angstrom": specs[0].tolerance,
+                "vacuum_angstrom": specs[0].vacuum,
+                "minimum_distance_angstrom": specs[0].minimum_distance,
+                "center_scales": specs[0].scales,
+            }
+            if not grouped
+            else config.get("agglomeration", {})
+        ),
         "vasp_reference_sanity": reference_validation,
         "output_mode": "structures_only" if structures_only else "vasp_runs",
         "case_root": case_root_name,
-        "molecules": [
+        "templates": [
             {
                 "slug": template.slug,
-                "count": template.count,
                 "atoms_per_molecule": len(template.symbols),
                 "source": str(template.source.relative_to(ROOT)),
                 "source_sha256": _sha256(template.source),
                 "ligpargen_net_charge": template.net_charge,
             }
-            for template in templates
+            for template in unique_templates.values()
+        ],
+        "molecules": (
+            [
+                {
+                    "slug": template.slug,
+                    "count": template.count,
+                    "atoms_per_molecule": len(template.symbols),
+                    "source": str(template.source.relative_to(ROOT)),
+                    "source_sha256": _sha256(template.source),
+                    "ligpargen_net_charge": template.net_charge,
+                }
+                for template in specs[0].templates
+            ]
+            if not grouped
+            else []
+        ),
+        "agglomerates": [
+            {
+                "name": spec.name,
+                "replicas": spec.replicas,
+                "base_seed": spec.base_seed,
+                "radius_angstrom": spec.radius,
+                "packmol_tolerance_angstrom": spec.tolerance,
+                "vacuum_angstrom": spec.vacuum,
+                "minimum_distance_angstrom": spec.minimum_distance,
+                "center_scales": spec.scales,
+                "composition": [
+                    {"slug": template.slug, "count": template.count}
+                    for template in spec.templates
+                ],
+            }
+            for spec in specs
         ],
         "replicas": replica_records,
     }

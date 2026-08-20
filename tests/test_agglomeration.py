@@ -128,6 +128,10 @@ def test_agglomeration_builds_fixed_cell_center_scaled_vasp_cases(tmp_path):
     assert all(sanity["checks"].values())
     assert sanity["minimum_face_clearance_angstrom"] >= 10.0 - 1.0e-7
     assert sanity["periodic_image_separation_lower_bound_angstrom"] >= 20.0 - 1.0e-7
+    assert sanity["minimum_intermolecular_oxygen_oxygen_distance_angstrom"] > 2.5
+    assert sanity["closest_intermolecular_pair"]["left"]["molecule_id"] != sanity[
+        "closest_intermolecular_pair"
+    ]["right"]["molecule_id"]
     assert sanity["maximum_intramolecular_distance_deviation_angstrom"] < 1.0e-7
     assert (cases[0] / "sanity_report.txt").read_text().startswith("PASS\n")
 
@@ -170,6 +174,29 @@ count = 2
     assert settings["vacuum_angstrom"] == 8.0
     assert settings["minimum_distance_angstrom"] == 2.5
     assert settings["center_scales"] == [1.0]
+
+
+def test_size_stratified_campaign_allocates_more_small_replicas(tmp_path, monkeypatch):
+    monkeypatch.setattr("nio_md_prep.agglomeration.shutil.which", lambda _: None)
+    output = tmp_path / "campaign"
+    manifest_path = prepare_agglomeration(
+        ROOT / "examples/agglomeration/me-4pacz.toml",
+        output,
+        structures_only=True,
+    )
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["status"] == "PACKMOL_REQUIRED"
+    expected = {"n02": 3, "n03": 3, "n04": 3, "n06": 2, "n08": 1}
+    assert {
+        family["name"]: family["replicas"]
+        for family in manifest["agglomerates"]
+    } == expected
+    assert len(manifest["replicas"]) == 12
+    for name, replicas in expected.items():
+        work = output / "packmol" / name
+        assert len(list(work.glob("replica_*"))) == replicas
+    assert "number 2" in (output / "packmol/n02/replica_000/packmol.inp").read_text()
+    assert "number 8" in (output / "packmol/n08/replica_000/packmol.inp").read_text()
 
 
 def test_agglomeration_requires_complete_vasp_reference_by_default(tmp_path):

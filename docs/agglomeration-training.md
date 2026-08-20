@@ -12,10 +12,16 @@ MD starting state.
 ## Generated ensemble
 
 For each replica, the command asks Packmol for an independently randomized
-spherical cluster. The supplied Me-4PACz recipe uses only `center_scale = 1.0`:
-the molecules begin moderately separated and DFT-MD generates their approach
-and association. This avoids paying for several correlated static variants and
-prevents a strongly separated variant from inflating every cell in its family.
+spherical cluster. The supplied Me-4PACz campaign varies cluster size as well
+as position and orientation: three replicas each contain 2, 3, or 4 molecules;
+two replicas contain 6 molecules; and one contains 8. This concentrates the
+sampling budget on inexpensive small clusters instead of spending equally on
+large, costly systems whose trajectories already contain many local contacts.
+
+Every family uses only `center_scale = 1.0`: molecules begin moderately
+separated and DFT-MD generates their approach and association. This avoids
+paying for correlated static variants and prevents a strongly separated
+variant from inflating every cell in its family.
 
 Optional scale families remain supported. The generator translates whole
 molecules so their centers of mass are multiplied by every configured
@@ -39,10 +45,10 @@ The written POSCAR header is checked against the alphabetical element order.
 Normal operation requires a complete, working VASP reference directory and
 creates launch-ready calculation packages:
 
-The supplied pilot uses six independent loose-start calculations rather than
-four scale variants per packing. Its 8 A face vacuum is a cost-conscious
-starting point; compare a small subset against 10 A before treating absolute
-cluster energies as converged isolated-cluster values.
+The supplied pilot contains 12 independent loose-start calculations across
+five cluster sizes. Its 8 A face vacuum is a cost-conscious starting point;
+compare a small subset against 10 A before treating absolute cluster energies
+as converged isolated-cluster values.
 
 ```bash
 nio-md-prep prepare-agglomeration \
@@ -87,29 +93,34 @@ for a one-replica offline or externally packed build.
 
 ```toml
 [agglomeration]
-replicas = 6
-base_seed = 2405367
-radius_angstrom = 14.0
 packmol_tolerance_angstrom = 3.0
 vacuum_angstrom = 8.0
 minimum_distance_angstrom = 2.5
 center_scales = [1.00]
 
-[[molecules]]
-slug = "me-4pacz"
-count = 4
+[[agglomerates]]
+name = "n02"
+replicas = 3
+base_seed = 2405202
+radius_angstrom = 11.5
+molecules = [{ slug = "me-4pacz", count = 2 }]
+
+# n03 and n04 also use 3 replicas; n06 uses 2; n08 uses 1.
 ```
 
-Mixtures use multiple molecule entries, for example:
+Each `[[agglomerates]]` table can define a different composition. Mixtures use
+multiple inline molecule entries, for example:
 
 ```toml
-[[molecules]]
-slug = "me-4pacz"
-count = 3
-
-[[molecules]]
-slug = "dcz-4p"
-count = 1
+[[agglomerates]]
+name = "mixed-n04"
+replicas = 2
+base_seed = 2405900
+radius_angstrom = 14.0
+molecules = [
+  { slug = "me-4pacz", count = 3 },
+  { slug = "dcz-4p", count = 1 },
+]
 ```
 
 Counts are explicit. The tool does not infer experimental solution ratios.
@@ -122,8 +133,12 @@ agglomeration/me-4pacz/
   agglomeration_index.csv
   agglomeration_sanity.csv
   templates/
-  packmol/replica_000/
-  vasp_runs/r000_s00_0p900/
+  packmol/n02/replica_000/
+  packmol/n03/replica_000/
+  packmol/n04/replica_000/
+  packmol/n06/replica_000/
+  packmol/n08/replica_000/
+  vasp_runs/n02/r000_s00_1p000/
     POSCAR
     INCAR
     KPOINTS
@@ -143,9 +158,11 @@ minimum intermolecular distances.
 
 `sanity_report.json` contains the individual boolean checks and exact cell,
 bounding-box, face-clearance, periodic-image, intermolecular-distance, and
-intramolecular-rigidity values. `agglomeration_sanity.csv` provides one compact
-row per generated calculation. A case is written as scientifically usable only
-with `sanity_status = PASS`.
+intramolecular-rigidity values. It explicitly identifies the closest
+intermolecular atom pair and the closest intermolecular O--O pair, including
+their molecule IDs, so a phosphonate-head collision is directly auditable.
+`agglomeration_sanity.csv` provides one compact row per generated calculation.
+A case is written as scientifically usable only with `sanity_status = PASS`.
 
 All structures derived from the same Packmol replica are correlated and must
 remain in the same training, validation, or test split. A low random-frame

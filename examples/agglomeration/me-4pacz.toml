@@ -1,14 +1,42 @@
 [agglomeration]
-# Independent, moderately loose Packmol arrangements. DFT-MD is expected to
-# generate the approach and agglomeration pathway dynamically.
-replicas = 6
-base_seed = 2405367
-radius_angstrom = 14.0
+# Shared safeguards. Each family below has its own size, radius, seed range,
+# and replica budget. DFT-MD generates association dynamically.
 packmol_tolerance_angstrom = 3.0
 vacuum_angstrom = 8.0
 minimum_distance_angstrom = 2.5
 center_scales = [1.00]
 
-[[molecules]]
-slug = "me-4pacz"
-count = 4
+[[agglomerates]]
+name = "n02"
+replicas = 3
+base_seed = 2405202
+radius_angstrom = 11.5
+molecules = [{ slug = "me-4pacz", count = 2 }]
+
+[[agglomerates]]
+name = "n03"
+replicas = 3
+base_seed = 2405303
+radius_angstrom = 13.0
+molecules = [{ slug = "me-4pacz", count = 3 }]
+
+[[agglomerates]]
+name = "n04"
+replicas = 3
+base_seed = 2405404
+radius_angstrom = 14.0
+molecules = [{ slug = "me-4pacz", count = 4 }]
+
+[[agglomerates]]
+name = "n06"
+replicas = 2
+base_seed = 2405606
+radius_angstrom = 16.5
+molecules = [{ slug = "me-4pacz", count = 6 }]
+
+[[agglomerates]]
+name = "n08"
+replicas = 1
+base_seed = 2405808
+radius_angstrom = 18.5
+molecules = [{ slug = "me-4pacz", count = 8 }]
