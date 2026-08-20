@@ -28,6 +28,7 @@ from .coverage import (
     provenance_fields,
     _resolve_trajectory,
 )
+from .model_scope import model_assessment
 
 
 @dataclass(frozen=True)
@@ -745,6 +746,7 @@ def analyze_interfacial_structure(
     timestep_fs: float | None = None,
     exchange_min_dwell_frames: int = 1,
     exchange_max_vacancy_gap_frames: int = 3,
+    analysis_profile: str = "classical-ff",
 ) -> Path:
     """Analyze interfacial structure and return ``interface_summary.json``."""
     np, _, _ = _dependencies()
@@ -769,6 +771,7 @@ def analyze_interfacial_structure(
         raise ValueError("exchange_min_dwell_frames must be >= 1")
     if exchange_max_vacancy_gap_frames < 0:
         raise ValueError("exchange_max_vacancy_gap_frames must be >= 0")
+    assessment = model_assessment(analysis_profile)
 
     trajectory_path = _resolve_trajectory(build_directory, trajectory)
     topology = load_interfacial_topology(
@@ -1421,6 +1424,7 @@ def analyze_interfacial_structure(
     )
     summary = {
         "method": "anchor_resolved_interfacial_structure",
+        "model_assessment": assessment,
         "trajectory": str(trajectory_path),
         "topology": str(build_directory / "topology_output.lmp"),
         "frames_in_trajectory": frame_count,
@@ -1452,6 +1456,9 @@ def analyze_interfacial_structure(
         },
         "z_dipole": {
             "available": bool(dipole_moment_series),
+            "workbook_reportable": assessment[
+                "electronic_proxy_reportable"
+            ],
             "reference": (
                 "Sum(q_i * z_i) over every atom in the frame (ligands and "
                 "substrate); translation-invariant because the assembled "
@@ -1484,6 +1491,7 @@ def analyze_interfacial_structure(
             ),
         },
         "site_competition": {
+            "workbook_reportable": assessment["kinetics_reportable"],
             "method": (
                 "Counts transitions where an exposed-Ni site's sole "
                 "occupying component changes to a DIFFERENT component "

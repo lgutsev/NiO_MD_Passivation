@@ -7,6 +7,7 @@ import csv
 import json
 import math
 
+from .model_scope import assessment_from_summary
 from .report import _openpyxl, _style_table_sheet, _temperature
 
 
@@ -54,6 +55,8 @@ RESULT_HEADERS = [
     "Contested Sites",
     "Exchange Rate (per ever-contacted site, /ns)",
     "Exchange Rate (per contested site, /ns)",
+    "Model Profile",
+    "Evidence Scope",
 ]
 
 COMPONENT_HEADERS = [
@@ -95,6 +98,8 @@ COMPONENT_HEADERS = [
     "Run Directory",
     "Packmol Seed",
     "Velocity Seed",
+    "Model Profile",
+    "Evidence Scope",
 ]
 
 TERMINAL_HEADERS = [
@@ -230,6 +235,11 @@ def collect_interfacial_results(
     cutoff_out = []
     for summary_path in paths:
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        assessment = assessment_from_summary(summary)
+        kinetics_reportable = bool(assessment["kinetics_reportable"])
+        electronic_reportable = bool(
+            assessment["electronic_proxy_reportable"]
+        )
         run_directory_path = summary_path.parents[1]
         system = run_directory_path.name
         run_directory = str(run_directory_path.relative_to(prepared_root))
@@ -300,25 +310,37 @@ def collect_interfacial_results(
             "shared": shared,
             "cross_component_exchange_events": summary.get(
                 "site_competition", {}
-            ).get("cross_component_exchange_event_count"),
+            ).get("cross_component_exchange_event_count")
+            if kinetics_reportable
+            else None,
             "exchange_analysis_time_ps": summary.get(
                 "site_competition", {}
-            ).get("analyzed_time_ps"),
+            ).get("analyzed_time_ps") if kinetics_reportable else None,
             "exchange_rate_per_site_per_ns": summary.get(
                 "site_competition", {}
-            ).get("exchange_rate_per_site_per_ns"),
+            ).get("exchange_rate_per_site_per_ns")
+            if kinetics_reportable
+            else None,
             "ever_contacted_site_count": summary.get(
                 "site_competition", {}
-            ).get("ever_contacted_site_count"),
+            ).get("ever_contacted_site_count")
+            if kinetics_reportable
+            else None,
             "contested_site_count": summary.get(
                 "site_competition", {}
-            ).get("contested_site_count"),
+            ).get("contested_site_count")
+            if kinetics_reportable
+            else None,
             "exchange_rate_per_ever_contacted_site_per_ns": summary.get(
                 "site_competition", {}
-            ).get("exchange_rate_per_ever_contacted_site_per_ns"),
+            ).get("exchange_rate_per_ever_contacted_site_per_ns")
+            if kinetics_reportable
+            else None,
             "exchange_rate_per_contested_site_per_ns": summary.get(
                 "site_competition", {}
-            ).get("exchange_rate_per_contested_site_per_ns"),
+            ).get("exchange_rate_per_contested_site_per_ns")
+            if kinetics_reportable
+            else None,
             # Internal-only fields (not surfaced as workbook columns): used by
             # publication_report.py's comparability gate.
             "first_step": summary.get("provenance", {}).get("first_step"),
@@ -329,14 +351,16 @@ def collect_interfacial_results(
                 summary.get("z_dipole", {})
                 .get("moment_e_angstrom", {})
                 .get("mean")
-                if summary.get("z_dipole", {}).get("available")
+                if electronic_reportable
+                and summary.get("z_dipole", {}).get("available")
                 else None
             ),
             "z_dipole_potential_step_volts": (
                 summary.get("z_dipole", {})
                 .get("approximate_potential_step_volts", {})
                 .get("mean")
-                if summary.get("z_dipole", {}).get("available")
+                if electronic_reportable
+                and summary.get("z_dipole", {}).get("available")
                 else None
             ),
             "primary_name": primary["name"] if primary else None,
@@ -353,7 +377,7 @@ def collect_interfacial_results(
             ),
             "primary_persistent": comp_value(
                 primary, "persistent_bound_molecules_percent"
-            ),
+            ) if kinetics_reportable else None,
             "primary_tilt": comp_metric(primary, "tilt_degrees"),
             "primary_p2": comp_metric(primary, "orientational_P2"),
             "primary_p_height": comp_metric(
@@ -376,7 +400,7 @@ def collect_interfacial_results(
             ),
             "secondary_persistent": comp_value(
                 secondary, "persistent_bound_molecules_percent"
-            ),
+            ) if kinetics_reportable else None,
             "secondary_tilt": comp_metric(secondary, "tilt_degrees"),
             "secondary_p2": comp_metric(secondary, "orientational_P2"),
             "secondary_p_height": comp_metric(
@@ -393,6 +417,8 @@ def collect_interfacial_results(
             "run_directory": run_directory,
             "packmol_seed": random_seeds.get("packmol_seed"),
             "velocity_seed": random_seeds.get("velocity_seed"),
+            "model_profile": assessment["profile"],
+            "evidence_scope": assessment["interpretation_note"],
         }
         results.append(result)
 
@@ -415,7 +441,7 @@ def collect_interfacial_results(
                     "bound_sem": metrics["bound_fraction_percent"]["block_sem"],
                     "persistent": values.get(
                         "persistent_bound_molecules_percent"
-                    ),
+                    ) if kinetics_reportable else None,
                     "occupancy": values.get(
                         "mean_molecule_contact_occupancy_percent"
                     ),
@@ -432,13 +458,23 @@ def collect_interfacial_results(
                     "nearest_neighbor": metrics[
                         "nearest_neighbor_distance_angstrom"
                     ]["mean"],
-                    "residence_events": values.get("residence_event_count"),
+                    "residence_events": values.get("residence_event_count")
+                    if kinetics_reportable
+                    else None,
                     "mean_residence_frames": values.get(
                         "mean_residence_frames"
-                    ),
-                    "max_residence_frames": values.get("max_residence_frames"),
-                    "mean_residence_ps": values.get("mean_residence_ps"),
-                    "max_residence_ps": values.get("max_residence_ps"),
+                    ) if kinetics_reportable else None,
+                    "max_residence_frames": values.get(
+                        "max_residence_frames"
+                    )
+                    if kinetics_reportable
+                    else None,
+                    "mean_residence_ps": values.get("mean_residence_ps")
+                    if kinetics_reportable
+                    else None,
+                    "max_residence_ps": values.get("max_residence_ps")
+                    if kinetics_reportable
+                    else None,
                     "plane_tilt": _metric(
                         values, "plane_normal_tilt_degrees"
                     ),
@@ -466,6 +502,8 @@ def collect_interfacial_results(
                     "run_directory": run_directory,
                     "packmol_seed": random_seeds.get("packmol_seed"),
                     "velocity_seed": random_seeds.get("velocity_seed"),
+                    "model_profile": assessment["profile"],
+                    "evidence_scope": assessment["interpretation_note"],
                 }
             )
             for cutoff, cutoff_values in sorted(
@@ -679,6 +717,8 @@ def create_interfacial_workbook(prepared_root: Path, output: Path) -> Path:
             row["contested_site_count"],
             row["exchange_rate_per_ever_contacted_site_per_ns"],
             row["exchange_rate_per_contested_site_per_ns"],
+            row["model_profile"],
+            row["evidence_scope"],
         ]
         for row in results
     ]
@@ -859,6 +899,8 @@ def create_interfacial_workbook(prepared_root: Path, output: Path) -> Path:
             row["run_directory"],
             row["packmol_seed"],
             row["velocity_seed"],
+            row["model_profile"],
+            row["evidence_scope"],
         ]
         for row in components
     ]
@@ -1019,6 +1061,10 @@ def create_interfacial_workbook(prepared_root: Path, output: Path) -> Path:
         [
             "Workbook purpose",
             "Anchor-resolved structure, ordering, and wall-relaxation comparisons; separate from projected coverage.",
+        ],
+        [
+            "Force-field-aware scope",
+            "Each row records its Model Profile and Evidence Scope. Classical-ff summaries keep model-sensitive raw calculations in JSON but leave persistence, residence, site-exchange, and dipole-derived workbook fields blank. MLIP enables kinetics only after validation; charge-aware-mlip is required for the dipole proxy.",
         ],
         [
             "Bound molecule",

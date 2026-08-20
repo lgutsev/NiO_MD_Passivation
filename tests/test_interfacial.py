@@ -297,6 +297,9 @@ def test_anchor_orientation_terminal_rdf_and_density_outputs(tmp_path):
 
     summary = json.loads(summary_path.read_text())
     assert summary["method"] == "anchor_resolved_interfacial_structure"
+    assert summary["model_assessment"]["profile"] == "classical-ff"
+    assert summary["site_competition"]["workbook_reportable"] is False
+    assert summary["z_dipole"]["workbook_reportable"] is False
     assert summary["surface_site_count"] == 2
     assert summary["contact_cutoff_method"] == "fixed_common_cutoff"
     assert summary["contact_sensitivity_cutoffs_angstrom"] == [3.0, 3.25, 3.5]
@@ -436,6 +439,27 @@ def test_separate_workbook_contains_normalized_sheets(tmp_path):
     assert [cell.value for cell in workbook["Components"][1]] == COMPONENT_HEADERS
     assert workbook["Results"]["R2"].value == pytest.approx(100.0)
     assert workbook["Results"]["AH2"].value == "OK"
+    result_headers = {
+        cell.value: cell.column for cell in workbook["Results"][1]
+    }
+    assert workbook["Results"].cell(
+        2, result_headers["Cross-Component Exchange Events"]
+    ).value is None
+    assert workbook["Results"].cell(
+        2, result_headers["Approx. Potential Step (V)"]
+    ).value is None
+    assert workbook["Results"].cell(
+        2, result_headers["Model Profile"]
+    ).value == "classical-ff"
+    component_headers = {
+        cell.value: cell.column for cell in workbook["Components"][1]
+    }
+    assert workbook["Components"].cell(
+        2, component_headers["Persistent Bound (%)"]
+    ).value is None
+    assert workbook["Components"].cell(
+        2, component_headers["Residence Events"]
+    ).value is None
     assert {
         row[3].value for row in workbook["Results"].iter_rows(min_row=2)
     } == {"hold-300K", "relax-300K", "deposition"}
