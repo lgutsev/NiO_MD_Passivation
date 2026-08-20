@@ -229,7 +229,9 @@ count = 2
         packed_xyz=_packed(tmp_path / "packed.xyz"),
     )
     assert json.loads(first.read_text())["status"] == "XTB_REQUIRED"
-    assert (output / "run_xtb_array.sbatch").is_file()
+    xtb_launcher = (output / "run_xtb_array.sbatch").read_text()
+    assert "#SBATCH -c 1" in xtb_launcher
+    assert "XTB_ENV:=/project/lgutsev/env/xtb_env" in xtb_launcher
     assert not (output / "vasp_runs/r000_s00_1p000/POSCAR").exists()
     xtb_work = output / "xtb/r000_s00_1p000"
     shutil.copy2(xtb_work / "input.xyz", xtb_work / "xtbopt.xyz")

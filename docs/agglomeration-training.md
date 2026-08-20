@@ -113,18 +113,16 @@ export XTB_EXE=/path/to/project/envs/xtb/bin/xtb
 sbatch agglomeration/me-4pacz/run_xtb_array.sbatch
 ```
 
-For the older LONI setup used by this project, no exports are necessary when
-`$HOME/miniconda3/etc/profile.d/conda.sh` exists and the environment is named
-`xtb`: the generated script activates it automatically. Nonstandard locations
+No exports are necessary for the current LONI installation: the generated
+script first tries `/project/lgutsev/env/xtb_env/bin/xtb`. Nonstandard locations
 can be selected without editing the generated script:
 
 ```bash
-export CONDA_SH=/path/to/miniconda3/etc/profile.d/conda.sh
-export XTB_ENV=xtb
+export XTB_ENV=/path/to/another/xtb/environment
 sbatch agglomeration/me-4pacz/run_xtb_array.sbatch
 ```
 
-The array uses one task and eight OpenMP cores per aggregate, sets
+The array uses one task and one CPU per aggregate, sets
 `ulimit -s unlimited`, and writes `xtb.out`, `xtb.err`, and `xtbopt.xyz` in each
 `xtb/...` directory. Test one array index first with
 `sbatch --array=0 run_xtb_array.sbatch` before releasing the complete array.

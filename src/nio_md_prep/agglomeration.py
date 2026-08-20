@@ -1005,7 +1005,7 @@ def _write_xtb_batch(output: Path, cases: list[dict], settings: dict) -> None:
     )
     account = str(settings.get("account", "loni_perovsk27"))
     partition = str(settings.get("partition", "workq"))
-    cpus = int(settings.get("cpus", 8))
+    cpus = int(settings.get("cpus", 1))
     walltime = str(settings.get("walltime", "12:00:00"))
     gfn = int(settings.get("gfn", 2))
     opt_level = str(settings.get("opt_level", "loose"))
@@ -1035,17 +1035,23 @@ if [[ -s xtbopt.xyz ]]; then
   exit 0
 fi
 
-: "${{XTB_EXE:=xtb}}"
+: "${{XTB_ENV:=/project/lgutsev/env/xtb_env}}"
+if [[ -z "${{XTB_EXE:-}}" ]]; then
+  if [[ -x "$XTB_ENV/bin/xtb" ]]; then
+    XTB_EXE="$XTB_ENV/bin/xtb"
+  else
+    XTB_EXE=xtb
+  fi
+fi
 if ! command -v "$XTB_EXE" >/dev/null 2>&1; then
   : "${{CONDA_SH:=$HOME/miniconda3/etc/profile.d/conda.sh}}"
-  : "${{XTB_ENV:=xtb}}"
   if [[ -f "$CONDA_SH" ]]; then
     source "$CONDA_SH"
     conda activate "$XTB_ENV"
   fi
 fi
 if ! command -v "$XTB_EXE" >/dev/null 2>&1; then
-  echo "xTB not found; set XTB_EXE or provide CONDA_SH and XTB_ENV" >&2
+  echo "xTB not found; set XTB_EXE or provide a valid XTB_ENV" >&2
   exit 127
 fi
 export OMP_NUM_THREADS=${{SLURM_CPUS_PER_TASK:-{cpus}}}
