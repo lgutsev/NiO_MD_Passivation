@@ -9,6 +9,7 @@ from .config import missing_ligpargen, molecule_dir, molecule_manifest
 from .geometry import elements
 from .lammps import charge, parse
 from .validate import validate
+from .analysis.model_scope import MODEL_PROFILES
 
 TEMPLATE='''[molecule]\ndisplay_name = "{name}"\nslug = "{slug}"\nrole = "secondary"\nexpected_net_charge = 0.0\nphosphonic_acid_anchors = 1\nanchor_atom_ids = []\n\n[files]\nligpargen = "ligpargen.lmp"\ngeometry = ""\noverride = ""\n'''
 
@@ -103,6 +104,7 @@ def main(argv=None)->int:
     i.add_argument("--timestep-fs",type=float)
     i.add_argument("--exchange-min-dwell-frames",type=int,default=1,help="consecutive sole-owner frames required to confirm a site hand-off")
     i.add_argument("--exchange-max-vacancy-gap-frames",type=int,default=3,help="consecutive empty/shared frames after which a site's prior owner is forgotten")
+    i.add_argument("--analysis-profile",choices=MODEL_PROFILES,default="classical-ff",help="trajectory model evidence scope; classical-ff withholds kinetic and dipole claims from workbooks")
     i=sub.add_parser("summarize-interface")
     i.add_argument("prepared_root",type=Path)
     i.add_argument("--output",type=Path,required=True)
@@ -197,6 +199,7 @@ def main(argv=None)->int:
                 timestep_fs=a.timestep_fs,
                 exchange_min_dwell_frames=a.exchange_min_dwell_frames,
                 exchange_max_vacancy_gap_frames=a.exchange_max_vacancy_gap_frames,
+                analysis_profile=a.analysis_profile,
             )
             print(f"Interfacial analysis written to {summary.parent}")
         elif a.command=="summarize-interface":

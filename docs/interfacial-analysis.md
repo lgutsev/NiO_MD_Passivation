@@ -1,5 +1,17 @@
 # Anchor-resolved interfacial structure analysis
 
+## Force-field-aware evidence scope
+
+`analyze-interface` defaults to `--analysis-profile classical-ff`. Under this
+profile, geometric and broad structural observables remain visible, while
+persistence, residence, site-exchange, and z-dipole/potential-step values are
+retained only in the JSON audit trail and withheld from workbook-facing
+cells. Use `--analysis-profile mlip` only for a validated energy/force MLIP;
+this enables kinetics but not electronic-adjacent dipole claims. Use
+`--analysis-profile charge-aware-mlip` only when charges or dipoles have been
+separately predicted and validated. The potential-step value remains an
+idealized comparative proxy under every profile.
+
 `nio-md-prep analyze-interface` complements projected coverage with
 surface-normal and connectivity-aware observables. It is intended to
 distinguish three physically different outcomes that a top-view union cannot:

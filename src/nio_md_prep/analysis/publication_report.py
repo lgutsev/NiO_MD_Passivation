@@ -31,6 +31,8 @@ DRAFT_HEADERS = [
     "Approx. Potential Step (V)",
     "Deposition Exchange Rate (events/site/ns)",
     "QC Status",
+    "Model Profile",
+    "Evidence Scope",
 ]
 
 ALL_METRICS_HEADERS = [
@@ -74,6 +76,8 @@ ALL_METRICS_HEADERS = [
     "QC Status",
     "Run Directory",
     "Comparability Note",
+    "Model Profile",
+    "Evidence Scope",
 ]
 
 # Public name retained for callers that imported the original constant.
@@ -504,6 +508,12 @@ def build_publication_rows(
                 "velocity_seed": (
                     interface.get("velocity_seed") if interface else None
                 ),
+                "model_profile": (
+                    interface.get("model_profile") if interface else None
+                ),
+                "evidence_scope": (
+                    interface.get("evidence_scope") if interface else None
+                ),
                 "status": status,
                 "comparability_note": comparability_note,
                 "run_directory": (
@@ -834,6 +844,8 @@ def create_publication_workbook(
             row["z_dipole_potential_step_volts"],
             row["deposition_exchange_rate"],
             row["status"],
+            row["model_profile"],
+            row["evidence_scope"],
         ]
         for row in summary_rows
     ]
@@ -875,6 +887,8 @@ def create_publication_workbook(
         26,
         32,
         18,
+        20,
+        72,
     ]
     for index, width in enumerate(summary_widths, 1):
         summary_sheet.column_dimensions[
@@ -930,6 +944,8 @@ def create_publication_workbook(
             row["status"],
             row["run_directory"],
             row["comparability_note"],
+            row["model_profile"],
+            row["evidence_scope"],
         ]
         for row in summary_rows
     ]
@@ -960,7 +976,7 @@ def create_publication_workbook(
     all_metrics_widths = [
         32, 24, 19, 20, 15, 16, 22, 21, 18, 24, 26, 20, 18, 26, 26, 20,
         27, 28, 23, 23, 25, 25, 33, 23, 24, 30, 25, 26, 30, 27, 22, 20,
-        22, 22, 22, 17, 17, 18, 34, 60,
+        22, 22, 22, 17, 17, 18, 34, 60, 20, 72,
     ]
     for index, width in enumerate(all_metrics_widths, 1):
         all_metrics_sheet.column_dimensions[
@@ -1210,6 +1226,10 @@ def create_publication_workbook(
         [
             "Preliminary status",
             "Each detailed row retains its run directory and assembly seeds. Block SEM measures time-series sampling within one trajectory and is not independent-seed uncertainty. Correlation rows average every available MD seed for the same assembly, molecule, temperature, and film state.",
+        ],
+        [
+            "Force-field-aware scope",
+            "Model Profile and Evidence Scope are inherited from each interface summary. Classical-ff summaries withhold persistence/residence/site-exchange and dipole-derived workbook values. MLIP enables kinetics only after relevant validation; only charge-aware-mlip enables the dipole proxy, which remains an idealized descriptor rather than a direct work-function prediction.",
         ],
         [
             "CoSAM vs Sequential deltas",

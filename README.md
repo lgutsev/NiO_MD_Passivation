@@ -662,8 +662,52 @@ lying above another SAM. A separate interfacial module therefore reports:
 - lateral same-component and cross-component two-dimensional RDFs; and
 - matched compressed-hold versus decompressed-relaxation changes.
 
-**Experimental additions** (new, not yet validated against real
-measurements — try them and judge for yourself):
+### Force-field-aware observable profiles
+
+The analyzers separate geometric observables from quantities whose
+interpretation depends strongly on the trajectory model. The default profile
+is `classical-ff`, matching the present fixed-charge OPLS/NiO trajectories.
+It emphasizes coverage, void topology, roughness, adsorption height, broad
+orientation, and qualitative anchoring. Persistence, residence times,
+cross-component site-exchange kinetics, and dipole-derived values are still
+calculated and retained in `interface_summary.json` for auditability, but
+their workbook-facing cells are left blank so they cannot be copied into a
+manuscript as equally reliable predictions.
+
+Select the trajectory model explicitly with `--analysis-profile`:
+
+| Profile | Workbook-facing interpretation |
+|---|---|
+| `classical-ff` (default) | Structural observables; anchoring/contact metrics are qualitative; kinetics and dipole proxy withheld |
+| `mlip` | Structural observables plus kinetics, but only after validating adsorption geometries, relative binding energies, forces, and relevant barrier configurations; dipole proxy withheld |
+| `charge-aware-mlip` | Same as `mlip`, plus the dipole proxy after separate charge/dipole validation |
+
+A standard MACE, DeepMD, or other energy/force MLIP does **not** by itself
+provide electronic polarization, charge transfer, or a work-function change.
+The charge-aware profile must therefore be used only when the trajectory also
+contains separately validated predicted charges or dipoles. Even then, the
+reported potential step remains an idealized comparative descriptor, not a
+direct UPS/work-function calculation.
+
+For a validated MLIP trajectory:
+
+```bash
+nio-md-prep analyze-interface prepared-mlip/me-4pacz-then-dcz-4p \
+    --trajectory deposition.lammpstrj \
+    --last-frames 0 \
+    --analysis-profile mlip \
+    --timestep-fs 0.5
+```
+
+The QBD launchers accept the same policy through `ANALYSIS_PROFILE`:
+
+```bash
+sbatch --export=ALL,PREPARED_ROOT="${PWD}/prepared-mlip",ANALYSIS_PROFILE=mlip \
+    scripts/analyze_interface_depositions.sbatch
+```
+
+**Model-sensitive additions** (retained in JSON under every profile, promoted
+to workbooks only when the selected profile permits them):
 
 - **z-resolved dipole / potential-step proxy** (`z_dipole` in the summary
   JSON): the net charge-weighted z-moment `Sum(q_i * z_i)` over every atom
@@ -671,7 +715,8 @@ measurements — try them and judge for yourself):
   charge-neutral), reported as a raw moment, an areal density, and an
   *approximate* potential-step in volts via the standard idealized-dipole-
   sheet formula (`ΔV = areal density / ε0`). This is a coarse, qualitative
-  proxy for a UPS-measured work-function/hole-extraction-barrier shift —
+  geometric/electrostatic descriptor related to a possible interface
+  potential step —
   it ignores lateral inhomogeneity and the real corrugated charge
   distribution the PPPM/slab-corrected force field actually uses, so treat
   it as relative across systems, not an absolute prediction. Requires the
@@ -694,6 +739,7 @@ Analyze one trajectory:
 nio-md-prep analyze-interface prepared/me-4pacz-then-dcz-4p \
     --trajectory hold-300K.lammpstrj \
     --last-frames 100 \
+    --analysis-profile classical-ff \
     --timestep-fs 0.5
 ```
 
@@ -711,9 +757,9 @@ normalized cross-component site-exchange kinetics:
 sbatch scripts/analyze_interface_depositions.sbatch
 ```
 
-Both analysis launchers accept `PREPARED_ROOT`. Set `EXPERIMENTAL_CSV` on
-either interfacial launcher to regenerate the publication workbook with the
-private JV-data correlation sheet.
+Both analysis launchers accept `PREPARED_ROOT` and `ANALYSIS_PROFILE`. Set
+`EXPERIMENTAL_CSV` on either interfacial launcher to regenerate the
+publication workbook with the private JV-data correlation sheet.
 
 The workbook is written to:
 
@@ -742,8 +788,9 @@ PATH` pointing at a CSV of measured device results (columns: `secondary`,
 `assembly`, `voc_v`, `jsc_ma_cm2`, `ff_percent`, `pce_percent`, plus optional
 `batch`/`device_id`/`scan_direction` provenance columns). When supplied, it
 adds a `Structure-Property Correlation` sheet joining coverage, roughness,
-bound fraction, persistence, tilt, unbound-anchor density, void topology,
-dipole-potential, and deposition-exchange metrics for every available
+bound fraction, tilt, unbound-anchor density, void topology, and any
+model-profile-permitted persistence, dipole-potential, and deposition-exchange
+metrics for every available
 300/400 K compressed/relaxed state against the experimental results.
 Forward/reverse scans are collapsed within a device, devices are averaged
 within each batch, and batch means receive equal weight. The sheet retains MD

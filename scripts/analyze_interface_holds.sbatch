@@ -50,6 +50,7 @@ sensitivity_cutoffs="${SENSITIVITY_CUTOFFS:-3.0,3.25,3.5}"
 surface_coordination_cutoff="${SURFACE_COORDINATION_CUTOFF:-2.8}"
 persistence_threshold="${PERSISTENCE_THRESHOLD:-0.50}"
 rdf_rmax="${RDF_RMAX:-15.0}"
+analysis_profile="${ANALYSIS_PROFILE:-classical-ff}"
 
 if [[ ! "${last_frames}" =~ ^[0-9]+$ ]]; then
     echo "ERROR: LAST_FRAMES must be a non-negative integer." >&2
@@ -67,6 +68,7 @@ echo "SENSITIVITY_CUTOFFS: ${sensitivity_cutoffs} A"
 echo "SURFACE_COORDINATION_CUTOFF: ${surface_coordination_cutoff} A"
 echo "PERSISTENCE_THRESHOLD: ${persistence_threshold}"
 echo "RDF_RMAX: ${rdf_rmax} A"
+echo "ANALYSIS_PROFILE: ${analysis_profile}"
 
 found=0
 completed=0
@@ -108,6 +110,7 @@ while IFS= read -r -d '' trajectory; do
         --surface-coordination-cutoff "${surface_coordination_cutoff}" \
         --persistence-threshold "${persistence_threshold}" \
         --rdf-rmax "${rdf_rmax}" \
+        --analysis-profile "${analysis_profile}" \
         --timestep-fs 0.5; then
         elapsed="${SECONDS}"
         total_seconds=$((total_seconds + elapsed))
