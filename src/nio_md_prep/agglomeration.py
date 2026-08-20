@@ -42,6 +42,7 @@ _VASP_OUTPUTS = {
     "POSCAR", "CONTCAR", "OUTCAR", "XDATCAR", "vasprun.xml", "OSZICAR",
     "WAVECAR", "CHG", "CHGCAR", "EIGENVAL", "DOSCAR", "PROCAR",
 }
+_REQUIRED_VASP_INPUTS = ("INCAR", "KPOINTS", "POTCAR")
 
 
 def _sha256(path: Path) -> str:
@@ -309,23 +310,32 @@ def _potcar_elements(path: Path) -> list[str]:
 
 
 def _reference_sanity(
-    reference: Path | None, expected_elements: list[str]
+    reference: Path | None,
+    expected_elements: list[str],
+    *,
+    structures_only: bool,
 ) -> dict:
     if reference is None:
+        if not structures_only:
+            raise ValueError(
+                "a complete VASP --reference-dir is required; use "
+                "--structures-only only when calculation inputs are intentionally omitted"
+            )
         return {
-            "status": "NOT_SUPPLIED",
+            "status": "STRUCTURES_ONLY",
             "potcar_status": "NOT_SUPPLIED",
             "expected_elements": expected_elements,
+            "required_inputs": list(_REQUIRED_VASP_INPUTS),
         }
     if not reference.is_dir():
         raise FileNotFoundError(f"VASP reference directory not found: {reference}")
+    missing = [name for name in _REQUIRED_VASP_INPUTS if not (reference / name).is_file()]
+    if missing:
+        raise ValueError(
+            f"{reference}: incomplete VASP reference directory; missing "
+            + ", ".join(missing)
+        )
     potcar = reference / "POTCAR"
-    if not potcar.is_file():
-        return {
-            "status": "PARTIAL",
-            "potcar_status": "NOT_SUPPLIED",
-            "expected_elements": expected_elements,
-        }
     actual_elements = _potcar_elements(potcar)
     if actual_elements != expected_elements:
         raise ValueError(
@@ -338,6 +348,7 @@ def _reference_sanity(
         "expected_elements": expected_elements,
         "potcar_elements": actual_elements,
         "potcar_sha256": _sha256(potcar),
+        "required_inputs": list(_REQUIRED_VASP_INPUTS),
     }
 
 
@@ -536,8 +547,11 @@ def prepare_agglomeration(
     *,
     reference_dir: Path | None = None,
     packed_xyz: Path | None = None,
+    structures_only: bool = False,
 ) -> Path:
-    """Prepare compact and separated molecular clusters for VASP calculations."""
+    """Prepare compact and separated molecular clusters as VASP run packages."""
+    if reference_dir is not None and structures_only:
+        raise ValueError("--reference-dir and --structures-only are mutually exclusive")
     manifest_path = output / "agglomeration_manifest.json"
     resume = False
     if output.exists() and any(output.iterdir()):
@@ -579,7 +593,10 @@ def prepare_agglomeration(
         template_paths[template.slug] = path
     expected_symbols, instances = _expected_layout(templates)
     expected_elements = sorted(set(expected_symbols))
-    reference_validation = _reference_sanity(reference_dir, expected_elements)
+    reference_validation = _reference_sanity(
+        reference_dir, expected_elements, structures_only=structures_only
+    )
+    case_root_name = "structures" if structures_only else "vasp_runs"
     executable = shutil.which("packmol")
     index_rows: list[dict] = []
     sanity_rows: list[dict] = []
@@ -650,7 +667,7 @@ def prepare_agglomeration(
         for variant_index, scale in enumerate(scales):
             variant = _center_in_cell(uncentered_variants[scale], cell)
             case_name = f"r{replica:03d}_s{variant_index:02d}_{scale:.3f}".replace(".", "p")
-            case = output / "structures" / case_name
+            case = output / case_root_name / case_name
             case.mkdir(parents=True, exist_ok=resume)
             ordered = _ordered_atoms(symbols, variant, instances)
             title = f"phosphonate agglomeration replica={replica} center_scale={scale:g}"
@@ -709,6 +726,7 @@ def prepare_agglomeration(
                     for template in templates
                 ],
                 "reference_files": copied,
+                "vasp_ready": not structures_only,
                 "atom_map": atom_map,
             }
             (case / "agglomeration_manifest.json").write_text(
@@ -813,6 +831,8 @@ def prepare_agglomeration(
             "center_scales": scales,
         },
         "vasp_reference_sanity": reference_validation,
+        "output_mode": "structures_only" if structures_only else "vasp_runs",
+        "case_root": case_root_name,
         "molecules": [
             {
                 "slug": template.slug,

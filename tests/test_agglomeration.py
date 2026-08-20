@@ -87,6 +87,10 @@ def test_agglomeration_builds_fixed_cell_center_scaled_vasp_cases(tmp_path):
     reference = tmp_path / "reference"
     reference.mkdir()
     (reference / "INCAR").write_text("ENCUT = 520\n", encoding="utf-8")
+    (reference / "KPOINTS").write_text("Gamma\n0\nGamma\n1 1 1\n0 0 0\n", encoding="utf-8")
+    launcher = reference / "runvasp.sh"
+    launcher.write_text("#!/bin/bash\nvasp_std\n", encoding="utf-8")
+    launcher.chmod(0o755)
     (reference / "POSCAR").write_text("must not be copied\n", encoding="utf-8")
     _potcar(reference / "POTCAR", ["C", "H", "N", "O", "P"])
     output = tmp_path / "agglomeration"
@@ -100,9 +104,14 @@ def test_agglomeration_builds_fixed_cell_center_scaled_vasp_cases(tmp_path):
     assert root_manifest["status"] == "COMPLETE"
     assert root_manifest["sanity_status"] == "PASS"
     assert root_manifest["vasp_reference_sanity"]["potcar_status"] == "PASS"
-    cases = sorted((output / "structures").iterdir())
+    assert root_manifest["output_mode"] == "vasp_runs"
+    cases = sorted((output / "vasp_runs").iterdir())
     assert len(cases) == 2
     assert (cases[0] / "INCAR").read_text() == "ENCUT = 520\n"
+    assert (cases[0] / "KPOINTS").is_file()
+    assert (cases[0] / "POTCAR").is_file()
+    assert (cases[0] / "runvasp.sh").is_file()
+    assert (cases[0] / "runvasp.sh").stat().st_mode & 0o111
     assert not (cases[0] / "CONTCAR").exists()
     poscars = [(case / "POSCAR").read_text().splitlines() for case in cases]
     assert poscars[0][5].split() == sorted(poscars[0][5].split())
@@ -127,14 +136,36 @@ def test_agglomeration_packmol_inputs_can_be_resumed(tmp_path, monkeypatch):
     monkeypatch.setattr("nio_md_prep.agglomeration.shutil.which", lambda _: None)
     config = _config(tmp_path / "config.toml")
     output = tmp_path / "agglomeration"
-    first = prepare_agglomeration(config, output)
+    first = prepare_agglomeration(config, output, structures_only=True)
     assert json.loads(first.read_text())["status"] == "PACKMOL_REQUIRED"
     work = output / "packmol/replica_000"
     assert "inside sphere" in (work / "packmol.inp").read_text()
     _packed(work / "packed.xyz")
-    second = prepare_agglomeration(config, output)
+    second = prepare_agglomeration(config, output, structures_only=True)
     assert json.loads(second.read_text())["status"] == "COMPLETE"
     assert len(list((output / "structures").iterdir())) == 2
+
+
+def test_agglomeration_requires_complete_vasp_reference_by_default(tmp_path):
+    with pytest.raises(ValueError, match="complete VASP --reference-dir is required"):
+        prepare_agglomeration(
+            _config(tmp_path / "config.toml"),
+            tmp_path / "output",
+            packed_xyz=_packed(tmp_path / "packed.xyz"),
+        )
+
+
+def test_agglomeration_rejects_incomplete_vasp_reference(tmp_path):
+    reference = tmp_path / "reference"
+    reference.mkdir()
+    (reference / "INCAR").write_text("ENCUT = 520\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="missing KPOINTS, POTCAR"):
+        prepare_agglomeration(
+            _config(tmp_path / "config.toml"),
+            tmp_path / "output",
+            reference_dir=reference,
+            packed_xyz=_packed(tmp_path / "packed.xyz"),
+        )
 
 
 def test_agglomeration_rejects_a_single_molecule(tmp_path):
@@ -155,6 +186,8 @@ count = 1
 def test_agglomeration_rejects_wrong_potcar_order(tmp_path):
     reference = tmp_path / "reference"
     reference.mkdir()
+    (reference / "INCAR").write_text("ENCUT = 520\n", encoding="utf-8")
+    (reference / "KPOINTS").write_text("Gamma\n0\nGamma\n1 1 1\n0 0 0\n", encoding="utf-8")
     _potcar(reference / "POTCAR", ["H", "C", "N", "O", "P"])
     with pytest.raises(ValueError, match="POTCAR element order.*does not match"):
         prepare_agglomeration(

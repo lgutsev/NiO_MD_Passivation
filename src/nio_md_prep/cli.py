@@ -23,7 +23,9 @@ def main(argv=None)->int:
     i=sub.add_parser("prepare-agglomeration")
     i.add_argument("config",type=Path)
     i.add_argument("--output",type=Path,required=True)
-    i.add_argument("--reference-dir",type=Path,help="copy reusable top-level VASP input files into every case")
+    agglomeration_mode=i.add_mutually_exclusive_group(required=True)
+    agglomeration_mode.add_argument("--reference-dir",type=Path,help="complete VASP template containing INCAR, KPOINTS, and POTCAR")
+    agglomeration_mode.add_argument("--structures-only",action="store_true",help="write POSCAR/XYZ structures without VASP calculation inputs")
     i.add_argument("--packed-xyz",type=Path,help="use a supplied ordered Packmol XYZ for a one-replica offline build")
     i=sub.add_parser("archive-runs")
     i.add_argument("roots",nargs="+",type=Path,help="prepared/work roots to archive")
@@ -133,12 +135,14 @@ def main(argv=None)->int:
                 a.output,
                 reference_dir=a.reference_dir,
                 packed_xyz=a.packed_xyz,
+                structures_only=a.structures_only,
             )
             status=json.loads(manifest.read_text(encoding="utf-8"))["status"]
             if status=="PACKMOL_REQUIRED":
                 print(f"Agglomeration Packmol inputs written to {a.output}; run packmol in each replica directory and rerun this command with the same output path")
             else:
-                print(f"Agglomeration VASP structures written to {a.output}")
+                mode="structures" if a.structures_only else "launch-ready VASP runs"
+                print(f"Agglomeration {mode} written to {a.output}")
         elif a.command=="archive-runs":
             from .archive import create_run_archive
             result=create_run_archive(a.roots,a.output,force=a.force)

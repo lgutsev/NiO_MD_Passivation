@@ -21,9 +21,11 @@ reproduced and the surface, passivants, loading, or protocol can be adapted to
 new tasks.
 
 For MLIP dataset construction, the repository also includes a reproducible
-phosphonate agglomeration generator. It creates independently randomized
-multi-molecule clusters and rigid compression/separation families as
-alphabetically ordered VASP `POSCAR` files, with molecule-level provenance and
+phosphonate agglomeration generator. With a complete VASP reference directory,
+it creates independently randomized multi-molecule clusters and rigid
+compression/separation families as launch-ready VASP run directories containing
+the generated `POSCAR` plus the reference `INCAR`, `KPOINTS`, `POTCAR`, and
+launcher files, with molecule-level provenance and
 split-group metadata. Automatic fail-closed checks verify cell containment,
 requested vacuum, periodic-image clearance, molecular rigidity, contact
 distances, and POSCAR/POTCAR element-order compatibility. See

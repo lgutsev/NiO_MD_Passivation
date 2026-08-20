@@ -31,21 +31,28 @@ intermolecular distances remain above the configured safety threshold, and
 Packmol plus the rigid center scaling preserved every intramolecular distance.
 The written POSCAR header is checked against the alphabetical element order.
 
-The supplied pilot is:
-
-```bash
-nio-md-prep prepare-agglomeration \
-  examples/agglomeration/me-4pacz.toml \
-  --output agglomeration/me-4pacz
-```
-
-To make each generated directory immediately runnable, point to a functioning
-VASP reference directory:
+Normal operation requires a complete, working VASP reference directory and
+creates launch-ready calculation packages:
 
 ```bash
 nio-md-prep prepare-agglomeration \
   examples/agglomeration/me-4pacz.toml \
   --reference-dir /path/to/working/vasp-reference \
+  --output agglomeration/me-4pacz
+```
+
+The reference directory must contain `INCAR`, `KPOINTS`, and `POTCAR`. Every
+other reusable top-level file, including Slurm launchers, is also copied. The
+reference `POSCAR` and existing VASP outputs are excluded because the generated
+agglomerate replaces the reference structure. Completed calculations are under
+`vasp_runs/`, one fully independent run directory per structure.
+
+Geometry-only generation remains available, but must be requested explicitly:
+
+```bash
+nio-md-prep prepare-agglomeration \
+  examples/agglomeration/me-4pacz.toml \
+  --structures-only \
   --output agglomeration/me-4pacz
 ```
 
@@ -55,9 +62,9 @@ VASP structures and calculation outputs such as `POSCAR`, `CONTCAR`, `OUTCAR`,
 launcher reuse without placing licensed or generated files in the repository.
 When `POTCAR` is present, its `TITEL` sequence must exactly match the generated
 POSCAR header; a mismatch stops generation before calculations can be launched.
-For the supplied Me-4PACz example, the required order is `C H N O P`. A missing
-POTCAR is reported as `NOT_SUPPLIED` rather than treated as a structural error,
-so structure-only generation remains supported.
+For the supplied Me-4PACz example, the required order is `C H N O P`. In
+`--structures-only` mode, POTCAR is reported as `NOT_SUPPLIED`; the generated
+folders are not represented as launch-ready calculations.
 
 If Packmol is unavailable, the command writes one `packmol.inp` directory per
 replica and records `PACKMOL_REQUIRED` in the root manifest. Run
@@ -106,8 +113,12 @@ agglomeration/me-4pacz/
   agglomeration_sanity.csv
   templates/
   packmol/replica_000/
-  structures/r000_s00_0p900/
+  vasp_runs/r000_s00_0p900/
     POSCAR
+    INCAR
+    KPOINTS
+    POTCAR
+    runvasp.sh                 # copied from the reference, executable bit retained
     structure.xyz
     agglomeration_manifest.json
     sanity_report.json
