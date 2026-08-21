@@ -25,8 +25,9 @@ phosphonate agglomeration generator. With a complete VASP reference directory,
 it creates independently randomized multi-molecule clusters, adaptively compacts
 them without crossing the contact floor, and stages a reproducible GFN2-xTB
 optimization/400 K MD/final-quench array. The default campaign gives replica 0
-of each size family a weak 2 ps intermolecular P--P steering stage followed by
-8 ps of unbiased MD; every other replica receives 10 ps of unbiased MD. Validated
+of each size family a 4 ps head-facing stage that weakly steers P--P separation
+and both bonded C--P···P axes, followed by 6 ps of unbiased MD; every other
+replica receives 10 ps of unbiased MD. Validated
 xTB structures become
 launch-ready 300 K, 300-to-400 K heating, and
 400 K VASP directories containing the generated `POSCAR` plus the reference

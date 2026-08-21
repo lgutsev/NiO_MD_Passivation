@@ -30,15 +30,19 @@ Every family uses only `center_scale = 1.0`. After adaptive compaction, each
 candidate follows a reproducible xTB preconditioning protocol before a POSCAR
 is written: loose GFN2-xTB optimization, 10 ps total NVT dynamics at 400 K with
 a 1 fs step, then a final loose GFN2-xTB quench. Replica 0 of each size family
-uses weak harmonic restraints between greedily paired phosphonate P atoms for
-the first 2 ps, followed by 8 ps of completely unbiased dynamics. All remaining
-replicas run 10 ps without restraints. Each P head is used at most once and
-heads from the same molecule are never paired. This avoids forcing selected O
-atoms into artificial short contacts or pulling every head into one central
-knot while still helping the slow whole-molecule reorientation cross its
-barrier. A restraint target is calculated after the initial optimization: it
-is never more than 4 A inward from that optimized P--P distance and never
-pushes an already-close pair apart. The MD seeds are derived from the Packmol
+uses a 4 ps head-facing segment, followed by 6 ps of completely unbiased
+dynamics. All remaining replicas run 10 ps without restraints. For every
+greedily paired head, the generator restrains P--P separation and the two
+`C--P...P` angles, where C is the carbon covalently bonded to that P. Driving
+both angles toward 170 degrees makes the two molecular `C->P` head axes face one
+another; P--P distance alone cannot distinguish sideways or back-to-back
+approaches. Each P head is used at most once and heads from the same molecule
+are never paired. No oxygen atom is restrained.
+
+The distance target is calculated after the initial optimization: it is never
+more than 1.5 A inward from that optimized P--P distance and never pushes an
+already-close pair apart. The finite 170-degree angular target avoids a
+singular exactly linear coordinate. The MD seeds are derived from the Packmol
 seed.
 
 The steering is only a starting-configuration sampling aid. The restraints are
@@ -152,10 +156,10 @@ Each `xtb/...` directory records the complete staged provenance:
 
 ```text
 input.xyz                 # compacted Packmol start
-steering_plan.json        # selected P pairs and bounded steering parameters
-md_steered.inp            # generated after initial opt for optional 2 ps steering
-steering_restraints.json  # realized post-opt P--P distances and targets
-md.inp                    # 8 or 10 ps unbiased 400 K segment
+steering_plan.json        # paired P/C indices and bounded steering parameters
+md_steered.inp            # generated after initial opt for optional 4 ps steering
+steering_restraints.json  # realized P--P distances, angles, and targets
+md.inp                    # 6 or 10 ps unbiased 400 K segment
 xtb_protocol.json         # exact timings, seeds, steering rule, and P pair map
 xtb_protocol.sha256       # expected protocol fingerprint
 xtb_protocol.complete     # written only after the matching final quench
@@ -176,10 +180,10 @@ the bounded targets from `xtbopt_initial.xyz` immediately before the steered
 segment begins.
 
 Completed stages are skipped on resubmission, so an interrupted task resumes
-from its last valid file. A legacy 1 ps `xtbfinal.xyz` is not accepted without
-the matching protocol fingerprint; the launcher preserves it as
-`xtbfinal.pre_staged_md.xyz` before producing the new result. Test one array
-index first with
+from its last valid file. Results from a different protocol fingerprint are not
+accepted. The launcher preserves their stage files with a
+`.protocol_<old-hash>` suffix, retains the reusable initial optimization, and
+reruns steering, unbiased MD, and the final quench. Test one array index first with
 `sbatch --array=0 run_xtb_array.sbatch` before releasing the complete array.
 
 Geometry-only generation remains available, but must be requested explicitly:
@@ -231,10 +235,11 @@ md_dump_fs = 50.0
 md_sccacc = 1.0
 head_bias_enabled = true
 head_bias_replicas_per_family = 1
-head_bias_time_ps = 2.0
+head_bias_time_ps = 4.0
 head_bias_target_pp_distance_angstrom = 4.5
-head_bias_max_distance_reduction_angstrom = 4.0
-head_bias_force_constant = 0.001
+head_bias_max_distance_reduction_angstrom = 1.5
+head_bias_target_axis_angle_degrees = 170.0
+head_bias_force_constant = 0.005
 minimum_oxygen_oxygen_distance_angstrom = 2.20
 maximum_nearest_molecule_distance_angstrom = 6.0
 

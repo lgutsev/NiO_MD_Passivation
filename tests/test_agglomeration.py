@@ -117,9 +117,9 @@ def test_adaptive_compaction_connects_an_isolated_molecule_without_overlap():
 
 def test_phosphonate_pairing_never_reuses_a_head_or_pairs_one_molecule():
     instances = [
-        MoleculeInstance("toy", 1, 0, 2, (1.0, 1.0), (0, 1)),
-        MoleculeInstance("toy", 2, 2, 4, (1.0, 1.0), (2, 3)),
-        MoleculeInstance("toy", 3, 4, 5, (1.0,), (4,)),
+        MoleculeInstance("toy", 1, 0, 2, (1.0, 1.0), (0, 1), (1, 0)),
+        MoleculeInstance("toy", 2, 2, 4, (1.0, 1.0), (2, 3), (3, 2)),
+        MoleculeInstance("toy", 3, 4, 5, (1.0,), (4,), (4,)),
     ]
     pairs = _nearest_phosphonate_pairs(
         [(0.0, 0.0, 0.0), (50.0, 0.0, 0.0), (1.0, 0.0, 0.0),
@@ -135,6 +135,8 @@ def test_phosphonate_pairing_never_reuses_a_head_or_pairs_one_molecule():
         for pair in pairs
     )
     assert len(pairs) == 2
+    assert all("left_carbon_atom_index" in pair for pair in pairs)
+    assert all("right_carbon_atom_index" in pair for pair in pairs)
 
 
 def test_only_requested_replicas_receive_head_steering():
@@ -277,12 +279,13 @@ count = 2
     assert "xtbmd_unbiased_last.xyz" in xtb_launcher
     assert "xtbfinal.xyz" in xtb_launcher
     assert "xtb_protocol.complete" in xtb_launcher
+    assert "xtb_stages.protocol" in xtb_launcher
     assert not (output / "vasp_runs/r000_s00_1p000/POSCAR").exists()
     xtb_work = output / "xtb/r000_s00_1p000"
     md_input = (xtb_work / "md.inp").read_text()
     assert "$seed 117074" in md_input
     assert "temp=400" in md_input
-    assert "time=8" in md_input
+    assert "time=6" in md_input
     assert (xtb_work / "steering_plan.json").is_file()
     subprocess.run(
         [
@@ -297,7 +300,9 @@ count = 2
     )
     steered_input = (xtb_work / "md_steered.inp").read_text()
     assert "$seed 12345" in steered_input
-    assert "force constant=0.001" in steered_input
+    assert "force constant=0.005" in steered_input
+    assert "angle: 18,19,64,170" in steered_input
+    assert "angle: 63,64,19,170" in steered_input
     restraints = json.loads((xtb_work / "steering_restraints.json").read_text())
     restraint = restraints["pairs"][0][
         "restraint_distance_angstrom"
@@ -306,7 +311,7 @@ count = 2
     assert restraint <= restraints["pairs"][0][
         "post_optimization_distance_angstrom"
     ]
-    assert "time=2" in steered_input
+    assert "time=4" in steered_input
     first_frame = (xtb_work / "input.xyz").read_text()
     second_frame = first_frame.replace(
         "Packmol seed 12345", "final synthetic MD frame", 1
@@ -356,7 +361,10 @@ count = 2
     assert case_manifest["xtb"]["vasp_source_xyz"] == "xtbfinal.xyz"
     assert case_manifest["xtb"]["protocol"]["total_md_time_ps"] == 10.0
     assert case_manifest["xtb"]["protocol"]["head_bias"]["enabled"] is True
-    assert case_manifest["xtb"]["protocol"]["head_bias"]["unbiased_time_ps"] == 8.0
+    assert case_manifest["xtb"]["protocol"]["head_bias"]["unbiased_time_ps"] == 6.0
+    assert case_manifest["xtb"]["protocol"]["head_bias"][
+        "target_axis_angle_degrees"
+    ] == 170.0
 
 
 def test_agglomeration_uses_loose_cost_conscious_defaults(tmp_path):

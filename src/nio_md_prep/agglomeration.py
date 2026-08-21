@@ -29,6 +29,7 @@ class MoleculeTemplate:
     coordinates: tuple[tuple[float, float, float], ...]
     masses: tuple[float, ...]
     phosphonate_p_indices: tuple[int, ...]
+    phosphonate_c_indices: tuple[int, ...]
     net_charge: float
 
 
@@ -40,6 +41,7 @@ class MoleculeInstance:
     stop: int
     masses: tuple[float, ...]
     phosphonate_p_indices: tuple[int, ...] = ()
+    phosphonate_c_indices: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -113,24 +115,42 @@ def _load_templates(config: dict) -> list[MoleculeTemplate]:
                 f"{source}: LigParGen charge {actual_charge:.8f} does not match "
                 f"manifest expected_net_charge {expected_charge}"
             )
+        template_symbols = tuple(elements(data))
         atom_position = {
             int(atom.fields[0]): index
             for index, atom in enumerate(data.sections["Atoms"])
         }
-        p_indices = tuple(
-            atom_position[atom_id]
-            for atom_id, role in phosphonate_roles(data).items()
-            if role == "P"
+        roles = phosphonate_roles(data)
+        adjacency = {atom_id: set() for atom_id in atom_position}
+        for bond in data.sections.get("Bonds", []):
+            left, right = map(int, bond.fields[2:4])
+            adjacency[left].add(right)
+            adjacency[right].add(left)
+        p_atom_ids = sorted(
+            (atom_id for atom_id, role in roles.items() if role == "P"),
+            key=atom_position.__getitem__,
+        )
+        p_indices = tuple(atom_position[atom_id] for atom_id in p_atom_ids)
+        c_indices = tuple(
+            atom_position[
+                next(
+                    neighbor
+                    for neighbor in adjacency[atom_id]
+                    if template_symbols[atom_position[neighbor]] == "C"
+                )
+            ]
+            for atom_id in p_atom_ids
         )
         templates.append(
             MoleculeTemplate(
                 slug=slug,
                 count=count,
                 source=source,
-                symbols=tuple(elements(data)),
+                symbols=template_symbols,
                 coordinates=tuple(atom_coordinates(data)),
                 masses=_atom_masses(data),
                 phosphonate_p_indices=p_indices,
+                phosphonate_c_indices=c_indices,
                 net_charge=actual_charge,
             )
         )
@@ -291,6 +311,9 @@ def _expected_layout(
                     phosphonate_p_indices=tuple(
                         start + index for index in template.phosphonate_p_indices
                     ),
+                    phosphonate_c_indices=tuple(
+                        start + index for index in template.phosphonate_c_indices
+                    ),
                 )
             )
     return symbols, instances
@@ -301,26 +324,43 @@ def _nearest_phosphonate_pairs(
     instances: list[MoleculeInstance],
 ) -> list[dict]:
     """Greedily pair nearby P heads on different molecules, once per head."""
-    heads = [
-        (atom_index, item.molecule_id)
+    if any(
+        len(item.phosphonate_p_indices) != len(item.phosphonate_c_indices)
         for item in instances
-        for atom_index in item.phosphonate_p_indices
+    ):
+        raise ValueError("every phosphonate P head requires one bonded carbon axis atom")
+    heads = [
+        (p_index, c_index, item.molecule_id)
+        for item in instances
+        for p_index, c_index in zip(
+            item.phosphonate_p_indices, item.phosphonate_c_indices
+        )
     ]
     candidates = sorted(
         (
             _distance(coordinates[left_atom], coordinates[right_atom]),
             left_atom,
             right_atom,
+            left_carbon,
+            right_carbon,
             left_molecule,
             right_molecule,
         )
-        for position, (left_atom, left_molecule) in enumerate(heads)
-        for right_atom, right_molecule in heads[position + 1:]
+        for position, (left_atom, left_carbon, left_molecule) in enumerate(heads)
+        for right_atom, right_carbon, right_molecule in heads[position + 1:]
         if left_molecule != right_molecule
     )
     used: set[int] = set()
     pairs: list[dict] = []
-    for distance, left_atom, right_atom, left_molecule, right_molecule in candidates:
+    for (
+        distance,
+        left_atom,
+        right_atom,
+        left_carbon,
+        right_carbon,
+        left_molecule,
+        right_molecule,
+    ) in candidates:
         if left_atom in used or right_atom in used:
             continue
         used.update((left_atom, right_atom))
@@ -328,6 +368,8 @@ def _nearest_phosphonate_pairs(
             {
                 "left_atom_index": left_atom + 1,
                 "right_atom_index": right_atom + 1,
+                "left_carbon_atom_index": left_carbon + 1,
+                "right_carbon_atom_index": right_carbon + 1,
                 "left_molecule_id": left_molecule,
                 "right_molecule_id": right_molecule,
                 "initial_distance_angstrom": distance,
@@ -1123,11 +1165,23 @@ if len(lines) != atoms + 2:
     raise SystemExit(f"{source}: invalid single-frame XYZ")
 coordinates = [tuple(map(float, row.split()[1:4])) for row in lines[2:]]
 plan = json.loads(plan_path.read_text(encoding="utf-8"))
+
+def angle(first, vertex, third):
+    left = tuple(a - b for a, b in zip(first, vertex))
+    right = tuple(a - b for a, b in zip(third, vertex))
+    denominator = math.sqrt(sum(value * value for value in left)) * math.sqrt(
+        sum(value * value for value in right)
+    )
+    cosine = sum(a * b for a, b in zip(left, right)) / denominator
+    return math.degrees(math.acos(max(-1.0, min(1.0, cosine))))
+
 realized = []
 constraints = []
 for pair in plan["pairs"]:
     left = pair["left_atom_index"] - 1
     right = pair["right_atom_index"] - 1
+    left_carbon = pair["left_carbon_atom_index"] - 1
+    right_carbon = pair["right_carbon_atom_index"] - 1
     current = math.dist(coordinates[left], coordinates[right])
     target = min(
         current,
@@ -1139,10 +1193,25 @@ for pair in plan["pairs"]:
     realized_pair = pair | {
         "post_optimization_distance_angstrom": current,
         "restraint_distance_angstrom": target,
+        "left_axis_angle_degrees": angle(
+            coordinates[left_carbon], coordinates[left], coordinates[right]
+        ),
+        "right_axis_angle_degrees": angle(
+            coordinates[right_carbon], coordinates[right], coordinates[left]
+        ),
+        "restraint_axis_angle_degrees": plan["target_axis_angle_degrees"],
     }
     realized.append(realized_pair)
     constraints.append(
         f"  distance: {left + 1},{right + 1},{target:.8f}"
+    )
+    constraints.append(
+        f"  angle: {left_carbon + 1},{left + 1},{right + 1},"
+        f"{plan['target_axis_angle_degrees']:g}"
+    )
+    constraints.append(
+        f"  angle: {right_carbon + 1},{right + 1},{left + 1},"
+        f"{plan['target_axis_angle_degrees']:g}"
     )
 input_path.write_text(
     f'''$seed {plan["seed"]}
@@ -1182,6 +1251,32 @@ if [[ ! -s xtbopt_initial.xyz ]]; then
   mv xtbopt.xyz xtbopt_initial.xyz
   [[ ! -s xtbopt.log ]] || mv xtbopt.log xtbopt_initial.log
 fi
+protocol_changed=false
+if [[ -s xtb_stages.protocol ]]; then
+  if ! cmp -s xtb_protocol.sha256 xtb_stages.protocol; then
+    protocol_changed=true
+  fi
+elif [[ -s xtbsteered_last.xyz || -s xtbmd_unbiased_last.xyz || -s xtbfinal.xyz ]]; then
+  protocol_changed=true
+fi
+if [[ "$protocol_changed" == true ]]; then
+  old_tag=legacy
+  if [[ -s xtb_stages.protocol ]]; then
+    old_tag=$(head -c 12 xtb_stages.protocol)
+  fi
+  for artifact in md_steered.inp steering_restraints.json xtb_steered.trj xtbsteered_last.xyz xtb_unbiased.trj xtbmd_unbiased_last.xyz xtbfinal.xyz xtbfinal.log; do
+    if [[ -e "$artifact" ]]; then
+      archived="${{artifact}}.protocol_${{old_tag}}"
+      if [[ -e "$archived" ]]; then
+        rm -f "$artifact"
+      else
+        mv "$artifact" "$archived"
+      fi
+    fi
+  done
+  rm -f xtb_protocol.complete
+fi
+cp xtb_protocol.sha256 xtb_stages.protocol
 md_start=xtbopt_initial.xyz
 if [[ -s steering_plan.json ]]; then
   if [[ ! -s xtbsteered_last.xyz ]]; then
@@ -1307,25 +1402,34 @@ def _write_xtb_md_inputs(
 ) -> dict:
     temperature = float(settings.get("md_temperature_K", 400.0))
     total_time_ps = float(settings.get("md_time_ps", 10.0))
-    steering_time_ps = float(settings.get("head_bias_time_ps", 2.0)) if steered else 0.0
+    steering_time_ps = (
+        float(settings.get("head_bias_time_ps", 4.0)) if steered else 0.0
+    )
     unbiased_time_ps = total_time_ps - steering_time_ps
     dump_fs = float(settings.get("md_dump_fs", 50.0))
     step_fs = float(settings.get("md_step_fs", 1.0))
     sccacc = float(settings.get("md_sccacc", 1.0))
     target = float(settings.get("head_bias_target_pp_distance_angstrom", 4.5))
     maximum_reduction = float(
-        settings.get("head_bias_max_distance_reduction_angstrom", 4.0)
+        settings.get("head_bias_max_distance_reduction_angstrom", 1.5)
     )
-    force_constant = float(settings.get("head_bias_force_constant", 0.001))
+    target_axis_angle = float(
+        settings.get("head_bias_target_axis_angle_degrees", 170.0)
+    )
+    force_constant = float(settings.get("head_bias_force_constant", 0.005))
     if min(temperature, total_time_ps, dump_fs, step_fs, sccacc) <= 0:
         raise ValueError("xTB MD temperature, time, dump, step, and sccacc must be positive")
     if steered and (not p_pairs or steering_time_ps <= 0 or unbiased_time_ps <= 0):
         raise ValueError(
             "steered xTB MD requires P pairs and 0 < head_bias_time_ps < md_time_ps"
         )
-    if steered and min(target, maximum_reduction, force_constant) <= 0:
+    if steered and (
+        min(target, maximum_reduction, force_constant) <= 0
+        or not 0 < target_axis_angle < 180
+    ):
         raise ValueError(
-            "xTB P-P steering target, maximum reduction, and force constant must be positive"
+            "xTB steering distance parameters and force constant must be positive, "
+            "and the target axis angle must lie between 0 and 180 degrees"
         )
 
     def md_text(md_seed: int, time_ps: float) -> str:
@@ -1356,6 +1460,7 @@ $end
             "sccacc": sccacc,
             "minimum_target_pp_distance_angstrom": target,
             "maximum_distance_reduction_angstrom": maximum_reduction,
+            "target_axis_angle_degrees": target_axis_angle,
             "force_constant_atomic_units": force_constant,
             "pairs": p_pairs,
         }
@@ -1368,7 +1473,7 @@ $end
         (directory / "steering_restraints.json").unlink(missing_ok=True)
 
     protocol = {
-        "schema_version": 2,
+        "schema_version": 3,
         "total_md_time_ps": total_time_ps,
         "temperature_K": temperature,
         "step_fs": step_fs,
@@ -1382,6 +1487,7 @@ $end
             "maximum_distance_reduction_angstrom": (
                 maximum_reduction if steered else None
             ),
+            "target_axis_angle_degrees": target_axis_angle if steered else None,
             "force_constant_atomic_units": force_constant if steered else None,
             "pairs": p_pairs if steered else [],
         },
@@ -1921,16 +2027,19 @@ def prepare_agglomeration(
             "md_step_fs": float(xtb_settings.get("md_step_fs", 1.0)),
             "md_sccacc": float(xtb_settings.get("md_sccacc", 1.0)),
             "head_bias_time_ps": float(
-                xtb_settings.get("head_bias_time_ps", 2.0)
+                xtb_settings.get("head_bias_time_ps", 4.0)
             ),
             "head_bias_target_pp_distance_angstrom": float(
                 xtb_settings.get("head_bias_target_pp_distance_angstrom", 4.5)
             ),
             "head_bias_force_constant": float(
-                xtb_settings.get("head_bias_force_constant", 0.001)
+                xtb_settings.get("head_bias_force_constant", 0.005)
             ),
             "head_bias_max_distance_reduction_angstrom": float(
-                xtb_settings.get("head_bias_max_distance_reduction_angstrom", 4.0)
+                xtb_settings.get("head_bias_max_distance_reduction_angstrom", 1.5)
+            ),
+            "head_bias_target_axis_angle_degrees": float(
+                xtb_settings.get("head_bias_target_axis_angle_degrees", 170.0)
             ),
         },
         "vasp_md": {
