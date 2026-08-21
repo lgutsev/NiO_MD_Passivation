@@ -1025,7 +1025,7 @@ def _write_xtb_batch(output: Path, cases: list[dict], settings: dict) -> None:
 #SBATCH --array=0-{len(cases) - 1}%{concurrency}
 
 set -euo pipefail
-root=$(cd "$(dirname "$0")" && pwd)
+root="${{SLURM_SUBMIT_DIR:-$PWD}}"
 line=$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "$root/xtb_cases.tsv")
 IFS=$'\\t' read -r relative charge uhf <<< "$line"
 work="$root/$relative"

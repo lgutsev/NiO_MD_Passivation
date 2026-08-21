@@ -110,7 +110,8 @@ default:
 
 ```bash
 export XTB_EXE=/path/to/project/envs/xtb/bin/xtb
-sbatch agglomeration/me-4pacz/run_xtb_array.sbatch
+cd agglomeration/me-4pacz
+sbatch run_xtb_array.sbatch
 ```
 
 No exports are necessary for the current LONI installation: the generated
@@ -119,10 +120,13 @@ can be selected without editing the generated script:
 
 ```bash
 export XTB_ENV=/path/to/another/xtb/environment
-sbatch agglomeration/me-4pacz/run_xtb_array.sbatch
+cd agglomeration/me-4pacz
+sbatch run_xtb_array.sbatch
 ```
 
-The array uses one task and one CPU per aggregate, sets
+Submit from the generated campaign root: Slurm records that directory in
+`SLURM_SUBMIT_DIR`, which the array uses to find `xtb_cases.tsv`. The array uses
+one task and one CPU per aggregate, sets
 `ulimit -s unlimited`, and writes `xtb.out`, `xtb.err`, and `xtbopt.xyz` in each
 `xtb/...` directory. Test one array index first with
 `sbatch --array=0 run_xtb_array.sbatch` before releasing the complete array.
