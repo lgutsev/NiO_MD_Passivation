@@ -1004,7 +1004,7 @@ def _write_xtb_batch(output: Path, cases: list[dict], settings: dict) -> None:
         encoding="utf-8",
     )
     account = str(settings.get("account", "loni_perovsk27"))
-    partition = str(settings.get("partition", "workq"))
+    partition = str(settings.get("partition", "single"))
     cpus = int(settings.get("cpus", 1))
     walltime = str(settings.get("walltime", "12:00:00"))
     gfn = int(settings.get("gfn", 2))

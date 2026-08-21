@@ -17,7 +17,7 @@ minimum_oxygen_oxygen_distance_angstrom = 2.20
 maximum_nearest_molecule_distance_angstrom = 6.0
 cpus = 1
 walltime = "12:00:00"
-partition = "workq"
+partition = "single"
 account = "loni_perovsk27"
 array_concurrency = 4
 
