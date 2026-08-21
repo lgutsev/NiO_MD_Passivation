@@ -29,10 +29,10 @@ large, costly systems whose trajectories already contain many local contacts.
 
 Every family uses only `center_scale = 1.0`. After adaptive compaction, each
 candidate follows a reproducible xTB preconditioning protocol before a POSCAR
-is written: loose GFN2-xTB optimization, 10 ps total NVT dynamics at 400 K with
+is written: loose GFN2-xTB optimization, 20 ps total NVT dynamics at 450 K with
 a 1 fs step, then a final loose GFN2-xTB quench. Replica 0 of each size family
-uses a 4 ps head-facing segment, followed by 6 ps of completely unbiased
-dynamics. All remaining replicas run 10 ps without restraints. For every
+uses a 6 ps head-facing segment, followed by 14 ps of completely unbiased
+dynamics. All remaining replicas run 20 ps without restraints. For every
 greedily paired head, the generator restrains P--P separation and the two
 `C--P...P` angles, where C is the carbon covalently bonded to that P. Driving
 both angles toward 170 degrees makes the two molecular `C->P` head axes face one
@@ -165,9 +165,9 @@ Each `xtb/...` directory records the complete staged provenance:
 ```text
 input.xyz                 # compacted Packmol start
 steering_plan.json        # paired P/C indices and bounded steering parameters
-md_steered.inp            # generated after initial opt for optional 4 ps steering
+md_steered.inp            # generated after initial opt for optional 6 ps steering
 steering_restraints.json  # realized P--P distances, angles, and targets
-md.inp                    # 6 or 10 ps unbiased 400 K segment
+md.inp                    # 14 or 20 ps unbiased 450 K segment
 xtb_protocol.json         # exact timings, seeds, steering rule, and P pair map
 xtb_protocol.sha256       # expected protocol fingerprint
 xtb_protocol.complete     # written only after the matching final quench
@@ -241,14 +241,14 @@ gfn = 2
 opt_level = "loose"
 max_cycles = 100
 md_enabled = true
-md_temperature_K = 400
-md_time_ps = 10.0
+md_temperature_K = 450
+md_time_ps = 20.0
 md_step_fs = 1.0
 md_dump_fs = 50.0
 md_sccacc = 1.0
 head_bias_enabled = true
 head_bias_replicas_per_family = 1
-head_bias_time_ps = 4.0
+head_bias_time_ps = 6.0
 head_bias_target_pp_distance_angstrom = 4.5
 head_bias_max_distance_reduction_angstrom = 1.5
 head_bias_target_axis_angle_degrees = 170.0

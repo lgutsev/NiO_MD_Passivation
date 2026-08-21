@@ -377,8 +377,8 @@ count = 2
     xtb_work = output / "xtb/r000_s00_1p000"
     md_input = (xtb_work / "md.inp").read_text()
     assert "$seed 117074" in md_input
-    assert "temp=400" in md_input
-    assert "time=6" in md_input
+    assert "temp=450" in md_input
+    assert "time=14" in md_input
     assert (xtb_work / "steering_plan.json").is_file()
     subprocess.run(
         [
@@ -404,7 +404,7 @@ count = 2
     assert restraint <= restraints["pairs"][0][
         "post_optimization_distance_angstrom"
     ]
-    assert "time=4" in steered_input
+    assert "time=6" in steered_input
     first_frame = (xtb_work / "input.xyz").read_text()
     second_frame = first_frame.replace(
         "Packmol seed 12345", "final synthetic MD frame", 1
@@ -452,9 +452,9 @@ count = 2
     assert (case / "submit_temperature_jobs.sh").stat().st_mode & 0o111
     case_manifest = json.loads((case / "agglomeration_manifest.json").read_text())
     assert case_manifest["xtb"]["vasp_source_xyz"] == "xtbfinal.xyz"
-    assert case_manifest["xtb"]["protocol"]["total_md_time_ps"] == 10.0
+    assert case_manifest["xtb"]["protocol"]["total_md_time_ps"] == 20.0
     assert case_manifest["xtb"]["protocol"]["head_bias"]["enabled"] is True
-    assert case_manifest["xtb"]["protocol"]["head_bias"]["unbiased_time_ps"] == 6.0
+    assert case_manifest["xtb"]["protocol"]["head_bias"]["unbiased_time_ps"] == 14.0
     assert case_manifest["xtb"]["protocol"]["head_bias"][
         "target_axis_angle_degrees"
     ] == 170.0

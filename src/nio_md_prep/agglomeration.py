@@ -1401,7 +1401,7 @@ def _write_xtb_batch(output: Path, cases: list[dict], settings: dict) -> None:
     account = str(settings.get("account", "loni_perovsk27"))
     partition = str(settings.get("partition", "single"))
     cpus = int(settings.get("cpus", 1))
-    walltime = str(settings.get("walltime", "12:00:00"))
+    walltime = str(settings.get("walltime", "24:00:00"))
     gfn = int(settings.get("gfn", 2))
     opt_level = str(settings.get("opt_level", "loose"))
     max_cycles = int(settings.get("max_cycles", 100))
@@ -1696,10 +1696,10 @@ def _write_xtb_md_inputs(
     p_pairs: list[dict],
     steered: bool,
 ) -> dict:
-    temperature = float(settings.get("md_temperature_K", 400.0))
-    total_time_ps = float(settings.get("md_time_ps", 10.0))
+    temperature = float(settings.get("md_temperature_K", 450.0))
+    total_time_ps = float(settings.get("md_time_ps", 20.0))
     steering_time_ps = (
-        float(settings.get("head_bias_time_ps", 4.0)) if steered else 0.0
+        float(settings.get("head_bias_time_ps", 6.0)) if steered else 0.0
     )
     unbiased_time_ps = total_time_ps - steering_time_ps
     dump_fs = float(settings.get("md_dump_fs", 50.0))
@@ -2381,14 +2381,14 @@ def prepare_agglomeration(
             "head_bias_enabled": head_bias_enabled,
             "head_bias_replicas_per_family": head_bias_replicas,
             "md_temperature_K": float(
-                xtb_settings.get("md_temperature_K", 400.0)
+                xtb_settings.get("md_temperature_K", 450.0)
             ),
-            "md_time_ps": float(xtb_settings.get("md_time_ps", 10.0)),
+            "md_time_ps": float(xtb_settings.get("md_time_ps", 20.0)),
             "md_dump_fs": float(xtb_settings.get("md_dump_fs", 50.0)),
             "md_step_fs": float(xtb_settings.get("md_step_fs", 1.0)),
             "md_sccacc": float(xtb_settings.get("md_sccacc", 1.0)),
             "head_bias_time_ps": float(
-                xtb_settings.get("head_bias_time_ps", 4.0)
+                xtb_settings.get("head_bias_time_ps", 6.0)
             ),
             "head_bias_target_pp_distance_angstrom": float(
                 xtb_settings.get("head_bias_target_pp_distance_angstrom", 4.5)
