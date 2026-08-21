@@ -92,6 +92,36 @@ def _potcar(path: Path, elements: list[str]) -> Path:
     return path
 
 
+def _molecular_poscar(path: Path, *, coordinate_offset: float = 0.0) -> Path:
+    data = parse(ROOT / "inputs/molecules/me-4pacz/ligpargen.lmp")
+    symbols = elements(data)
+    coordinates = atom_coordinates(data)
+    element_order = sorted(set(symbols))
+    rows = []
+    for element in element_order:
+        for index, (symbol, coordinate) in enumerate(zip(symbols, coordinates)):
+            if symbol != element:
+                continue
+            x, y, z = coordinate
+            if index == 0:
+                x += coordinate_offset
+            rows.append(f"{x + 25:.10f} {y + 25:.10f} {z + 25:.10f}")
+    counts = [symbols.count(element) for element in element_order]
+    path.write_text(
+        "Me4PACz molecular reference\n"
+        "1.0\n"
+        "50 0 0\n0 50 0\n0 0 50\n"
+        + " ".join(element_order)
+        + "\n"
+        + " ".join(str(count) for count in counts)
+        + "\nCartesian\n"
+        + "\n".join(rows)
+        + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
 def test_adaptive_compaction_connects_an_isolated_molecule_without_overlap():
     instances = [
         MoleculeInstance("toy", index + 1, index, index + 1, (1.0,))
@@ -155,7 +185,7 @@ def test_agglomeration_builds_fixed_cell_center_scaled_vasp_cases(tmp_path):
     launcher = reference / "runvasp.sh"
     launcher.write_text("#!/bin/bash\nvasp_std\n", encoding="utf-8")
     launcher.chmod(0o755)
-    (reference / "POSCAR").write_text("must not be copied\n", encoding="utf-8")
+    _molecular_poscar(reference / "POSCAR")
     _potcar(reference / "POTCAR", ["C", "H", "N", "O", "P"])
     output = tmp_path / "agglomeration"
     manifest_path = prepare_agglomeration(
@@ -214,6 +244,45 @@ def test_agglomeration_packmol_inputs_can_be_resumed(tmp_path, monkeypatch):
     assert len(list((output / "structures").iterdir())) == 2
 
 
+def test_reference_poscar_is_the_authoritative_molecular_geometry(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr("nio_md_prep.agglomeration.shutil.which", lambda _: None)
+    reference = tmp_path / "reference"
+    reference.mkdir()
+    (reference / "INCAR").write_text("ENCUT = 520\n", encoding="utf-8")
+    (reference / "KPOINTS").write_text(
+        "Gamma\n0\nGamma\n1 1 1\n0 0 0\n", encoding="utf-8"
+    )
+    _molecular_poscar(reference / "POSCAR", coordinate_offset=0.1)
+    _potcar(reference / "POTCAR", ["C", "H", "N", "O", "P"])
+
+    output = tmp_path / "campaign"
+    manifest_path = prepare_agglomeration(
+        _config(tmp_path / "config.toml"),
+        output,
+        reference_dir=reference,
+    )
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["status"] == "PACKMOL_REQUIRED"
+    assert manifest["molecular_geometry"]["source"] == "reference_poscar"
+    assert manifest["molecular_geometry"]["sha256"]
+
+    written = _read_ordered_xyz(output / "templates/me-4pacz.xyz")
+    original = atom_coordinates(
+        parse(ROOT / "inputs/molecules/me-4pacz/ligpargen.lmp")
+    )
+    assert _distance(written[0][1], written[1][1]) == pytest.approx(
+        _distance(
+            (original[0][0] + 0.1, original[0][1], original[0][2]),
+            original[1],
+        )
+    )
+    assert _distance(written[0][1], written[1][1]) != pytest.approx(
+        _distance(original[0], original[1])
+    )
+
+
 def test_xtb_stage_resumes_into_300_and_400_kelvin_vasp_runs(tmp_path):
     config = tmp_path / "xtb.toml"
     config.write_text(
@@ -256,6 +325,7 @@ count = 2
         encoding="utf-8",
     )
     launcher.chmod(0o755)
+    _molecular_poscar(reference / "POSCAR")
     _potcar(reference / "POTCAR", ["C", "H", "N", "O", "P"])
     output = tmp_path / "campaign"
     first = prepare_agglomeration(
@@ -429,6 +499,7 @@ def test_agglomeration_rejects_incomplete_vasp_reference(tmp_path):
     reference = tmp_path / "reference"
     reference.mkdir()
     (reference / "INCAR").write_text("ENCUT = 520\n", encoding="utf-8")
+    _molecular_poscar(reference / "POSCAR")
     with pytest.raises(ValueError, match="missing KPOINTS, POTCAR"):
         prepare_agglomeration(
             _config(tmp_path / "config.toml"),
@@ -458,6 +529,7 @@ def test_agglomeration_rejects_wrong_potcar_order(tmp_path):
     reference.mkdir()
     (reference / "INCAR").write_text("ENCUT = 520\n", encoding="utf-8")
     (reference / "KPOINTS").write_text("Gamma\n0\nGamma\n1 1 1\n0 0 0\n", encoding="utf-8")
+    _molecular_poscar(reference / "POSCAR")
     _potcar(reference / "POTCAR", ["H", "C", "N", "O", "P"])
     with pytest.raises(ValueError, match="POTCAR element order.*does not match"):
         prepare_agglomeration(

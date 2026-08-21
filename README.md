@@ -22,7 +22,8 @@ new tasks.
 
 For MLIP dataset construction, the repository also includes a reproducible
 phosphonate agglomeration generator. With a complete VASP reference directory,
-it creates independently randomized multi-molecule clusters, adaptively compacts
+it takes the relaxed single-molecule geometry from the reference `POSCAR`,
+creates independently randomized multi-molecule clusters, adaptively compacts
 them without crossing the contact floor, and stages a reproducible GFN2-xTB
 optimization/400 K MD/final-quench array. The default campaign gives replica 0
 of each size family a 4 ps head-facing stage that weakly steers P--P separation

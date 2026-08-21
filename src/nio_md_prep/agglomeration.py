@@ -10,7 +10,7 @@ import shlex
 import shutil
 import subprocess
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from . import __version__
@@ -62,7 +62,7 @@ _VASP_OUTPUTS = {
     "POSCAR", "CONTCAR", "OUTCAR", "XDATCAR", "vasprun.xml", "OSZICAR",
     "WAVECAR", "CHG", "CHGCAR", "EIGENVAL", "DOSCAR", "PROCAR",
 }
-_REQUIRED_VASP_INPUTS = ("INCAR", "KPOINTS", "POTCAR")
+_REQUIRED_VASP_INPUTS = ("POSCAR", "INCAR", "KPOINTS", "POTCAR")
 
 
 def _sha256(path: Path) -> str:
@@ -71,6 +71,10 @@ def _sha256(path: Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _atom_masses(data: DataFile) -> tuple[float, ...]:
@@ -288,6 +292,152 @@ def _read_xyz(path: Path) -> tuple[list[str], list[tuple[float, float, float]]]:
         symbols.append(fields[0])
         coordinates.append(tuple(float(value) for value in fields[1:4]))
     return symbols, coordinates
+
+
+def _read_poscar(
+    path: Path,
+) -> tuple[list[str], list[tuple[float, float, float]], dict]:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    if len(lines) < 8:
+        raise ValueError(f"{path}: incomplete POSCAR")
+    scale_fields = lines[1].split()
+    if len(scale_fields) != 1:
+        raise ValueError(f"{path}: only a single positive POSCAR scale is supported")
+    scale = float(scale_fields[0])
+    if not math.isfinite(scale) or scale <= 0:
+        raise ValueError(f"{path}: POSCAR scale must be finite and positive")
+    lattice = [
+        tuple(scale * float(value) for value in lines[index].split()[:3])
+        for index in range(2, 5)
+    ]
+    if any(len(lines[index].split()) < 3 for index in range(2, 5)):
+        raise ValueError(f"{path}: malformed POSCAR lattice vector")
+    element_names = lines[5].split()
+    if not element_names or any(
+        not re.fullmatch(r"[A-Z][a-z]?", item) for item in element_names
+    ):
+        raise ValueError(f"{path}: a VASP 5 element-symbol line is required")
+    try:
+        counts = [int(value) for value in lines[6].split()]
+    except ValueError as error:
+        raise ValueError(f"{path}: malformed POSCAR element counts") from error
+    if len(counts) != len(element_names) or any(value < 0 for value in counts):
+        raise ValueError(f"{path}: POSCAR element names/counts do not match")
+    coordinate_line = 7
+    if lines[coordinate_line].strip().lower().startswith("s"):
+        coordinate_line += 1
+    if coordinate_line >= len(lines):
+        raise ValueError(f"{path}: missing POSCAR coordinate mode")
+    mode = lines[coordinate_line].strip().lower()
+    direct = mode.startswith("d")
+    cartesian = mode.startswith(("c", "k"))
+    if not direct and not cartesian:
+        raise ValueError(f"{path}: coordinate mode must be Direct or Cartesian")
+    atom_count = sum(counts)
+    rows = lines[coordinate_line + 1:coordinate_line + 1 + atom_count]
+    if len(rows) != atom_count:
+        raise ValueError(f"{path}: POSCAR coordinate count mismatch")
+    raw = []
+    for offset, row in enumerate(rows, coordinate_line + 2):
+        fields = row.split()
+        if len(fields) < 3:
+            raise ValueError(f"{path}:{offset}: malformed POSCAR coordinate")
+        point = tuple(float(value) for value in fields[:3])
+        if not all(math.isfinite(value) for value in point):
+            raise ValueError(f"{path}:{offset}: non-finite POSCAR coordinate")
+        if direct:
+            point = tuple(
+                sum(point[component] * lattice[component][axis] for component in range(3))
+                for axis in range(3)
+            )
+        else:
+            point = tuple(scale * value for value in point)
+        raw.append(point)
+    symbols = [
+        element
+        for element, count in zip(element_names, counts)
+        for _ in range(count)
+    ]
+    return symbols, raw, {
+        "title": lines[0],
+        "element_order": element_names,
+        "counts": counts,
+        "coordinate_mode": "Direct" if direct else "Cartesian",
+        "lattice_angstrom": lattice,
+    }
+
+
+def _template_from_reference_poscar(
+    template: MoleculeTemplate,
+    poscar: Path,
+) -> tuple[MoleculeTemplate, dict]:
+    poscar_symbols, poscar_coordinates, metadata = _read_poscar(poscar)
+    expected_counts = {
+        symbol: template.symbols.count(symbol) for symbol in sorted(set(template.symbols))
+    }
+    actual_counts = {
+        symbol: poscar_symbols.count(symbol) for symbol in sorted(set(poscar_symbols))
+    }
+    if actual_counts != expected_counts:
+        raise ValueError(
+            f"{poscar}: composition {actual_counts} does not match one "
+            f"{template.slug} molecule {expected_counts}"
+        )
+    coordinates_by_element: dict[str, list[tuple[float, float, float]]] = {}
+    for symbol, point in zip(poscar_symbols, poscar_coordinates):
+        coordinates_by_element.setdefault(symbol, []).append(point)
+    occurrence = {symbol: 0 for symbol in coordinates_by_element}
+    reordered = []
+    for symbol in template.symbols:
+        reordered.append(coordinates_by_element[symbol][occurrence[symbol]])
+        occurrence[symbol] += 1
+
+    data = parse(template.source)
+    atom_position = {
+        int(atom.fields[0]): index
+        for index, atom in enumerate(data.sections["Atoms"])
+    }
+    bond_deviations = []
+    bond_lengths = []
+    for bond in data.sections.get("Bonds", []):
+        left_id, right_id = map(int, bond.fields[2:4])
+        left, right = atom_position[left_id], atom_position[right_id]
+        length = _distance(reordered[left], reordered[right])
+        bond_lengths.append(length)
+        reference_length = _distance(
+            template.coordinates[left], template.coordinates[right]
+        )
+        bond_deviations.append(abs(length - reference_length))
+    maximum_bond_deviation = max(bond_deviations, default=0.0)
+    if (
+        not bond_lengths
+        or min(bond_lengths) < 0.55
+        or max(bond_lengths) > 2.30
+        or maximum_bond_deviation > 0.75
+    ):
+        raise ValueError(
+            f"{poscar}: occurrence-based restoration to LigParGen order failed "
+            "bond-geometry validation; preserve within-element atom order when "
+            "writing the molecular POSCAR"
+        )
+    center = _center_of_mass(reordered, template.masses)
+    centered = tuple(
+        tuple(point[axis] - center[axis] for axis in range(3))
+        for point in reordered
+    )
+    return replace(template, coordinates=centered), metadata | {
+        "path": str(poscar),
+        "sha256": _sha256(poscar),
+        "slug": template.slug,
+        "atom_count": len(centered),
+        "mapping": "element occurrence restored to LigParGen atom order",
+        "translation": "center of mass shifted to origin",
+        "minimum_topology_bond_angstrom": min(bond_lengths),
+        "maximum_topology_bond_angstrom": max(bond_lengths),
+        "maximum_bond_length_deviation_from_ligpargen_angstrom": (
+            maximum_bond_deviation
+        ),
+    }
 
 
 def _expected_layout(
@@ -1542,6 +1692,46 @@ def prepare_agglomeration(
     with config_path.open("rb") as handle:
         config = tomllib.load(handle)
     specs, grouped = _agglomerate_specs(config)
+    geometry_metadata: dict
+    if reference_dir is not None:
+        slugs = sorted(
+            {template.slug for spec in specs for template in spec.templates}
+        )
+        if len(slugs) != 1:
+            raise ValueError(
+                "a single --reference-dir/POSCAR can define only one molecular "
+                "species; this campaign contains " + ", ".join(slugs)
+            )
+        poscar = reference_dir / "POSCAR"
+        if not poscar.is_file():
+            raise ValueError(
+                f"{reference_dir}: incomplete VASP reference directory; missing POSCAR"
+            )
+        representative = next(
+            template
+            for spec in specs
+            for template in spec.templates
+            if template.slug == slugs[0]
+        )
+        reference_template, geometry_metadata = _template_from_reference_poscar(
+            representative, poscar
+        )
+        specs = [
+            replace(
+                spec,
+                templates=tuple(
+                    replace(template, coordinates=reference_template.coordinates)
+                    for template in spec.templates
+                ),
+            )
+            for spec in specs
+        ]
+        geometry_metadata = {"source": "reference_poscar"} | geometry_metadata
+    else:
+        geometry_metadata = {
+            "source": "ligpargen_coordinates",
+            "note": "coordinate fallback used only for --structures-only",
+        }
     xtb_settings = config.get("xtb", {})
     xtb_enabled = bool(xtb_settings.get("enabled", False))
     xtb_md_enabled = bool(xtb_settings.get("md_enabled", True))
@@ -1618,6 +1808,30 @@ def prepare_agglomeration(
                 spec.radius,
             )
             (work / "packmol.inp").write_text(packmol_input, encoding="utf-8")
+            geometry_fingerprint = _sha256_text(
+                packmol_input
+                + "".join(
+                    f"{slug}:{_sha256(path)}\n"
+                    for slug, path in sorted(local_templates.items())
+                )
+            )
+            fingerprint_path = work / "packmol_geometry.sha256"
+            previous_fingerprint = (
+                fingerprint_path.read_text(encoding="utf-8").strip()
+                if fingerprint_path.is_file()
+                else None
+            )
+            if packed.exists() and previous_fingerprint != geometry_fingerprint:
+                old_tag = (previous_fingerprint or "legacy")[:12]
+                archived = work / f"packed.xyz.geometry_{old_tag}"
+                suffix = 1
+                while archived.exists():
+                    archived = work / f"packed.xyz.geometry_{old_tag}_{suffix}"
+                    suffix += 1
+                shutil.move(packed, archived)
+            fingerprint_path.write_text(
+                geometry_fingerprint + "\n", encoding="utf-8"
+            )
             if packed_xyz is not None:
                 shutil.copy2(packed_xyz, packed)
             elif packed.exists():
@@ -2013,6 +2227,7 @@ def prepare_agglomeration(
             else config.get("agglomeration", {})
         ),
         "vasp_reference_sanity": reference_validation,
+        "molecular_geometry": geometry_metadata,
         "xtb": xtb_settings
         | {
             "enabled": xtb_enabled,

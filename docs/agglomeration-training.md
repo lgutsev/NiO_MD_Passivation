@@ -1,9 +1,10 @@
 # Phosphonate agglomeration structures for MLIP labeling
 
 `nio-md-prep prepare-agglomeration` generates finite molecular clusters for
-VASP energy/force labeling. It reconstructs each molecule from the reviewed
-LigParGen file already stored under `inputs/molecules/`; separate XYZ files are
-not required.
+VASP energy/force labeling. In the normal VASP workflow, the single molecule in
+`--reference-dir/POSCAR` is the authoritative geometry. The reviewed LigParGen
+file under `inputs/molecules/` supplies atom identity, topology, masses, and the
+canonical atom order used by Packmol and xTB. No separate XYZ file is required.
 
 The generator is deliberately independent of the classical NiO/LAMMPS force
 field. Its output is reference data for a later MLIP dataset, not a classical
@@ -87,10 +88,17 @@ nio-md-prep prepare-agglomeration \
   --output agglomeration/me-4pacz
 ```
 
-The reference directory must contain `INCAR`, `KPOINTS`, and `POTCAR`. Every
-other reusable top-level file, including Slurm launchers, is also copied. The
-reference `POSCAR` and existing VASP outputs are excluded because the generated
-agglomerate replaces the reference structure. Completed calculations are under
+The reference directory must contain `POSCAR`, `INCAR`, `KPOINTS`, and `POTCAR`.
+Its `POSCAR` must contain exactly one molecule with the same elemental
+composition as the configured LigParGen molecule. POSCAR element grouping is
+handled automatically, but the occurrence order within each element block must
+preserve the LigParGen atom order. The command restores the full LigParGen order
+and checks every topology bond before packing, failing closed if the mapping is
+not credible. Every other reusable top-level file, including Slurm launchers,
+is also copied. The
+reference `POSCAR` is used as the molecular template but is not copied verbatim:
+the generated agglomerate replaces it. Existing VASP outputs are also excluded.
+Completed calculations are under
 `vasp_runs/`, one fully independent run directory per structure. With xTB
 enabled the first invocation normally stops with `XTB_REQUIRED`:
 
@@ -210,7 +218,12 @@ replica and records `PACKMOL_REQUIRED` in the root manifest. Run
 `packmol < packmol.inp` inside every incomplete replica directory and rerun the
 same command with the same output path. The second invocation validates the
 produced atom order and completes the structures. `--packed-xyz` is available
-for a one-replica offline or externally packed build.
+for a one-replica offline or externally packed build. A geometry fingerprint is
+stored beside every Packmol input. If the reference POSCAR changes, stale
+`packed.xyz` files are archived with a `geometry_*` suffix and must be packed
+again; the corresponding xTB protocol is then invalidated as well. In
+`--structures-only` mode, where no VASP reference exists, coordinates fall back
+to the LigParGen file and this provenance is recorded in the root manifest.
 
 ## Configuration
 
