@@ -124,9 +124,10 @@ cd agglomeration/me-4pacz
 sbatch run_xtb_array.sbatch
 ```
 
-Submit from the generated campaign root: Slurm records that directory in
-`SLURM_SUBMIT_DIR`, which the array uses to find `xtb_cases.tsv`. The array uses
-one task and one CPU per aggregate, sets
+The generated array embeds the campaign root's absolute path, so Slurm's spool
+copy of the script cannot redirect it away from `xtb_cases.tsv`. If the campaign
+directory is moved, regenerate the launcher or update its `root=` line. The
+array uses one task and one CPU per aggregate, sets
 `ulimit -s unlimited`, and writes `xtb.out`, `xtb.err`, and `xtbopt.xyz` in each
 `xtb/...` directory. Test one array index first with
 `sbatch --array=0 run_xtb_array.sbatch` before releasing the complete array.

@@ -232,7 +232,8 @@ count = 2
     xtb_launcher = (output / "run_xtb_array.sbatch").read_text()
     assert "#SBATCH -p single" in xtb_launcher
     assert "#SBATCH -c 1" in xtb_launcher
-    assert 'root="${SLURM_SUBMIT_DIR:-$PWD}"' in xtb_launcher
+    assert f"root={output.resolve()}" in xtb_launcher
+    assert "SLURM_SUBMIT_DIR" not in xtb_launcher
     assert 'dirname "$0"' not in xtb_launcher
     assert "XTB_ENV:=/project/lgutsev/env/xtb_env" in xtb_launcher
     assert not (output / "vasp_runs/r000_s00_1p000/POSCAR").exists()

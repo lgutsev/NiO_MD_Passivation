@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import re
+import shlex
 import shutil
 import subprocess
 import tomllib
@@ -1011,6 +1012,7 @@ def _write_xtb_batch(output: Path, cases: list[dict], settings: dict) -> None:
     opt_level = str(settings.get("opt_level", "loose"))
     max_cycles = int(settings.get("max_cycles", 100))
     concurrency = int(settings.get("array_concurrency", 4))
+    campaign_root = shlex.quote(str(output.resolve()))
     script = output / "run_xtb_array.sbatch"
     script.write_text(
         f"""#!/bin/bash
@@ -1025,7 +1027,7 @@ def _write_xtb_batch(output: Path, cases: list[dict], settings: dict) -> None:
 #SBATCH --array=0-{len(cases) - 1}%{concurrency}
 
 set -euo pipefail
-root="${{SLURM_SUBMIT_DIR:-$PWD}}"
+root={campaign_root}
 line=$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "$root/xtb_cases.tsv")
 IFS=$'\\t' read -r relative charge uhf <<< "$line"
 work="$root/$relative"
