@@ -92,14 +92,22 @@ def _potcar(path: Path, elements: list[str]) -> Path:
     return path
 
 
-def _molecular_poscar(path: Path, *, coordinate_offset: float = 0.0) -> Path:
+def _molecular_poscar(
+    path: Path,
+    *,
+    coordinate_offset: float = 0.0,
+    reverse_within_elements: bool = False,
+) -> Path:
     data = parse(ROOT / "inputs/molecules/me-4pacz/ligpargen.lmp")
     symbols = elements(data)
     coordinates = atom_coordinates(data)
     element_order = sorted(set(symbols))
     rows = []
     for element in element_order:
-        for index, (symbol, coordinate) in enumerate(zip(symbols, coordinates)):
+        indexed = list(enumerate(zip(symbols, coordinates)))
+        if reverse_within_elements:
+            indexed.reverse()
+        for index, (symbol, coordinate) in indexed:
             if symbol != element:
                 continue
             x, y, z = coordinate
@@ -254,7 +262,11 @@ def test_reference_poscar_is_the_authoritative_molecular_geometry(
     (reference / "KPOINTS").write_text(
         "Gamma\n0\nGamma\n1 1 1\n0 0 0\n", encoding="utf-8"
     )
-    _molecular_poscar(reference / "POSCAR", coordinate_offset=0.1)
+    _molecular_poscar(
+        reference / "POSCAR",
+        coordinate_offset=0.1,
+        reverse_within_elements=True,
+    )
     _potcar(reference / "POTCAR", ["C", "H", "N", "O", "P"])
 
     output = tmp_path / "campaign"
@@ -267,19 +279,30 @@ def test_reference_poscar_is_the_authoritative_molecular_geometry(
     assert manifest["status"] == "PACKMOL_REQUIRED"
     assert manifest["molecular_geometry"]["source"] == "reference_poscar"
     assert manifest["molecular_geometry"]["sha256"]
+    assert manifest["molecular_geometry"]["mapping"].startswith(
+        "bond-graph isomorphism"
+    )
 
     written = _read_ordered_xyz(output / "templates/me-4pacz.xyz")
     original = atom_coordinates(
         parse(ROOT / "inputs/molecules/me-4pacz/ligpargen.lmp")
     )
-    assert _distance(written[0][1], written[1][1]) == pytest.approx(
-        _distance(
-            (original[0][0] + 0.1, original[0][1], original[0][2]),
-            original[1],
+    modified = list(original)
+    modified[0] = (original[0][0] + 0.1, original[0][1], original[0][2])
+
+    def distance_inventory(coordinates):
+        return sorted(
+            _distance(coordinates[left], coordinates[right])
+            for left in range(len(coordinates))
+            for right in range(left + 1, len(coordinates))
         )
+
+    written_coordinates = [coordinate for _, coordinate in written]
+    assert distance_inventory(written_coordinates) == pytest.approx(
+        distance_inventory(modified), abs=1.0e-8
     )
-    assert _distance(written[0][1], written[1][1]) != pytest.approx(
-        _distance(original[0], original[1])
+    assert distance_inventory(written_coordinates) != pytest.approx(
+        distance_inventory(original), abs=1.0e-8
     )
 
 

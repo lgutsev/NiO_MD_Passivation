@@ -91,11 +91,11 @@ nio-md-prep prepare-agglomeration \
 The reference directory must contain `POSCAR`, `INCAR`, `KPOINTS`, and `POTCAR`.
 Its `POSCAR` must contain exactly one molecule with the same elemental
 composition as the configured LigParGen molecule. POSCAR element grouping is
-handled automatically, but the occurrence order within each element block must
-preserve the LigParGen atom order. The command restores the full LigParGen order
-and checks every topology bond before packing, failing closed if the mapping is
-not credible. Every other reusable top-level file, including Slurm launchers,
-is also copied. The
+handled automatically, and atoms may appear in a different order within each
+element block. The command infers the molecular bond graph, maps it to the
+LigParGen topology, restores the canonical order, and checks every topology bond
+before packing. It fails closed if the graphs are incompatible. Every other
+reusable top-level file, including Slurm launchers, is also copied. The
 reference `POSCAR` is used as the molecular template but is not copied verbatim:
 the generated agglomerate replaces it. Existing VASP outputs are also excluded.
 Completed calculations are under

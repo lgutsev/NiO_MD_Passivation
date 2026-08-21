@@ -10,6 +10,7 @@ import shlex
 import shutil
 import subprocess
 import tomllib
+from collections import Counter
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -367,6 +368,153 @@ def _read_poscar(
     }
 
 
+_COVALENT_RADII_ANGSTROM = {
+    "H": 0.31,
+    "C": 0.76,
+    "N": 0.71,
+    "O": 0.66,
+    "P": 1.07,
+}
+
+
+def _infer_molecular_adjacency(
+    symbols: list[str],
+    coordinates: list[tuple[float, float, float]],
+    tolerance: float,
+) -> list[set[int]]:
+    adjacency = [set() for _ in symbols]
+    for left, left_symbol in enumerate(symbols):
+        if left_symbol == "H":
+            candidates = []
+            for right, right_symbol in enumerate(symbols):
+                if right_symbol == "H":
+                    continue
+                cutoff = (
+                    _COVALENT_RADII_ANGSTROM[left_symbol]
+                    + _COVALENT_RADII_ANGSTROM[right_symbol]
+                    + tolerance
+                )
+                distance = _distance(coordinates[left], coordinates[right])
+                if 0.55 <= distance <= cutoff:
+                    candidates.append((distance, right))
+            if candidates:
+                _, right = min(candidates)
+                adjacency[left].add(right)
+                adjacency[right].add(left)
+            continue
+        for right in range(left + 1, len(symbols)):
+            right_symbol = symbols[right]
+            if right_symbol == "H":
+                continue
+            try:
+                cutoff = (
+                    _COVALENT_RADII_ANGSTROM[left_symbol]
+                    + _COVALENT_RADII_ANGSTROM[right_symbol]
+                    + tolerance
+                )
+            except KeyError as error:
+                raise ValueError(
+                    f"no covalent radius is available for POSCAR element {error.args[0]}"
+                ) from None
+            distance = _distance(coordinates[left], coordinates[right])
+            if 0.55 <= distance <= cutoff:
+                adjacency[left].add(right)
+                adjacency[right].add(left)
+    return adjacency
+
+
+def _labeled_graph_mapping(
+    template_symbols: tuple[str, ...],
+    template_adjacency: list[set[int]],
+    target_symbols: list[str],
+    target_adjacency: list[set[int]],
+) -> list[int] | None:
+    def signature(index: int, symbols, adjacency) -> tuple:
+        return (
+            symbols[index],
+            len(adjacency[index]),
+            tuple(sorted(Counter(symbols[item] for item in adjacency[index]).items())),
+        )
+
+    target_by_signature: dict[tuple, list[int]] = {}
+    for index in range(len(target_symbols)):
+        target_by_signature.setdefault(
+            signature(index, target_symbols, target_adjacency), []
+        ).append(index)
+    candidates = {
+        index: target_by_signature.get(
+            signature(index, template_symbols, template_adjacency), []
+        )
+        for index in range(len(template_symbols))
+    }
+    if any(not items for items in candidates.values()):
+        return None
+    order = sorted(
+        range(len(template_symbols)),
+        key=lambda index: (len(candidates[index]), -len(template_adjacency[index])),
+    )
+    mapping: dict[int, int] = {}
+    used: set[int] = set()
+
+    def search(position: int) -> bool:
+        if position == len(order):
+            return True
+        template_index = order[position]
+        for target_index in candidates[template_index]:
+            if target_index in used:
+                continue
+            if any(
+                ((other in template_adjacency[template_index])
+                 != (mapping[other] in target_adjacency[target_index]))
+                for other in mapping
+            ):
+                continue
+            mapping[template_index] = target_index
+            used.add(target_index)
+            if search(position + 1):
+                return True
+            used.remove(target_index)
+            del mapping[template_index]
+        return False
+
+    if not search(0):
+        return None
+    return [mapping[index] for index in range(len(template_symbols))]
+
+
+def _restore_topology_order(
+    template: MoleculeTemplate,
+    poscar_symbols: list[str],
+    poscar_coordinates: list[tuple[float, float, float]],
+) -> tuple[list[tuple[float, float, float]], float]:
+    data = parse(template.source)
+    atom_position = {
+        int(atom.fields[0]): index for index, atom in enumerate(data.sections["Atoms"])
+    }
+    template_adjacency = [set() for _ in template.symbols]
+    for bond in data.sections.get("Bonds", []):
+        left_id, right_id = map(int, bond.fields[2:4])
+        left, right = atom_position[left_id], atom_position[right_id]
+        template_adjacency[left].add(right)
+        template_adjacency[right].add(left)
+    for tolerance in (0.20, 0.30, 0.40, 0.50):
+        target_adjacency = _infer_molecular_adjacency(
+            poscar_symbols, poscar_coordinates, tolerance
+        )
+        mapping = _labeled_graph_mapping(
+            template.symbols,
+            template_adjacency,
+            poscar_symbols,
+            target_adjacency,
+        )
+        if mapping is not None:
+            return [poscar_coordinates[index] for index in mapping], tolerance
+    raise ValueError(
+        "could not match the POSCAR bond graph to the LigParGen topology; "
+        "check that POSCAR contains one intact molecule"
+    )
+
+
 def _template_from_reference_poscar(
     template: MoleculeTemplate,
     poscar: Path,
@@ -383,14 +531,12 @@ def _template_from_reference_poscar(
             f"{poscar}: composition {actual_counts} does not match one "
             f"{template.slug} molecule {expected_counts}"
         )
-    coordinates_by_element: dict[str, list[tuple[float, float, float]]] = {}
-    for symbol, point in zip(poscar_symbols, poscar_coordinates):
-        coordinates_by_element.setdefault(symbol, []).append(point)
-    occurrence = {symbol: 0 for symbol in coordinates_by_element}
-    reordered = []
-    for symbol in template.symbols:
-        reordered.append(coordinates_by_element[symbol][occurrence[symbol]])
-        occurrence[symbol] += 1
+    try:
+        reordered, graph_tolerance = _restore_topology_order(
+            template, poscar_symbols, poscar_coordinates
+        )
+    except ValueError as error:
+        raise ValueError(f"{poscar}: {error}") from None
 
     data = parse(template.source)
     atom_position = {
@@ -416,9 +562,8 @@ def _template_from_reference_poscar(
         or maximum_bond_deviation > 0.75
     ):
         raise ValueError(
-            f"{poscar}: occurrence-based restoration to LigParGen order failed "
-            "bond-geometry validation; preserve within-element atom order when "
-            "writing the molecular POSCAR"
+            f"{poscar}: topology-based restoration to LigParGen order failed "
+            "bond-geometry validation; check that POSCAR contains one intact molecule"
         )
     center = _center_of_mass(reordered, template.masses)
     centered = tuple(
@@ -430,7 +575,8 @@ def _template_from_reference_poscar(
         "sha256": _sha256(poscar),
         "slug": template.slug,
         "atom_count": len(centered),
-        "mapping": "element occurrence restored to LigParGen atom order",
+        "mapping": "bond-graph isomorphism restored LigParGen atom order",
+        "bond_inference_tolerance_angstrom": graph_tolerance,
         "translation": "center of mass shifted to origin",
         "minimum_topology_bond_angstrom": min(bond_lengths),
         "maximum_topology_bond_angstrom": max(bond_lengths),
