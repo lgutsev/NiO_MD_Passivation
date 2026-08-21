@@ -28,13 +28,26 @@ large, costly systems whose trajectories already contain many local contacts.
 
 Every family uses only `center_scale = 1.0`. After adaptive compaction, each
 candidate follows a reproducible xTB preconditioning protocol before a POSCAR
-is written: loose GFN2-xTB optimization, 1 ps NVT dynamics at 400 K with a 1 fs
-step, then a final loose GFN2-xTB quench. The MD seed is inherited from the
-Packmol seed. This lets thermal motion change conformations and contact patterns
-without handing a high-force MD endpoint directly to VASP. xTB provides the
-attractive intermolecular relaxation that Packmol cannot, while Packmol still
-provides the different starting topologies. xTB energies and forces are not
-MLIP labels; only the subsequent VASP calculations provide training labels.
+is written: loose GFN2-xTB optimization, 10 ps total NVT dynamics at 400 K with
+a 1 fs step, then a final loose GFN2-xTB quench. Replica 0 of each size family
+uses weak harmonic restraints between greedily paired phosphonate P atoms for
+the first 2 ps, followed by 8 ps of completely unbiased dynamics. All remaining
+replicas run 10 ps without restraints. Each P head is used at most once and
+heads from the same molecule are never paired. This avoids forcing selected O
+atoms into artificial short contacts or pulling every head into one central
+knot while still helping the slow whole-molecule reorientation cross its
+barrier. A restraint target is calculated after the initial optimization: it
+is never more than 4 A inward from that optimized P--P distance and never
+pushes an already-close pair apart. The MD seeds are derived from the Packmol
+seed.
+
+The steering is only a starting-configuration sampling aid. The restraints are
+absent from the long segment, the final quench, and every VASP calculation. xTB
+provides attractive intermolecular relaxation that Packmol cannot, while
+Packmol still provides the different starting topologies. xTB energies and
+forces are not MLIP labels; only the subsequent VASP calculations provide
+training labels. xTB's distance restraints follow its documented `$constrain`
+input syntax: <https://github.com/grimme-lab/xtb/blob/main/man/xcontrol.7.adoc>.
 
 Optional scale families remain supported. The generator translates whole
 molecules so their centers of mass are multiplied by every configured
@@ -139,18 +152,34 @@ Each `xtb/...` directory records the complete staged provenance:
 
 ```text
 input.xyz                 # compacted Packmol start
-md.inp                    # deterministic 400 K, 1 ps NVT instructions
+steering_plan.json        # selected P pairs and bounded steering parameters
+md_steered.inp            # generated after initial opt for optional 2 ps steering
+steering_restraints.json  # realized post-opt P--P distances and targets
+md.inp                    # 8 or 10 ps unbiased 400 K segment
+xtb_protocol.json         # exact timings, seeds, steering rule, and P pair map
+xtb_protocol.sha256       # expected protocol fingerprint
+xtb_protocol.complete     # written only after the matching final quench
 xtbopt_initial.xyz        # initial loose GFN2-xTB minimum
-xtb.trj                   # xTB MD trajectory
-xtbmd_last.xyz            # last complete trajectory frame
+xtb_steered.trj           # optional restrained trajectory
+xtbsteered_last.xyz       # optional steering endpoint
+xtb_unbiased.trj          # unbiased trajectory used for handoff
+xtbmd_unbiased_last.xyz   # last complete unbiased frame
 xtbfinal.xyz              # final loose quench; source used for VASP
 xtb_initial_opt.out/.err
-xtb_md.out/.err
+xtb_steered_md.out/.err
+xtb_unbiased_md.out/.err
 xtb_final_opt.out/.err
 ```
 
+The campaign root also contains `write_xtb_steering_input.py`, which calculates
+the bounded targets from `xtbopt_initial.xyz` immediately before the steered
+segment begins.
+
 Completed stages are skipped on resubmission, so an interrupted task resumes
-from its last valid file. Test one array index first with
+from its last valid file. A legacy 1 ps `xtbfinal.xyz` is not accepted without
+the matching protocol fingerprint; the launcher preserves it as
+`xtbfinal.pre_staged_md.xyz` before producing the new result. Test one array
+index first with
 `sbatch --array=0 run_xtb_array.sbatch` before releasing the complete array.
 
 Geometry-only generation remains available, but must be requested explicitly:
@@ -196,10 +225,16 @@ opt_level = "loose"
 max_cycles = 100
 md_enabled = true
 md_temperature_K = 400
-md_time_ps = 1.0
+md_time_ps = 10.0
 md_step_fs = 1.0
 md_dump_fs = 50.0
 md_sccacc = 1.0
+head_bias_enabled = true
+head_bias_replicas_per_family = 1
+head_bias_time_ps = 2.0
+head_bias_target_pp_distance_angstrom = 4.5
+head_bias_max_distance_reduction_angstrom = 4.0
+head_bias_force_constant = 0.001
 minimum_oxygen_oxygen_distance_angstrom = 2.20
 maximum_nearest_molecule_distance_angstrom = 6.0
 

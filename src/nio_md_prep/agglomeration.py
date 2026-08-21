@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import __version__
+from .chemistry import phosphonate_roles
 from .config import ROOT, missing_ligpargen, molecule_manifest
 from .geometry import elements
 from .lammps import DataFile, atom_coordinates, charge, parse
@@ -27,6 +28,7 @@ class MoleculeTemplate:
     symbols: tuple[str, ...]
     coordinates: tuple[tuple[float, float, float], ...]
     masses: tuple[float, ...]
+    phosphonate_p_indices: tuple[int, ...]
     net_charge: float
 
 
@@ -37,6 +39,7 @@ class MoleculeInstance:
     start: int
     stop: int
     masses: tuple[float, ...]
+    phosphonate_p_indices: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -110,6 +113,15 @@ def _load_templates(config: dict) -> list[MoleculeTemplate]:
                 f"{source}: LigParGen charge {actual_charge:.8f} does not match "
                 f"manifest expected_net_charge {expected_charge}"
             )
+        atom_position = {
+            int(atom.fields[0]): index
+            for index, atom in enumerate(data.sections["Atoms"])
+        }
+        p_indices = tuple(
+            atom_position[atom_id]
+            for atom_id, role in phosphonate_roles(data).items()
+            if role == "P"
+        )
         templates.append(
             MoleculeTemplate(
                 slug=slug,
@@ -118,6 +130,7 @@ def _load_templates(config: dict) -> list[MoleculeTemplate]:
                 symbols=tuple(elements(data)),
                 coordinates=tuple(atom_coordinates(data)),
                 masses=_atom_masses(data),
+                phosphonate_p_indices=p_indices,
                 net_charge=actual_charge,
             )
         )
@@ -275,9 +288,52 @@ def _expected_layout(
                     start=start,
                     stop=len(symbols),
                     masses=template.masses,
+                    phosphonate_p_indices=tuple(
+                        start + index for index in template.phosphonate_p_indices
+                    ),
                 )
             )
     return symbols, instances
+
+
+def _nearest_phosphonate_pairs(
+    coordinates: list[tuple[float, float, float]],
+    instances: list[MoleculeInstance],
+) -> list[dict]:
+    """Greedily pair nearby P heads on different molecules, once per head."""
+    heads = [
+        (atom_index, item.molecule_id)
+        for item in instances
+        for atom_index in item.phosphonate_p_indices
+    ]
+    candidates = sorted(
+        (
+            _distance(coordinates[left_atom], coordinates[right_atom]),
+            left_atom,
+            right_atom,
+            left_molecule,
+            right_molecule,
+        )
+        for position, (left_atom, left_molecule) in enumerate(heads)
+        for right_atom, right_molecule in heads[position + 1:]
+        if left_molecule != right_molecule
+    )
+    used: set[int] = set()
+    pairs: list[dict] = []
+    for distance, left_atom, right_atom, left_molecule, right_molecule in candidates:
+        if left_atom in used or right_atom in used:
+            continue
+        used.update((left_atom, right_atom))
+        pairs.append(
+            {
+                "left_atom_index": left_atom + 1,
+                "right_atom_index": right_atom + 1,
+                "left_molecule_id": left_molecule,
+                "right_molecule_id": right_molecule,
+                "initial_distance_angstrom": distance,
+            }
+        )
+    return pairs
 
 
 def _packmol_input(
@@ -1049,6 +1105,71 @@ destination.write_text("\\n".join(frames[-1]) + "\\n", encoding="utf-8")
         encoding="utf-8",
     )
     extractor.chmod(0o755)
+    steering_writer = output / "write_xtb_steering_input.py"
+    steering_writer.write_text(
+        """#!/usr/bin/env python3
+import json
+import math
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+plan_path = Path(sys.argv[2])
+input_path = Path(sys.argv[3])
+record_path = Path(sys.argv[4])
+lines = source.read_text(encoding="utf-8").splitlines()
+atoms = int(lines[0])
+if len(lines) != atoms + 2:
+    raise SystemExit(f"{source}: invalid single-frame XYZ")
+coordinates = [tuple(map(float, row.split()[1:4])) for row in lines[2:]]
+plan = json.loads(plan_path.read_text(encoding="utf-8"))
+realized = []
+constraints = []
+for pair in plan["pairs"]:
+    left = pair["left_atom_index"] - 1
+    right = pair["right_atom_index"] - 1
+    current = math.dist(coordinates[left], coordinates[right])
+    target = min(
+        current,
+        max(
+            plan["minimum_target_pp_distance_angstrom"],
+            current - plan["maximum_distance_reduction_angstrom"],
+        ),
+    )
+    realized_pair = pair | {
+        "post_optimization_distance_angstrom": current,
+        "restraint_distance_angstrom": target,
+    }
+    realized.append(realized_pair)
+    constraints.append(
+        f"  distance: {left + 1},{right + 1},{target:.8f}"
+    )
+input_path.write_text(
+    f'''$seed {plan["seed"]}
+$constrain
+  force constant={plan["force_constant_atomic_units"]:g}
+{chr(10).join(constraints)}
+$end
+$md
+  temp={plan["temperature_K"]:g}
+  time={plan["time_ps"]:g}
+  dump={plan["dump_fs"]:g}
+  step={plan["step_fs"]:g}
+  nvt=1
+  hmass=0
+  shake=0
+  sccacc={plan["sccacc"]:g}
+$end
+''',
+    encoding="utf-8",
+)
+record_path.write_text(
+    json.dumps({"pairs": realized}, indent=2) + "\\n", encoding="utf-8"
+)
+""",
+        encoding="utf-8",
+    )
+    steering_writer.chmod(0o755)
     if md_enabled:
         workflow = f'''if [[ -s xtbopt.xyz && ! -s xtbopt_initial.xyz ]]; then
   mv xtbopt.xyz xtbopt_initial.xyz
@@ -1061,26 +1182,50 @@ if [[ ! -s xtbopt_initial.xyz ]]; then
   mv xtbopt.xyz xtbopt_initial.xyz
   [[ ! -s xtbopt.log ]] || mv xtbopt.log xtbopt_initial.log
 fi
-if [[ ! -s xtbmd_last.xyz ]]; then
-  rm -f xtb.trj mdrestart xtbrestart xtbmdok
-  "$XTB_EXE" xtbopt_initial.xyz --gfn {gfn} --chrg "$charge" --uhf "$uhf" --md --input md.inp > xtb_md.out 2> xtb_md.err
-  test -s xtb.trj
-  "$PYTHON_EXE" "$root/extract_last_xtb_frame.py" xtb.trj xtbmd_last.xyz
-  test -s xtbmd_last.xyz
+md_start=xtbopt_initial.xyz
+if [[ -s steering_plan.json ]]; then
+  if [[ ! -s xtbsteered_last.xyz ]]; then
+    "$PYTHON_EXE" "$root/write_xtb_steering_input.py" xtbopt_initial.xyz steering_plan.json md_steered.inp steering_restraints.json
+    rm -f xtb.trj mdrestart xtbrestart xtbmdok
+    "$XTB_EXE" xtbopt_initial.xyz --gfn {gfn} --chrg "$charge" --uhf "$uhf" --md --input md_steered.inp > xtb_steered_md.out 2> xtb_steered_md.err
+    test -s xtb.trj
+    "$PYTHON_EXE" "$root/extract_last_xtb_frame.py" xtb.trj xtbsteered_last.xyz
+    mv xtb.trj xtb_steered.trj
+    test -s xtbsteered_last.xyz
+  fi
+  md_start=xtbsteered_last.xyz
 fi
-if [[ ! -s xtbfinal.xyz ]]; then
+if [[ ! -s xtbmd_unbiased_last.xyz ]]; then
+  rm -f xtb.trj mdrestart xtbrestart xtbmdok
+  "$XTB_EXE" "$md_start" --gfn {gfn} --chrg "$charge" --uhf "$uhf" --md --input md.inp > xtb_unbiased_md.out 2> xtb_unbiased_md.err
+  test -s xtb.trj
+  "$PYTHON_EXE" "$root/extract_last_xtb_frame.py" xtb.trj xtbmd_unbiased_last.xyz
+  mv xtb.trj xtb_unbiased.trj
+  test -s xtbmd_unbiased_last.xyz
+fi
+if [[ ! -s xtb_protocol.complete ]] || ! cmp -s xtb_protocol.sha256 xtb_protocol.complete; then
+  if [[ -s xtbfinal.xyz && ! -e xtbfinal.pre_staged_md.xyz ]]; then
+    mv xtbfinal.xyz xtbfinal.pre_staged_md.xyz
+  else
+    rm -f xtbfinal.xyz
+  fi
   rm -f xtbopt.xyz
-  "$XTB_EXE" xtbmd_last.xyz --gfn {gfn} --chrg "$charge" --uhf "$uhf" --opt {opt_level} --cycles {max_cycles} > xtb_final_opt.out 2> xtb_final_opt.err
+  "$XTB_EXE" xtbmd_unbiased_last.xyz --gfn {gfn} --chrg "$charge" --uhf "$uhf" --opt {opt_level} --cycles {max_cycles} > xtb_final_opt.out 2> xtb_final_opt.err
   test -s xtbopt.xyz
   mv xtbopt.xyz xtbfinal.xyz
   [[ ! -s xtbopt.log ]] || mv xtbopt.log xtbfinal.log
+  cp xtb_protocol.sha256 xtb_protocol.complete
 fi
-test -s xtbfinal.xyz'''
-        completion_file = "xtbfinal.xyz"
+test -s xtbfinal.xyz
+cmp -s xtb_protocol.sha256 xtb_protocol.complete'''
+        completion_test = (
+            '[[ -s xtbfinal.xyz && -s xtb_protocol.complete ]] '
+            '&& cmp -s xtb_protocol.sha256 xtb_protocol.complete'
+        )
     else:
         workflow = f'''"$XTB_EXE" input.xyz --gfn {gfn} --chrg "$charge" --uhf "$uhf" --opt {opt_level} --cycles {max_cycles} > xtb.out 2> xtb.err
 test -s xtbopt.xyz'''
-        completion_file = "xtbopt.xyz"
+        completion_test = "[[ -s xtbopt.xyz ]]"
     script = output / "run_xtb_array.sbatch"
     script.write_text(
         f"""#!/bin/bash
@@ -1100,7 +1245,7 @@ line=$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "$root/xtb_cases.tsv")
 IFS=$'\\t' read -r relative charge uhf <<< "$line"
 work="$root/$relative"
 cd "$work"
-if [[ -s {completion_file} ]]; then
+if {completion_test}; then
   echo "already complete: $relative"
   exit 0
 fi
@@ -1139,16 +1284,52 @@ fi
     script.chmod(0o755)
 
 
-def _write_xtb_md_input(path: Path, settings: dict, seed: int) -> None:
+def _md_seed(seed: int, offset: int) -> int:
+    resolved = (seed + offset) % 899999999
+    return resolved or 1
+
+
+def _head_bias_for_replica(replica: int, replicas: int, settings: dict) -> bool:
+    if not bool(settings.get("head_bias_enabled", True)):
+        return False
+    biased = int(settings.get("head_bias_replicas_per_family", 1))
+    if biased < 0:
+        raise ValueError("head_bias_replicas_per_family cannot be negative")
+    return replica < min(biased, replicas)
+
+
+def _write_xtb_md_inputs(
+    directory: Path,
+    settings: dict,
+    seed: int,
+    p_pairs: list[dict],
+    steered: bool,
+) -> dict:
     temperature = float(settings.get("md_temperature_K", 400.0))
-    time_ps = float(settings.get("md_time_ps", 1.0))
+    total_time_ps = float(settings.get("md_time_ps", 10.0))
+    steering_time_ps = float(settings.get("head_bias_time_ps", 2.0)) if steered else 0.0
+    unbiased_time_ps = total_time_ps - steering_time_ps
     dump_fs = float(settings.get("md_dump_fs", 50.0))
     step_fs = float(settings.get("md_step_fs", 1.0))
     sccacc = float(settings.get("md_sccacc", 1.0))
-    if min(temperature, time_ps, dump_fs, step_fs, sccacc) <= 0:
+    target = float(settings.get("head_bias_target_pp_distance_angstrom", 4.5))
+    maximum_reduction = float(
+        settings.get("head_bias_max_distance_reduction_angstrom", 4.0)
+    )
+    force_constant = float(settings.get("head_bias_force_constant", 0.001))
+    if min(temperature, total_time_ps, dump_fs, step_fs, sccacc) <= 0:
         raise ValueError("xTB MD temperature, time, dump, step, and sccacc must be positive")
-    path.write_text(
-        f"""$seed {seed}
+    if steered and (not p_pairs or steering_time_ps <= 0 or unbiased_time_ps <= 0):
+        raise ValueError(
+            "steered xTB MD requires P pairs and 0 < head_bias_time_ps < md_time_ps"
+        )
+    if steered and min(target, maximum_reduction, force_constant) <= 0:
+        raise ValueError(
+            "xTB P-P steering target, maximum reduction, and force constant must be positive"
+        )
+
+    def md_text(md_seed: int, time_ps: float) -> str:
+        return f"""$seed {md_seed}
 $md
   temp={temperature:g}
   time={time_ps:g}
@@ -1159,9 +1340,59 @@ $md
   shake=0
   sccacc={sccacc:g}
 $end
-""",
+"""
+
+    (directory / "md.inp").write_text(
+        md_text(_md_seed(seed, 104729 if steered else 0), unbiased_time_ps),
         encoding="utf-8",
     )
+    if steered:
+        steering_plan = {
+            "seed": _md_seed(seed, 0),
+            "temperature_K": temperature,
+            "time_ps": steering_time_ps,
+            "dump_fs": dump_fs,
+            "step_fs": step_fs,
+            "sccacc": sccacc,
+            "minimum_target_pp_distance_angstrom": target,
+            "maximum_distance_reduction_angstrom": maximum_reduction,
+            "force_constant_atomic_units": force_constant,
+            "pairs": p_pairs,
+        }
+        (directory / "steering_plan.json").write_text(
+            json.dumps(steering_plan, indent=2) + "\n", encoding="utf-8"
+        )
+    else:
+        (directory / "steering_plan.json").unlink(missing_ok=True)
+        (directory / "md_steered.inp").unlink(missing_ok=True)
+        (directory / "steering_restraints.json").unlink(missing_ok=True)
+
+    protocol = {
+        "schema_version": 2,
+        "total_md_time_ps": total_time_ps,
+        "temperature_K": temperature,
+        "step_fs": step_fs,
+        "dump_fs": dump_fs,
+        "sccacc": sccacc,
+        "head_bias": {
+            "enabled": steered,
+            "time_ps": steering_time_ps,
+            "unbiased_time_ps": unbiased_time_ps,
+            "minimum_target_pp_distance_angstrom": target if steered else None,
+            "maximum_distance_reduction_angstrom": (
+                maximum_reduction if steered else None
+            ),
+            "force_constant_atomic_units": force_constant if steered else None,
+            "pairs": p_pairs if steered else [],
+        },
+        "final_stage": "unbiased GFN-xTB optimization",
+    }
+    protocol_path = directory / "xtb_protocol.json"
+    protocol_path.write_text(json.dumps(protocol, indent=2) + "\n", encoding="utf-8")
+    (directory / "xtb_protocol.sha256").write_text(
+        _sha256(protocol_path) + "\n", encoding="utf-8"
+    )
+    return protocol
 
 
 def _copy_reference(reference: Path | None, destination: Path) -> list[dict]:
@@ -1208,6 +1439,12 @@ def prepare_agglomeration(
     xtb_settings = config.get("xtb", {})
     xtb_enabled = bool(xtb_settings.get("enabled", False))
     xtb_md_enabled = bool(xtb_settings.get("md_enabled", True))
+    head_bias_enabled = bool(xtb_settings.get("head_bias_enabled", True))
+    head_bias_replicas = int(
+        xtb_settings.get("head_bias_replicas_per_family", 1)
+    )
+    if head_bias_replicas < 0:
+        raise ValueError("head_bias_replicas_per_family cannot be negative")
     md_settings = config.get("vasp_md", {})
     hold_steps = int(md_settings.get("hold_steps", 3000))
     heating_steps = int(md_settings.get("heating_steps", 1000))
@@ -1335,6 +1572,7 @@ def prepare_agglomeration(
                 )
                 raw_variant = uncentered_variants[scale]
                 xtb_relative: Path | None = None
+                xtb_protocol: dict | None = None
                 if xtb_enabled:
                     xtb_work = output / "xtb"
                     if grouped:
@@ -1350,11 +1588,24 @@ def prepare_agglomeration(
                         f"Packmol seed {seed}; adaptive center scale {compact_scale:.8f}",
                     )
                     if xtb_md_enabled:
-                        _write_xtb_md_input(
-                            xtb_work / "md.inp",
+                        p_pairs = _nearest_phosphonate_pairs(
+                            raw_variant, instances
+                        )
+                        steered = _head_bias_for_replica(
+                            replica, spec.replicas, xtb_settings
+                        )
+                        xtb_protocol = _write_xtb_md_inputs(
+                            xtb_work,
                             xtb_settings,
                             seed + variant_index,
+                            p_pairs,
+                            steered,
                         )
+                        realized_restraints = xtb_work / "steering_restraints.json"
+                        if steered and realized_restraints.is_file():
+                            xtb_protocol["head_bias"]["realized_pairs"] = json.loads(
+                                realized_restraints.read_text(encoding="utf-8")
+                            )["pairs"]
                     total_charge = sum(
                         template.count * template.net_charge
                         for template in spec.templates
@@ -1374,7 +1625,16 @@ def prepare_agglomeration(
                     optimized = xtb_work / (
                         "xtbfinal.xyz" if xtb_md_enabled else "xtbopt.xyz"
                     )
-                    if not optimized.is_file():
+                    protocol_ready = True
+                    if xtb_md_enabled:
+                        expected_protocol = xtb_work / "xtb_protocol.sha256"
+                        completed_protocol = xtb_work / "xtb_protocol.complete"
+                        protocol_ready = (
+                            completed_protocol.is_file()
+                            and completed_protocol.read_text(encoding="utf-8")
+                            == expected_protocol.read_text(encoding="utf-8")
+                        )
+                    if not optimized.is_file() or not protocol_ready:
                         status = "XTB_REQUIRED"
                         structures.append(
                             {
@@ -1481,7 +1741,7 @@ def prepare_agglomeration(
                 elif not structures_only:
                     copied = _copy_reference(reference_dir, case)
                 case_manifest = {
-                    "schema_version": 3,
+                    "schema_version": 4,
                     "generator": "nio-md-prep prepare-agglomeration",
                     "tool_version": __version__,
                     "agglomerate": spec.name,
@@ -1493,6 +1753,7 @@ def prepare_agglomeration(
                         {
                             "enabled": True,
                             "md_enabled": xtb_md_enabled,
+                            "protocol": xtb_protocol,
                             "working_directory": str(xtb_relative),
                             "vasp_source_xyz": optimized.name,
                             "optimized_xyz_sha256": _sha256(optimized),
@@ -1618,7 +1879,7 @@ def prepare_agglomeration(
             writer.writeheader()
             writer.writerows(sanity_rows)
     root_manifest = {
-        "schema_version": 3,
+        "schema_version": 4,
         "generator": "nio-md-prep prepare-agglomeration",
         "tool_version": __version__,
         "status": status,
@@ -1650,13 +1911,27 @@ def prepare_agglomeration(
         | {
             "enabled": xtb_enabled,
             "md_enabled": xtb_md_enabled,
+            "head_bias_enabled": head_bias_enabled,
+            "head_bias_replicas_per_family": head_bias_replicas,
             "md_temperature_K": float(
                 xtb_settings.get("md_temperature_K", 400.0)
             ),
-            "md_time_ps": float(xtb_settings.get("md_time_ps", 1.0)),
+            "md_time_ps": float(xtb_settings.get("md_time_ps", 10.0)),
             "md_dump_fs": float(xtb_settings.get("md_dump_fs", 50.0)),
             "md_step_fs": float(xtb_settings.get("md_step_fs", 1.0)),
             "md_sccacc": float(xtb_settings.get("md_sccacc", 1.0)),
+            "head_bias_time_ps": float(
+                xtb_settings.get("head_bias_time_ps", 2.0)
+            ),
+            "head_bias_target_pp_distance_angstrom": float(
+                xtb_settings.get("head_bias_target_pp_distance_angstrom", 4.5)
+            ),
+            "head_bias_force_constant": float(
+                xtb_settings.get("head_bias_force_constant", 0.001)
+            ),
+            "head_bias_max_distance_reduction_angstrom": float(
+                xtb_settings.get("head_bias_max_distance_reduction_angstrom", 4.0)
+            ),
         },
         "vasp_md": {
             "hold_steps": hold_steps,

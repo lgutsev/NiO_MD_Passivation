@@ -12,6 +12,8 @@ import pytest
 from nio_md_prep.agglomeration import (
     MoleculeInstance,
     _compact_molecule_centers,
+    _head_bias_for_replica,
+    _nearest_phosphonate_pairs,
     prepare_agglomeration,
 )
 from nio_md_prep.geometry import elements
@@ -111,6 +113,36 @@ def test_adaptive_compaction_connects_an_isolated_molecule_without_overlap():
     ]
     assert min(distances) >= 3.0 - 1.0e-7
     assert max(distances) <= 3.0 + 1.0e-7
+
+
+def test_phosphonate_pairing_never_reuses_a_head_or_pairs_one_molecule():
+    instances = [
+        MoleculeInstance("toy", 1, 0, 2, (1.0, 1.0), (0, 1)),
+        MoleculeInstance("toy", 2, 2, 4, (1.0, 1.0), (2, 3)),
+        MoleculeInstance("toy", 3, 4, 5, (1.0,), (4,)),
+    ]
+    pairs = _nearest_phosphonate_pairs(
+        [(0.0, 0.0, 0.0), (50.0, 0.0, 0.0), (1.0, 0.0, 0.0),
+         (51.0, 0.0, 0.0), (2.0, 0.0, 0.0)],
+        instances,
+    )
+    used = [index for pair in pairs for index in (
+        pair["left_atom_index"], pair["right_atom_index"]
+    )]
+    assert len(used) == len(set(used))
+    assert all(
+        pair["left_molecule_id"] != pair["right_molecule_id"]
+        for pair in pairs
+    )
+    assert len(pairs) == 2
+
+
+def test_only_requested_replicas_receive_head_steering():
+    settings = {"head_bias_replicas_per_family": 1}
+    assert [_head_bias_for_replica(index, 3, settings) for index in range(3)] == [
+        True, False, False
+    ]
+    assert not _head_bias_for_replica(0, 3, {"head_bias_enabled": False})
 
 
 def test_agglomeration_builds_fixed_cell_center_scaled_vasp_cases(tmp_path):
@@ -239,15 +271,42 @@ count = 2
     assert 'dirname "$0"' not in xtb_launcher
     assert "XTB_ENV:=/project/lgutsev/env/xtb_env" in xtb_launcher
     assert "--md --input md.inp" in xtb_launcher
+    assert "--md --input md_steered.inp" in xtb_launcher
     assert "xtbopt_initial.xyz" in xtb_launcher
-    assert "xtbmd_last.xyz" in xtb_launcher
+    assert "xtbsteered_last.xyz" in xtb_launcher
+    assert "xtbmd_unbiased_last.xyz" in xtb_launcher
     assert "xtbfinal.xyz" in xtb_launcher
+    assert "xtb_protocol.complete" in xtb_launcher
     assert not (output / "vasp_runs/r000_s00_1p000/POSCAR").exists()
     xtb_work = output / "xtb/r000_s00_1p000"
     md_input = (xtb_work / "md.inp").read_text()
-    assert "$seed 12345" in md_input
+    assert "$seed 117074" in md_input
     assert "temp=400" in md_input
-    assert "time=1" in md_input
+    assert "time=8" in md_input
+    assert (xtb_work / "steering_plan.json").is_file()
+    subprocess.run(
+        [
+            sys.executable,
+            str(output / "write_xtb_steering_input.py"),
+            str(xtb_work / "input.xyz"),
+            str(xtb_work / "steering_plan.json"),
+            str(xtb_work / "md_steered.inp"),
+            str(xtb_work / "steering_restraints.json"),
+        ],
+        check=True,
+    )
+    steered_input = (xtb_work / "md_steered.inp").read_text()
+    assert "$seed 12345" in steered_input
+    assert "force constant=0.001" in steered_input
+    restraints = json.loads((xtb_work / "steering_restraints.json").read_text())
+    restraint = restraints["pairs"][0][
+        "restraint_distance_angstrom"
+    ]
+    assert f"distance: 19,64,{restraint:.8f}" in steered_input
+    assert restraint <= restraints["pairs"][0][
+        "post_optimization_distance_angstrom"
+    ]
+    assert "time=2" in steered_input
     first_frame = (xtb_work / "input.xyz").read_text()
     second_frame = first_frame.replace(
         "Packmol seed 12345", "final synthetic MD frame", 1
@@ -267,6 +326,10 @@ count = 2
         xtb_work / "xtbmd_last.xyz"
     ).read_text()
     shutil.copy2(xtb_work / "input.xyz", xtb_work / "xtbfinal.xyz")
+    shutil.copy2(
+        xtb_work / "xtb_protocol.sha256",
+        xtb_work / "xtb_protocol.complete",
+    )
 
     second = prepare_agglomeration(
         config,
@@ -291,6 +354,9 @@ count = 2
     assert (case / "submit_temperature_jobs.sh").stat().st_mode & 0o111
     case_manifest = json.loads((case / "agglomeration_manifest.json").read_text())
     assert case_manifest["xtb"]["vasp_source_xyz"] == "xtbfinal.xyz"
+    assert case_manifest["xtb"]["protocol"]["total_md_time_ps"] == 10.0
+    assert case_manifest["xtb"]["protocol"]["head_bias"]["enabled"] is True
+    assert case_manifest["xtb"]["protocol"]["head_bias"]["unbiased_time_ps"] == 8.0
 
 
 def test_agglomeration_uses_loose_cost_conscious_defaults(tmp_path):
