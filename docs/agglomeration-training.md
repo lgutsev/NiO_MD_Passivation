@@ -27,9 +27,14 @@ sampling budget on inexpensive small clusters instead of spending equally on
 large, costly systems whose trajectories already contain many local contacts.
 
 Every family uses only `center_scale = 1.0`. After adaptive compaction, each
-candidate is relaxed with GFN2-xTB before a POSCAR is written. xTB provides the
+candidate follows a reproducible xTB preconditioning protocol before a POSCAR
+is written: loose GFN2-xTB optimization, 1 ps NVT dynamics at 400 K with a 1 fs
+step, then a final loose GFN2-xTB quench. The MD seed is inherited from the
+Packmol seed. This lets thermal motion change conformations and contact patterns
+without handing a high-force MD endpoint directly to VASP. xTB provides the
 attractive intermolecular relaxation that Packmol cannot, while Packmol still
-provides the different starting topologies.
+provides the different starting topologies. xTB energies and forces are not
+MLIP labels; only the subsequent VASP calculations provide training labels.
 
 Optional scale families remain supported. The generator translates whole
 molecules so their centers of mass are multiplied by every configured
@@ -75,7 +80,7 @@ enabled the first invocation normally stops with `XTB_REQUIRED`:
 ```bash
 cd agglomeration/me-4pacz
 sbatch run_xtb_array.sbatch
-# after every array task has produced xtbopt.xyz:
+# after every array task has produced xtbfinal.xyz:
 cd -
 nio-md-prep prepare-agglomeration \
   examples/agglomeration/me-4pacz.toml \
@@ -83,7 +88,9 @@ nio-md-prep prepare-agglomeration \
   --output agglomeration/me-4pacz
 ```
 
-The rerun validates the xTB atom order and rejects an optimized structure with
+The rerun converts `xtbfinal.xyz` automatically; no separate XYZ-to-POSCAR
+command is needed. It validates the xTB atom order and rejects a quenched
+structure with
 an intermolecular O--O distance below 2.2 A or any molecule whose nearest
 molecular neighbor is farther than 6.0 A. It then creates three VASP stages:
 a 300 K hold, a 300-to-400 K heating ramp, and a 400 K hold. The latter is
@@ -127,9 +134,23 @@ sbatch run_xtb_array.sbatch
 The generated array embeds the campaign root's absolute path, so Slurm's spool
 copy of the script cannot redirect it away from `xtb_cases.tsv`. If the campaign
 directory is moved, regenerate the launcher or update its `root=` line. The
-array uses one task and one CPU per aggregate, sets
-`ulimit -s unlimited`, and writes `xtb.out`, `xtb.err`, and `xtbopt.xyz` in each
-`xtb/...` directory. Test one array index first with
+array uses one task and one CPU per aggregate and sets `ulimit -s unlimited`.
+Each `xtb/...` directory records the complete staged provenance:
+
+```text
+input.xyz                 # compacted Packmol start
+md.inp                    # deterministic 400 K, 1 ps NVT instructions
+xtbopt_initial.xyz        # initial loose GFN2-xTB minimum
+xtb.trj                   # xTB MD trajectory
+xtbmd_last.xyz            # last complete trajectory frame
+xtbfinal.xyz              # final loose quench; source used for VASP
+xtb_initial_opt.out/.err
+xtb_md.out/.err
+xtb_final_opt.out/.err
+```
+
+Completed stages are skipped on resubmission, so an interrupted task resumes
+from its last valid file. Test one array index first with
 `sbatch --array=0 run_xtb_array.sbatch` before releasing the complete array.
 
 Geometry-only generation remains available, but must be requested explicitly:
@@ -173,6 +194,12 @@ enabled = true
 gfn = 2
 opt_level = "loose"
 max_cycles = 100
+md_enabled = true
+md_temperature_K = 400
+md_time_ps = 1.0
+md_step_fs = 1.0
+md_dump_fs = 50.0
+md_sccacc = 1.0
 minimum_oxygen_oxygen_distance_angstrom = 2.20
 maximum_nearest_molecule_distance_angstrom = 6.0
 

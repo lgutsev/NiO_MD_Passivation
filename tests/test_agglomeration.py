@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import math
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -236,9 +238,35 @@ count = 2
     assert "SLURM_SUBMIT_DIR" not in xtb_launcher
     assert 'dirname "$0"' not in xtb_launcher
     assert "XTB_ENV:=/project/lgutsev/env/xtb_env" in xtb_launcher
+    assert "--md --input md.inp" in xtb_launcher
+    assert "xtbopt_initial.xyz" in xtb_launcher
+    assert "xtbmd_last.xyz" in xtb_launcher
+    assert "xtbfinal.xyz" in xtb_launcher
     assert not (output / "vasp_runs/r000_s00_1p000/POSCAR").exists()
     xtb_work = output / "xtb/r000_s00_1p000"
-    shutil.copy2(xtb_work / "input.xyz", xtb_work / "xtbopt.xyz")
+    md_input = (xtb_work / "md.inp").read_text()
+    assert "$seed 12345" in md_input
+    assert "temp=400" in md_input
+    assert "time=1" in md_input
+    first_frame = (xtb_work / "input.xyz").read_text()
+    second_frame = first_frame.replace(
+        "Packmol seed 12345", "final synthetic MD frame", 1
+    )
+    trajectory = xtb_work / "xtb.trj"
+    trajectory.write_text(first_frame + second_frame, encoding="utf-8")
+    subprocess.run(
+        [
+            sys.executable,
+            str(output / "extract_last_xtb_frame.py"),
+            str(trajectory),
+            str(xtb_work / "xtbmd_last.xyz"),
+        ],
+        check=True,
+    )
+    assert "final synthetic MD frame" in (
+        xtb_work / "xtbmd_last.xyz"
+    ).read_text()
+    shutil.copy2(xtb_work / "input.xyz", xtb_work / "xtbfinal.xyz")
 
     second = prepare_agglomeration(
         config,
@@ -261,6 +289,8 @@ count = 2
         case / "400K/02_hold_400K/runvasp.sh"
     ).read_text()
     assert (case / "submit_temperature_jobs.sh").stat().st_mode & 0o111
+    case_manifest = json.loads((case / "agglomeration_manifest.json").read_text())
+    assert case_manifest["xtb"]["vasp_source_xyz"] == "xtbfinal.xyz"
 
 
 def test_agglomeration_uses_loose_cost_conscious_defaults(tmp_path):

@@ -1012,7 +1012,75 @@ def _write_xtb_batch(output: Path, cases: list[dict], settings: dict) -> None:
     opt_level = str(settings.get("opt_level", "loose"))
     max_cycles = int(settings.get("max_cycles", 100))
     concurrency = int(settings.get("array_concurrency", 4))
+    md_enabled = bool(settings.get("md_enabled", True))
     campaign_root = shlex.quote(str(output.resolve()))
+    extractor = output / "extract_last_xtb_frame.py"
+    extractor.write_text(
+        """#!/usr/bin/env python3
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+destination = Path(sys.argv[2])
+lines = source.read_text(encoding="utf-8").splitlines()
+frames = []
+index = 0
+while index < len(lines):
+    while index < len(lines) and not lines[index].strip():
+        index += 1
+    if index >= len(lines):
+        break
+    try:
+        atoms = int(lines[index].strip())
+    except ValueError as error:
+        raise SystemExit(f"{source}:{index + 1}: invalid XYZ atom count") from error
+    stop = index + atoms + 2
+    if stop > len(lines):
+        raise SystemExit(f"{source}: incomplete final XYZ frame")
+    frame = lines[index:stop]
+    if any(len(row.split()) < 4 for row in frame[2:]):
+        raise SystemExit(f"{source}: malformed XYZ coordinate row")
+    frames.append(frame)
+    index = stop
+if not frames:
+    raise SystemExit(f"{source}: no complete XYZ frames")
+destination.write_text("\\n".join(frames[-1]) + "\\n", encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
+    extractor.chmod(0o755)
+    if md_enabled:
+        workflow = f'''if [[ -s xtbopt.xyz && ! -s xtbopt_initial.xyz ]]; then
+  mv xtbopt.xyz xtbopt_initial.xyz
+  [[ ! -s xtbopt.log ]] || mv xtbopt.log xtbopt_initial.log
+fi
+if [[ ! -s xtbopt_initial.xyz ]]; then
+  rm -f xtbopt.xyz
+  "$XTB_EXE" input.xyz --gfn {gfn} --chrg "$charge" --uhf "$uhf" --opt {opt_level} --cycles {max_cycles} > xtb_initial_opt.out 2> xtb_initial_opt.err
+  test -s xtbopt.xyz
+  mv xtbopt.xyz xtbopt_initial.xyz
+  [[ ! -s xtbopt.log ]] || mv xtbopt.log xtbopt_initial.log
+fi
+if [[ ! -s xtbmd_last.xyz ]]; then
+  rm -f xtb.trj mdrestart xtbrestart xtbmdok
+  "$XTB_EXE" xtbopt_initial.xyz --gfn {gfn} --chrg "$charge" --uhf "$uhf" --md --input md.inp > xtb_md.out 2> xtb_md.err
+  test -s xtb.trj
+  "$PYTHON_EXE" "$root/extract_last_xtb_frame.py" xtb.trj xtbmd_last.xyz
+  test -s xtbmd_last.xyz
+fi
+if [[ ! -s xtbfinal.xyz ]]; then
+  rm -f xtbopt.xyz
+  "$XTB_EXE" xtbmd_last.xyz --gfn {gfn} --chrg "$charge" --uhf "$uhf" --opt {opt_level} --cycles {max_cycles} > xtb_final_opt.out 2> xtb_final_opt.err
+  test -s xtbopt.xyz
+  mv xtbopt.xyz xtbfinal.xyz
+  [[ ! -s xtbopt.log ]] || mv xtbopt.log xtbfinal.log
+fi
+test -s xtbfinal.xyz'''
+        completion_file = "xtbfinal.xyz"
+    else:
+        workflow = f'''"$XTB_EXE" input.xyz --gfn {gfn} --chrg "$charge" --uhf "$uhf" --opt {opt_level} --cycles {max_cycles} > xtb.out 2> xtb.err
+test -s xtbopt.xyz'''
+        completion_file = "xtbopt.xyz"
     script = output / "run_xtb_array.sbatch"
     script.write_text(
         f"""#!/bin/bash
@@ -1032,7 +1100,7 @@ line=$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "$root/xtb_cases.tsv")
 IFS=$'\\t' read -r relative charge uhf <<< "$line"
 work="$root/$relative"
 cd "$work"
-if [[ -s xtbopt.xyz ]]; then
+if [[ -s {completion_file} ]]; then
   echo "already complete: $relative"
   exit 0
 fi
@@ -1059,12 +1127,41 @@ fi
 export OMP_NUM_THREADS=${{SLURM_CPUS_PER_TASK:-{cpus}}}
 export MKL_NUM_THREADS=1
 ulimit -s unlimited
-"$XTB_EXE" input.xyz --gfn {gfn} --chrg "$charge" --uhf "$uhf" --opt {opt_level} --cycles {max_cycles} > xtb.out 2> xtb.err
-test -s xtbopt.xyz
+if [[ -x "$XTB_ENV/bin/python" ]]; then
+  PYTHON_EXE="$XTB_ENV/bin/python"
+else
+  PYTHON_EXE=python3
+fi
+{workflow}
 """,
         encoding="utf-8",
     )
     script.chmod(0o755)
+
+
+def _write_xtb_md_input(path: Path, settings: dict, seed: int) -> None:
+    temperature = float(settings.get("md_temperature_K", 400.0))
+    time_ps = float(settings.get("md_time_ps", 1.0))
+    dump_fs = float(settings.get("md_dump_fs", 50.0))
+    step_fs = float(settings.get("md_step_fs", 1.0))
+    sccacc = float(settings.get("md_sccacc", 1.0))
+    if min(temperature, time_ps, dump_fs, step_fs, sccacc) <= 0:
+        raise ValueError("xTB MD temperature, time, dump, step, and sccacc must be positive")
+    path.write_text(
+        f"""$seed {seed}
+$md
+  temp={temperature:g}
+  time={time_ps:g}
+  dump={dump_fs:g}
+  step={step_fs:g}
+  nvt=1
+  hmass=0
+  shake=0
+  sccacc={sccacc:g}
+$end
+""",
+        encoding="utf-8",
+    )
 
 
 def _copy_reference(reference: Path | None, destination: Path) -> list[dict]:
@@ -1110,6 +1207,7 @@ def prepare_agglomeration(
     specs, grouped = _agglomerate_specs(config)
     xtb_settings = config.get("xtb", {})
     xtb_enabled = bool(xtb_settings.get("enabled", False))
+    xtb_md_enabled = bool(xtb_settings.get("md_enabled", True))
     md_settings = config.get("vasp_md", {})
     hold_steps = int(md_settings.get("hold_steps", 3000))
     heating_steps = int(md_settings.get("heating_steps", 1000))
@@ -1251,6 +1349,12 @@ def prepare_agglomeration(
                         xtb_input,
                         f"Packmol seed {seed}; adaptive center scale {compact_scale:.8f}",
                     )
+                    if xtb_md_enabled:
+                        _write_xtb_md_input(
+                            xtb_work / "md.inp",
+                            xtb_settings,
+                            seed + variant_index,
+                        )
                     total_charge = sum(
                         template.count * template.net_charge
                         for template in spec.templates
@@ -1267,7 +1371,9 @@ def prepare_agglomeration(
                             "uhf": int(xtb_settings.get("uhf", 0)),
                         }
                     )
-                    optimized = xtb_work / "xtbopt.xyz"
+                    optimized = xtb_work / (
+                        "xtbfinal.xyz" if xtb_md_enabled else "xtbopt.xyz"
+                    )
                     if not optimized.is_file():
                         status = "XTB_REQUIRED"
                         structures.append(
@@ -1386,10 +1492,10 @@ def prepare_agglomeration(
                     "xtb": (
                         {
                             "enabled": True,
+                            "md_enabled": xtb_md_enabled,
                             "working_directory": str(xtb_relative),
-                            "optimized_xyz_sha256": _sha256(
-                                output / xtb_relative / "xtbopt.xyz"
-                            ),
+                            "vasp_source_xyz": optimized.name,
+                            "optimized_xyz_sha256": _sha256(optimized),
                         }
                         if xtb_enabled
                         else {"enabled": False}
@@ -1540,7 +1646,18 @@ def prepare_agglomeration(
             else config.get("agglomeration", {})
         ),
         "vasp_reference_sanity": reference_validation,
-        "xtb": xtb_settings | {"enabled": xtb_enabled},
+        "xtb": xtb_settings
+        | {
+            "enabled": xtb_enabled,
+            "md_enabled": xtb_md_enabled,
+            "md_temperature_K": float(
+                xtb_settings.get("md_temperature_K", 400.0)
+            ),
+            "md_time_ps": float(xtb_settings.get("md_time_ps", 1.0)),
+            "md_dump_fs": float(xtb_settings.get("md_dump_fs", 50.0)),
+            "md_step_fs": float(xtb_settings.get("md_step_fs", 1.0)),
+            "md_sccacc": float(xtb_settings.get("md_sccacc", 1.0)),
+        },
         "vasp_md": {
             "hold_steps": hold_steps,
             "heating_steps": heating_steps,
