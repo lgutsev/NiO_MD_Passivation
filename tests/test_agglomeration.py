@@ -14,6 +14,7 @@ from nio_md_prep.agglomeration import (
     _compact_molecule_centers,
     _head_bias_for_replica,
     _nearest_phosphonate_pairs,
+    _potcar_elements,
     prepare_agglomeration,
 )
 from nio_md_prep.geometry import elements
@@ -98,7 +99,22 @@ def _molecular_poscar(
     coordinate_offset: float = 0.0,
     reverse_within_elements: bool = False,
 ) -> Path:
-    data = parse(ROOT / "inputs/molecules/me-4pacz/ligpargen.lmp")
+    return _molecular_poscar_for_slug(
+        path,
+        "me-4pacz",
+        coordinate_offset=coordinate_offset,
+        reverse_within_elements=reverse_within_elements,
+    )
+
+
+def _molecular_poscar_for_slug(
+    path: Path,
+    slug: str,
+    *,
+    coordinate_offset: float = 0.0,
+    reverse_within_elements: bool = False,
+) -> Path:
+    data = parse(ROOT / f"inputs/molecules/{slug}/ligpargen.lmp")
     symbols = elements(data)
     coordinates = atom_coordinates(data)
     element_order = sorted(set(symbols))
@@ -116,7 +132,7 @@ def _molecular_poscar(
             rows.append(f"{x + 25:.10f} {y + 25:.10f} {z + 25:.10f}")
     counts = [symbols.count(element) for element in element_order]
     path.write_text(
-        "Me4PACz molecular reference\n"
+        f"{slug} molecular reference\n"
         "1.0\n"
         "50 0 0\n0 50 0\n0 0 50\n"
         + " ".join(element_order)
@@ -125,6 +141,45 @@ def _molecular_poscar(
         + "\nCartesian\n"
         + "\n".join(rows)
         + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _mixed_config(path: Path) -> Path:
+    path.write_text(
+        """[agglomeration]
+replicas = 1
+base_seed = 22345
+radius_angstrom = 20.0
+packmol_tolerance_angstrom = 2.0
+vacuum_angstrom = 10.0
+minimum_distance_angstrom = 1.0
+center_scales = [1.0]
+
+[[molecules]]
+slug = "me-4pacz"
+count = 1
+
+[[molecules]]
+slug = "dcz-4p"
+count = 1
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _mixed_packed(path: Path) -> Path:
+    rows = []
+    for slug, shift in (("me-4pacz", -15.0), ("dcz-4p", 15.0)):
+        data = parse(ROOT / f"inputs/molecules/{slug}/ligpargen.lmp")
+        rows.extend(
+            f"{symbol} {x + shift:.10f} {y:.10f} {z:.10f}"
+            for symbol, (x, y, z) in zip(elements(data), atom_coordinates(data))
+        )
+    path.write_text(
+        f"{len(rows)}\nordered mixed-molecule fixture\n" + "\n".join(rows) + "\n",
         encoding="utf-8",
     )
     return path
@@ -304,6 +359,75 @@ def test_reference_poscar_is_the_authoritative_molecular_geometry(
     assert distance_inventory(written_coordinates) != pytest.approx(
         distance_inventory(original), abs=1.0e-8
     )
+
+
+def test_mixed_agglomeration_uses_two_slug_qualified_vasp_references(tmp_path):
+    references = {}
+    for slug, encut in (("me-4pacz", 400), ("dcz-4p", 520)):
+        reference = tmp_path / slug
+        reference.mkdir()
+        (reference / "INCAR").write_text(f"ENCUT = {encut}\n", encoding="utf-8")
+        (reference / "KPOINTS").write_text(
+            "Gamma\n0\nGamma\n1 1 1\n0 0 0\n", encoding="utf-8"
+        )
+        _molecular_poscar_for_slug(reference / "POSCAR", slug)
+        _potcar(reference / "POTCAR", ["C", "H", "N", "O", "P"])
+        references[slug] = reference
+
+    output = tmp_path / "mixed"
+    manifest_path = prepare_agglomeration(
+        _mixed_config(tmp_path / "mixed.toml"),
+        output,
+        reference_dirs=references,
+        vasp_template_slug="dcz-4p",
+        packed_xyz=_mixed_packed(tmp_path / "mixed.xyz"),
+    )
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["status"] == "COMPLETE"
+    assert manifest["molecular_geometry"]["source"] == "reference_poscars"
+    assert set(manifest["molecular_geometry"]["by_slug"]) == {
+        "me-4pacz", "dcz-4p"
+    }
+    sanity = manifest["vasp_reference_sanity"]
+    assert sanity["mode"] == "mixed_species"
+    assert sanity["calculation_template_slug"] == "dcz-4p"
+    assert sanity["combined_potcar_elements"] == ["C", "H", "N", "O", "P"]
+
+    case = output / "vasp_runs/r000_s00_1p000"
+    assert (case / "INCAR").read_text() == "ENCUT = 520\n"
+    assert _potcar_elements(case / "POTCAR") == ["C", "H", "N", "O", "P"]
+    case_manifest = json.loads((case / "agglomeration_manifest.json").read_text())
+    assert {row["molecule_slug"] for row in case_manifest["atom_map"]} == {
+        "me-4pacz", "dcz-4p"
+    }
+    assert len(case_manifest["atom_map"]) == 121
+
+
+def test_mixed_agglomeration_rejects_conflicting_potcar_datasets(tmp_path):
+    references = {}
+    for slug in ("me-4pacz", "dcz-4p"):
+        reference = tmp_path / slug
+        reference.mkdir()
+        (reference / "INCAR").write_text("ENCUT = 520\n", encoding="utf-8")
+        (reference / "KPOINTS").write_text(
+            "Gamma\n0\nGamma\n1 1 1\n0 0 0\n", encoding="utf-8"
+        )
+        _molecular_poscar_for_slug(reference / "POSCAR", slug)
+        _potcar(reference / "POTCAR", ["C", "H", "N", "O", "P"])
+        references[slug] = reference
+    references["dcz-4p"].joinpath("POTCAR").write_text(
+        references["dcz-4p"].joinpath("POTCAR").read_text().replace(
+            "PAW_PBE C", "PAW_PBE C_hard"
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="conflicting POTCAR datasets for C"):
+        prepare_agglomeration(
+            _mixed_config(tmp_path / "mixed.toml"),
+            tmp_path / "mixed",
+            reference_dirs=references,
+            packed_xyz=_mixed_packed(tmp_path / "mixed.xyz"),
+        )
 
 
 def test_xtb_stage_resumes_into_300_and_400_kelvin_vasp_runs(tmp_path):

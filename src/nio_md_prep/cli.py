@@ -24,8 +24,20 @@ def main(argv=None)->int:
     i.add_argument("config",type=Path)
     i.add_argument("--output",type=Path,required=True)
     agglomeration_mode=i.add_mutually_exclusive_group(required=True)
-    agglomeration_mode.add_argument("--reference-dir",type=Path,help="complete VASP template containing INCAR, KPOINTS, and POTCAR")
+    agglomeration_mode.add_argument(
+        "--reference-dir",
+        action="append",
+        metavar="[SLUG=]DIR",
+        help=(
+            "complete VASP template; repeat as SLUG=DIR for mixed agglomerates "
+            "(the first qualified reference supplies shared calculation inputs)"
+        ),
+    )
     agglomeration_mode.add_argument("--structures-only",action="store_true",help="write POSCAR/XYZ structures without VASP calculation inputs")
+    i.add_argument(
+        "--vasp-template-slug",
+        help="qualified reference whose INCAR, KPOINTS, launchers, and other shared files are reused",
+    )
     i.add_argument("--packed-xyz",type=Path,help="use a supplied ordered Packmol XYZ for a one-replica offline build")
     i=sub.add_parser("archive-runs")
     i.add_argument("roots",nargs="+",type=Path,help="prepared/work roots to archive")
@@ -130,10 +142,34 @@ def main(argv=None)->int:
         elif a.command=="validate": validate(a.output,primary_final=a.primary_final); print((a.output/"validation_report.txt").read_text(),end="")
         elif a.command=="prepare-agglomeration":
             from .agglomeration import prepare_agglomeration
+            reference_dir = None
+            reference_dirs = None
+            if a.reference_dir:
+                qualified = ["=" in value for value in a.reference_dir]
+                if len(a.reference_dir) == 1 and not qualified[0]:
+                    reference_dir = Path(a.reference_dir[0])
+                else:
+                    if not all(qualified):
+                        raise ValueError(
+                            "mixed references must all use --reference-dir SLUG=DIR"
+                        )
+                    reference_dirs = {}
+                    for value in a.reference_dir:
+                        slug, directory = value.split("=", 1)
+                        slug, directory = slug.strip(), directory.strip()
+                        if not slug or not directory:
+                            raise ValueError(
+                                "mixed references must use --reference-dir SLUG=DIR"
+                            )
+                        if slug in reference_dirs:
+                            raise ValueError(f"duplicate VASP reference slug: {slug}")
+                        reference_dirs[slug] = Path(directory)
             manifest=prepare_agglomeration(
                 a.config,
                 a.output,
-                reference_dir=a.reference_dir,
+                reference_dir=reference_dir,
+                reference_dirs=reference_dirs,
+                vasp_template_slug=a.vasp_template_slug,
                 packed_xyz=a.packed_xyz,
                 structures_only=a.structures_only,
             )

@@ -1,9 +1,11 @@
 # Phosphonate agglomeration structures for MLIP labeling
 
 `nio-md-prep prepare-agglomeration` generates finite molecular clusters for
-VASP energy/force labeling. In the normal VASP workflow, the single molecule in
-`--reference-dir/POSCAR` is the authoritative geometry. The reviewed LigParGen
-file under `inputs/molecules/` supplies atom identity, topology, masses, and the
+VASP energy/force labeling. In a single-species workflow, the single molecule
+in `--reference-dir/POSCAR` is the authoritative geometry. A mixed workflow
+accepts one slug-qualified reference directory per species and uses each
+directory's single-molecule POSCAR for that species. The reviewed LigParGen
+files under `inputs/molecules/` supply atom identity, topology, masses, and the
 canonical atom order used by Packmol and xTB. No separate XYZ file is required.
 
 The generator is deliberately independent of the classical NiO/LAMMPS force
@@ -122,6 +124,54 @@ a 300 K hold, a 300-to-400 K heating ramp, and a 400 K hold. The latter is
 submitted with an `afterok` dependency and copies the heating `CONTCAR` to its
 own `POSCAR`. Run `submit_temperature_jobs.sh` inside a completed case to submit
 all three jobs.
+
+## Mixed agglomerates from two VASP folders
+
+Use a configuration whose composition contains both slugs; the ready-made
+example is `examples/agglomeration/me-4pacz-dcz-4p.toml`. Supply one qualified
+reference per slug:
+
+```bash
+nio-md-prep prepare-agglomeration \
+  examples/agglomeration/me-4pacz-dcz-4p.toml \
+  --reference-dir me-4pacz=/path/to/Me4PACz \
+  --reference-dir dcz-4p=/path/to/DCZ4P \
+  --vasp-template-slug me-4pacz \
+  --output agglomeration/me-4pacz-dcz-4p
+```
+
+Every qualified directory must contain `POSCAR`, `INCAR`, `KPOINTS`, and
+`POTCAR`. Each POSCAR must contain exactly one intact molecule matching its
+slug's LigParGen topology. `--vasp-template-slug` selects the directory whose
+`INCAR`, `KPOINTS`, launcher, and other reusable top-level files are copied to
+the mixed calculations. If it is omitted, the first qualified
+`--reference-dir` on the command line is used.
+
+The tool extracts the required elemental datasets from the supplied POTCARs
+and writes a combined POTCAR in the generated POSCAR's alphabetical element
+order. When the same element occurs in both source POTCARs, its dataset must be
+byte-identical; conflicting pseudopotentials fail closed instead of silently
+mixing VASP setups. The root manifest records both geometry mappings, both
+source POTCAR hashes, the chosen calculation-template slug, and the source slug
+used for every combined POTCAR dataset.
+
+With xTB enabled, continue exactly as for a pure campaign:
+
+```bash
+cd agglomeration/me-4pacz-dcz-4p
+sbatch run_xtb_array.sbatch
+cd -
+
+nio-md-prep prepare-agglomeration \
+  examples/agglomeration/me-4pacz-dcz-4p.toml \
+  --reference-dir me-4pacz=/path/to/Me4PACz \
+  --reference-dir dcz-4p=/path/to/DCZ4P \
+  --vasp-template-slug me-4pacz \
+  --output agglomeration/me-4pacz-dcz-4p
+```
+
+The second invocation validates the two-species xTB atom order and creates the
+same 300 K, heating, and 400 K VASP stages used by single-species campaigns.
 
 ## Installing xTB on LONI
 
@@ -286,6 +336,9 @@ molecules = [
 ```
 
 Counts are explicit. The tool does not infer experimental solution ratios.
+For launch-ready mixed VASP cases, pair this composition with the repeated
+slug-qualified `--reference-dir` form shown above. A single unqualified
+`--reference-dir /path` remains the backward-compatible single-species form.
 
 ## Outputs and provenance
 

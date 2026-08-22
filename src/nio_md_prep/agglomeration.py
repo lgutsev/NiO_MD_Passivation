@@ -1003,6 +1003,129 @@ def _potcar_elements(path: Path) -> list[str]:
     return re.findall(r"^\s*TITEL\s*=\s*\S+\s+([A-Z][a-z]?)", text, re.MULTILINE)
 
 
+def _potcar_blocks(path: Path) -> dict[str, bytes]:
+    """Return complete POTCAR datasets keyed by their TITEL element."""
+    content = path.read_bytes()
+    matches = list(
+        re.finditer(
+            rb"(?m)^\s*TITEL\s*=\s*\S+\s+([A-Z][a-z]?)",
+            content,
+        )
+    )
+    if not matches:
+        raise ValueError(f"{path}: no POTCAR TITEL records found")
+    blocks: dict[str, bytes] = {}
+    for index, match in enumerate(matches):
+        start = 0
+        if index:
+            marker = content.rfind(
+                b"End of Dataset", matches[index - 1].end(), match.start()
+            )
+            newline = content.find(b"\n", marker) if marker >= 0 else -1
+            start = newline + 1 if newline >= 0 else match.start()
+        next_title = (
+            matches[index + 1].start() if index + 1 < len(matches) else len(content)
+        )
+        marker = content.find(b"End of Dataset", match.end(), next_title)
+        if marker >= 0:
+            newline = content.find(b"\n", marker)
+            stop = len(content) if newline < 0 else newline + 1
+        else:
+            stop = next_title
+        element = match.group(1).decode("ascii")
+        if element in blocks:
+            raise ValueError(f"{path}: duplicate POTCAR dataset for {element}")
+        blocks[element] = content[start:stop]
+    return blocks
+
+
+def _prepare_mixed_vasp_reference(
+    references: dict[str, Path],
+    template_slug: str,
+    expected_elements: list[str],
+    destination: Path,
+) -> tuple[Path, dict]:
+    """Build one calculation template while retaining per-species geometries."""
+    if template_slug not in references:
+        raise ValueError(
+            f"VASP template slug {template_slug!r} has no matching --reference-dir"
+        )
+    for slug, reference in references.items():
+        if not reference.is_dir():
+            raise FileNotFoundError(f"VASP reference directory not found: {reference}")
+        missing = [
+            name for name in _REQUIRED_VASP_INPUTS if not (reference / name).is_file()
+        ]
+        if missing:
+            raise ValueError(
+                f"{reference} ({slug}): incomplete VASP reference directory; missing "
+                + ", ".join(missing)
+            )
+
+    blocks_by_element: dict[str, tuple[bytes, str, Path]] = {}
+    potcar_sources: dict[str, dict] = {}
+    for slug, reference in references.items():
+        potcar = reference / "POTCAR"
+        potcar_sources[slug] = {
+            "path": str(potcar),
+            "sha256": _sha256(potcar),
+            "elements": _potcar_elements(potcar),
+        }
+        for element, block in _potcar_blocks(potcar).items():
+            previous = blocks_by_element.get(element)
+            if previous is not None and previous[0] != block:
+                raise ValueError(
+                    f"conflicting POTCAR datasets for {element}: "
+                    f"{previous[2]} ({previous[1]}) and {potcar} ({slug})"
+                )
+            if previous is None:
+                blocks_by_element[element] = (block, slug, potcar)
+    missing_elements = [
+        element for element in expected_elements if element not in blocks_by_element
+    ]
+    if missing_elements:
+        raise ValueError(
+            "mixed VASP references do not provide POTCAR datasets for "
+            + ", ".join(missing_elements)
+        )
+
+    destination.mkdir(parents=True, exist_ok=True)
+    for stale in destination.iterdir():
+        if stale.is_file():
+            stale.unlink()
+    primary = references[template_slug]
+    copied: list[dict] = []
+    for source in sorted(primary.iterdir()):
+        if (
+            not source.is_file()
+            or source.name in _VASP_OUTPUTS
+            or source.name == "POTCAR"
+        ):
+            continue
+        target = destination / source.name
+        shutil.copy2(source, target)
+        copied.append({"name": source.name, "sha256": _sha256(target)})
+    shutil.copy2(primary / "POSCAR", destination / "POSCAR")
+    combined = b"".join(
+        blocks_by_element[element][0] for element in expected_elements
+    )
+    if combined and not combined.endswith(b"\n"):
+        combined += b"\n"
+    (destination / "POTCAR").write_bytes(combined)
+    return destination, {
+        "mode": "mixed_species",
+        "calculation_template_slug": template_slug,
+        "calculation_template_directory": str(primary),
+        "shared_files": copied,
+        "potcar_sources": potcar_sources,
+        "combined_potcar_elements": expected_elements,
+        "combined_potcar_sha256": _sha256(destination / "POTCAR"),
+        "combined_potcar_element_sources": {
+            element: blocks_by_element[element][1] for element in expected_elements
+        },
+    }
+
+
 def _reference_sanity(
     reference: Path | None,
     expected_elements: list[str],
@@ -1817,12 +1940,28 @@ def prepare_agglomeration(
     output: Path,
     *,
     reference_dir: Path | None = None,
+    reference_dirs: dict[str, Path] | None = None,
+    vasp_template_slug: str | None = None,
     packed_xyz: Path | None = None,
     structures_only: bool = False,
 ) -> Path:
     """Prepare size-stratified molecular clusters as VASP run packages."""
-    if reference_dir is not None and structures_only:
+    if reference_dir is not None and reference_dirs is not None:
+        raise ValueError("reference_dir and reference_dirs are mutually exclusive")
+    if vasp_template_slug is not None and reference_dirs is None:
+        raise ValueError(
+            "--vasp-template-slug requires qualified --reference-dir values"
+        )
+    if (reference_dir is not None or reference_dirs is not None) and structures_only:
         raise ValueError("--reference-dir and --structures-only are mutually exclusive")
+    if reference_dir is not None:
+        reference_dir = Path(reference_dir)
+    if reference_dirs is not None:
+        if not reference_dirs:
+            raise ValueError("reference_dirs cannot be empty")
+        reference_dirs = {
+            str(slug): Path(directory) for slug, directory in reference_dirs.items()
+        }
     manifest_path = output / "agglomeration_manifest.json"
     resume = False
     if output.exists() and any(output.iterdir()):
@@ -1873,6 +2012,61 @@ def prepare_agglomeration(
             for spec in specs
         ]
         geometry_metadata = {"source": "reference_poscar"} | geometry_metadata
+    elif reference_dirs is not None:
+        required_slugs = {
+            template.slug for spec in specs for template in spec.templates
+        }
+        supplied_slugs = set(reference_dirs)
+        if supplied_slugs != required_slugs:
+            missing = sorted(required_slugs - supplied_slugs)
+            extra = sorted(supplied_slugs - required_slugs)
+            details = []
+            if missing:
+                details.append("missing " + ", ".join(missing))
+            if extra:
+                details.append("unknown " + ", ".join(extra))
+            raise ValueError(
+                "qualified VASP references must match campaign molecule slugs: "
+                + "; ".join(details)
+            )
+        template_slug = vasp_template_slug or next(iter(reference_dirs))
+        reference_templates: dict[str, MoleculeTemplate] = {}
+        geometry_by_slug: dict[str, dict] = {}
+        for slug, directory in reference_dirs.items():
+            representative = next(
+                template
+                for spec in specs
+                for template in spec.templates
+                if template.slug == slug
+            )
+            poscar = directory / "POSCAR"
+            if not poscar.is_file():
+                raise ValueError(
+                    f"{directory}: incomplete VASP reference directory; missing POSCAR"
+                )
+            reference_template, metadata = _template_from_reference_poscar(
+                representative, poscar
+            )
+            reference_templates[slug] = reference_template
+            geometry_by_slug[slug] = metadata
+        specs = [
+            replace(
+                spec,
+                templates=tuple(
+                    replace(
+                        template,
+                        coordinates=reference_templates[template.slug].coordinates,
+                    )
+                    for template in spec.templates
+                ),
+            )
+            for spec in specs
+        ]
+        geometry_metadata = {
+            "source": "reference_poscars",
+            "calculation_template_slug": template_slug,
+            "by_slug": geometry_by_slug,
+        }
     else:
         geometry_metadata = {
             "source": "ligpargen_coordinates",
@@ -1916,9 +2110,21 @@ def prepare_agglomeration(
             for symbol in template.symbols
         }
     )
+    calculation_reference = reference_dir
+    mixed_reference_metadata = None
+    if reference_dirs is not None:
+        template_slug = vasp_template_slug or next(iter(reference_dirs))
+        calculation_reference, mixed_reference_metadata = _prepare_mixed_vasp_reference(
+            reference_dirs,
+            template_slug,
+            expected_elements,
+            output / "vasp_reference",
+        )
     reference_validation = _reference_sanity(
-        reference_dir, expected_elements, structures_only=structures_only
+        calculation_reference, expected_elements, structures_only=structures_only
     )
+    if mixed_reference_metadata is not None:
+        reference_validation |= mixed_reference_metadata
     case_root_name = "structures" if structures_only else "vasp_runs"
     executable = shutil.which("packmol")
     index_rows: list[dict] = []
@@ -2198,14 +2404,14 @@ def prepare_agglomeration(
                 if not structures_only and xtb_enabled:
                     schedules = _prepare_vasp_schedule(
                         case,
-                        reference_dir,
+                        calculation_reference,
                         case / "POSCAR",
                         job_prefix=f"{spec.name}_r{replica:03d}",
                         hold_steps=hold_steps,
                         heating_steps=heating_steps,
                     )
                 elif not structures_only:
-                    copied = _copy_reference(reference_dir, case)
+                    copied = _copy_reference(calculation_reference, case)
                 case_manifest = {
                     "schema_version": 4,
                     "generator": "nio-md-prep prepare-agglomeration",

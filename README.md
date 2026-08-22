@@ -37,6 +37,10 @@ verify cell containment, requested vacuum, periodic-image clearance, contact
 distances (including intermolecular O--O), atom order, and POSCAR/POTCAR element
 compatibility. See
 [`docs/agglomeration-training.md`](docs/agglomeration-training.md).
+Mixed agglomerates are supported with one slug-qualified VASP reference folder
+per molecular species; each reference POSCAR supplies that species' geometry,
+while a selected reference supplies the common run files and compatible POTCAR
+datasets are assembled in alphabetical POSCAR order.
 
 ## Scientific picture
 
