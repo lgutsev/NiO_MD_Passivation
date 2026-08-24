@@ -506,6 +506,11 @@ def test_mixed_agglomeration_resumes_from_xtb_into_vasp_runs(tmp_path):
     shutil.copy2(
         xtb_work / "xtb_protocol.sha256", xtb_work / "xtb_protocol.complete"
     )
+    config.write_text(
+        config.read_text(encoding="utf-8") + "\n# harmless post-run comment\n",
+        encoding="utf-8",
+    )
+    assert json.loads(first.read_text())["config_sha256"] != _file_sha256(config)
 
     second = prepare_agglomeration(
         config,
@@ -513,6 +518,7 @@ def test_mixed_agglomeration_resumes_from_xtb_into_vasp_runs(tmp_path):
         reference_dirs=references,
         vasp_template_slug="dcz-4p",
         packed_xyz=_mixed_packed(tmp_path / "mixed-again.xyz"),
+        regenerate_vasp=True,
     )
     assert json.loads(second.read_text())["status"] == "COMPLETE"
     case = output / "vasp_runs/r000_s00_1p000"

@@ -2105,7 +2105,10 @@ def prepare_agglomeration(
                 resumable_statuses.add("COMPLETE")
             resume = (
                 previous.get("status") in resumable_statuses
-                and previous.get("config_sha256") == _sha256(config_path)
+                and (
+                    regenerate_vasp
+                    or previous.get("config_sha256") == _sha256(config_path)
+                )
             )
         if not resume:
             raise FileExistsError(f"refusing to replace non-empty output directory: {output}")

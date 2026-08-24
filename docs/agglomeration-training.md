@@ -157,9 +157,12 @@ The command reuses the existing completed `xtbfinal.xyz` files, rebuilds the
 temperature-stage VASP inputs, and creates or refreshes
 `launch_vasp_runs.sh`. For a mixed campaign, repeat both slug-qualified
 `--reference-dir` arguments and the original `--vasp-template-slug`, then add
-the same `--regenerate-vasp` flag. Regeneration fails closed if it finds VASP
-runtime outputs such as `OUTCAR`, `CONTCAR`, `vasprun.xml`, or Slurm output,
-preventing an already-started calculation from being overwritten.
+the same `--regenerate-vasp` flag. This mode tolerates a changed TOML checksum
+for older campaigns; Packmol geometry and xTB protocol fingerprints still
+invalidate incompatible intermediates instead of silently reusing them.
+Regeneration fails closed if it finds VASP runtime outputs such as `OUTCAR`,
+`CONTCAR`, `vasprun.xml`, or Slurm output, preventing an already-started
+calculation from being overwritten.
 
 ## Mixed agglomerates from two VASP folders
 
