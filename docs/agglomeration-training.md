@@ -139,6 +139,28 @@ agglomeration/me-4pacz/launch_vasp_runs.sh
 For an intentional noninteractive submission, use `--yes`. The 400 K hold is
 still submitted with an `afterok` dependency on its corresponding heating job.
 
+### Regenerating VASP folders from an existing completed xTB campaign
+
+Older campaigns whose root manifest is already `COMPLETE` can be upgraded or
+rebuilt in place without rerunning Packmol or xTB. Repeat the original command
+with `--regenerate-vasp`:
+
+```bash
+nio-md-prep prepare-agglomeration \
+  examples/agglomeration/me-4pacz.toml \
+  --reference-dir /path/to/working/vasp-reference \
+  --output agglomeration/me-4pacz \
+  --regenerate-vasp
+```
+
+The command reuses the existing completed `xtbfinal.xyz` files, rebuilds the
+temperature-stage VASP inputs, and creates or refreshes
+`launch_vasp_runs.sh`. For a mixed campaign, repeat both slug-qualified
+`--reference-dir` arguments and the original `--vasp-template-slug`, then add
+the same `--regenerate-vasp` flag. Regeneration fails closed if it finds VASP
+runtime outputs such as `OUTCAR`, `CONTCAR`, `vasprun.xml`, or Slurm output,
+preventing an already-started calculation from being overwritten.
+
 ## Mixed agglomerates from two VASP folders
 
 Use a configuration whose composition contains both slugs; the ready-made

@@ -15,7 +15,11 @@ TEMPLATE='''[molecule]\ndisplay_name = "{name}"\nslug = "{slug}"\nrole = "second
 
 
 def _agglomeration_completion_message(
-    manifest: dict, output: Path, *, structures_only: bool
+    manifest: dict,
+    output: Path,
+    *,
+    structures_only: bool,
+    regenerated_vasp: bool = False,
 ) -> str:
     case_root = output / manifest.get(
         "case_root", "structures" if structures_only else "vasp_runs"
@@ -36,8 +40,9 @@ def _agglomeration_completion_message(
         stage_count = completed_cases * len(schedules)
         schedule_text = ", ".join(schedules)
         launcher = output / manifest.get("vasp_launcher", "launch_vasp_runs.sh")
+        verb = "regenerated" if regenerated_vasp else "created"
         return (
-            f"Agglomeration launch-ready VASP folders created under {case_root}: "
+            f"Agglomeration launch-ready VASP folders {verb} under {case_root}: "
             f"{completed_cases} structure case(s), {stage_count} temperature-stage "
             f"run folder(s) ({schedule_text}). Each structure case contains "
             f"submit_temperature_jobs.sh. Preview submissions with {launcher} "
@@ -75,6 +80,14 @@ def main(argv=None)->int:
         help="qualified reference whose INCAR, KPOINTS, launchers, and other shared files are reused",
     )
     i.add_argument("--packed-xyz",type=Path,help="use a supplied ordered Packmol XYZ for a one-replica offline build")
+    i.add_argument(
+        "--regenerate-vasp",
+        action="store_true",
+        help=(
+            "rebuild VASP folders and the campaign launcher from completed xTB "
+            "results in an existing output directory"
+        ),
+    )
     i=sub.add_parser("archive-runs")
     i.add_argument("roots",nargs="+",type=Path,help="prepared/work roots to archive")
     i.add_argument("--output",type=Path,required=True)
@@ -208,6 +221,7 @@ def main(argv=None)->int:
                 vasp_template_slug=a.vasp_template_slug,
                 packed_xyz=a.packed_xyz,
                 structures_only=a.structures_only,
+                regenerate_vasp=a.regenerate_vasp,
             )
             manifest_data=json.loads(manifest.read_text(encoding="utf-8"))
             status=manifest_data["status"]
@@ -218,7 +232,10 @@ def main(argv=None)->int:
             else:
                 print(
                     _agglomeration_completion_message(
-                        manifest_data, a.output, structures_only=a.structures_only
+                        manifest_data,
+                        a.output,
+                        structures_only=a.structures_only,
+                        regenerated_vasp=a.regenerate_vasp,
                     )
                 )
         elif a.command=="archive-runs":

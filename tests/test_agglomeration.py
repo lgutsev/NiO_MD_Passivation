@@ -215,6 +215,13 @@ def test_completion_message_reports_created_vasp_folders(tmp_path):
     assert "300K, 300K_to_400K, 400K" in message
     assert "submit_temperature_jobs.sh" in message
     assert "launch_vasp_runs.sh --dry-run" in message
+    regenerated = _agglomeration_completion_message(
+        manifest,
+        tmp_path / "campaign",
+        structures_only=False,
+        regenerated_vasp=True,
+    )
+    assert "VASP folders regenerated under" in regenerated
 
 
 def test_adaptive_compaction_connects_an_isolated_molecule_without_overlap():
@@ -554,6 +561,31 @@ def test_mixed_agglomeration_resumes_from_xtb_into_vasp_runs(tmp_path):
     )
     assert "All VASP stage jobs were submitted." in launched.stdout
     assert len(sbatch_log.read_text(encoding="utf-8").splitlines()) == 3
+
+    campaign_launcher.unlink()
+    (case / "300K/INCAR").write_text("STALE INPUT\n", encoding="utf-8")
+    regenerated = prepare_agglomeration(
+        config,
+        output,
+        reference_dirs=references,
+        vasp_template_slug="dcz-4p",
+        regenerate_vasp=True,
+    )
+    regenerated_manifest = json.loads(regenerated.read_text())
+    assert regenerated_manifest["status"] == "COMPLETE"
+    assert regenerated_manifest["regenerated_vasp"] is True
+    assert campaign_launcher.is_file()
+    assert (case / "300K/INCAR").read_text().startswith("ENCUT = 520\n")
+
+    (case / "300K/OUTCAR").write_text("started VASP run\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="VASP runtime outputs.*OUTCAR"):
+        prepare_agglomeration(
+            config,
+            output,
+            reference_dirs=references,
+            vasp_template_slug="dcz-4p",
+            regenerate_vasp=True,
+        )
 
 
 def test_xtb_stage_resumes_into_300_and_400_kelvin_vasp_runs(tmp_path):

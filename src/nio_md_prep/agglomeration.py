@@ -64,6 +64,7 @@ _VASP_OUTPUTS = {
     "WAVECAR", "CHG", "CHGCAR", "EIGENVAL", "DOSCAR", "PROCAR",
 }
 _REQUIRED_VASP_INPUTS = ("POSCAR", "INCAR", "KPOINTS", "POTCAR")
+_VASP_RUNTIME_OUTPUTS = _VASP_OUTPUTS - {"POSCAR"}
 
 
 def _sha256(path: Path) -> str:
@@ -76,6 +77,21 @@ def _sha256(path: Path) -> str:
 
 def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _existing_vasp_runtime_outputs(root: Path) -> list[Path]:
+    if not root.is_dir():
+        return []
+    return sorted(
+        path
+        for path in root.rglob("*")
+        if path.is_file()
+        and (
+            path.name in _VASP_RUNTIME_OUTPUTS
+            or path.name == "vasp.out"
+            or (path.name.startswith("slurm-") and path.suffix == ".out")
+        )
+    )
 
 
 def _atom_masses(data: DataFile) -> tuple[float, ...]:
@@ -2058,6 +2074,7 @@ def prepare_agglomeration(
     vasp_template_slug: str | None = None,
     packed_xyz: Path | None = None,
     structures_only: bool = False,
+    regenerate_vasp: bool = False,
 ) -> Path:
     """Prepare size-stratified molecular clusters as VASP run packages."""
     if reference_dir is not None and reference_dirs is not None:
@@ -2068,6 +2085,8 @@ def prepare_agglomeration(
         )
     if (reference_dir is not None or reference_dirs is not None) and structures_only:
         raise ValueError("--reference-dir and --structures-only are mutually exclusive")
+    if regenerate_vasp and structures_only:
+        raise ValueError("--regenerate-vasp cannot be used with --structures-only")
     if reference_dir is not None:
         reference_dir = Path(reference_dir)
     if reference_dirs is not None:
@@ -2081,12 +2100,27 @@ def prepare_agglomeration(
     if output.exists() and any(output.iterdir()):
         if manifest_path.is_file():
             previous = json.loads(manifest_path.read_text(encoding="utf-8"))
+            resumable_statuses = {"PACKMOL_REQUIRED", "XTB_REQUIRED"}
+            if regenerate_vasp:
+                resumable_statuses.add("COMPLETE")
             resume = (
-                previous.get("status") in {"PACKMOL_REQUIRED", "XTB_REQUIRED"}
+                previous.get("status") in resumable_statuses
                 and previous.get("config_sha256") == _sha256(config_path)
             )
         if not resume:
             raise FileExistsError(f"refusing to replace non-empty output directory: {output}")
+    if regenerate_vasp:
+        runtime_outputs = _existing_vasp_runtime_outputs(output / "vasp_runs")
+        if runtime_outputs:
+            preview = ", ".join(
+                str(path.relative_to(output)) for path in runtime_outputs[:5]
+            )
+            if len(runtime_outputs) > 5:
+                preview += f", and {len(runtime_outputs) - 5} more"
+            raise ValueError(
+                "--regenerate-vasp refuses to modify a campaign containing VASP "
+                f"runtime outputs: {preview}"
+            )
     output.mkdir(parents=True, exist_ok=True)
     with config_path.open("rb") as handle:
         config = tomllib.load(handle)
@@ -2188,6 +2222,8 @@ def prepare_agglomeration(
         }
     xtb_settings = config.get("xtb", {})
     xtb_enabled = bool(xtb_settings.get("enabled", False))
+    if regenerate_vasp and not xtb_enabled:
+        raise ValueError("--regenerate-vasp requires an xTB-enabled campaign")
     xtb_md_enabled = bool(xtb_settings.get("md_enabled", True))
     head_bias_enabled = bool(xtb_settings.get("head_bias_enabled", True))
     head_bias_replicas = int(
@@ -2735,6 +2771,7 @@ def prepare_agglomeration(
         },
         "output_mode": "structures_only" if structures_only else "vasp_runs",
         "case_root": case_root_name,
+        "regenerated_vasp": regenerate_vasp,
         "vasp_launcher": (
             vasp_launcher.name if vasp_launcher.is_file() else None
         ),
