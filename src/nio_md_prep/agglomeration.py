@@ -1659,7 +1659,33 @@ record_path.write_text(
     )
     steering_writer.chmod(0o755)
     if md_enabled:
-        workflow = f'''if [[ -s xtbopt.xyz && ! -s xtbopt_initial.xyz ]]; then
+        workflow = f'''input_changed=false
+if [[ -s xtb_input.complete ]]; then
+  if ! cmp -s xtb_input.sha256 xtb_input.complete; then
+    input_changed=true
+  fi
+elif [[ -s xtbopt_initial.xyz || -s xtbsteered_last.xyz || -s xtbmd_unbiased_last.xyz || -s xtbfinal.xyz ]]; then
+  input_changed=true
+fi
+if [[ "$input_changed" == true ]]; then
+  old_tag=legacy
+  if [[ -s xtb_input.complete ]]; then
+    old_tag=$(head -c 12 xtb_input.complete)
+  fi
+  for artifact in xtbopt.xyz xtbopt.log xtbopt_initial.xyz xtbopt_initial.log xtb_initial_opt.out xtb_initial_opt.err md_steered.inp steering_restraints.json xtb_steered.trj xtbsteered_last.xyz xtb_steered_md.out xtb_steered_md.err xtb_unbiased.trj xtbmd_unbiased_last.xyz xtb_unbiased_md.out xtb_unbiased_md.err xtbfinal.xyz xtbfinal.log xtb_final_opt.out xtb_final_opt.err; do
+    if [[ -e "$artifact" ]]; then
+      archived="${{artifact}}.input_${{old_tag}}"
+      if [[ -e "$archived" ]]; then
+        rm -f "$artifact"
+      else
+        mv "$artifact" "$archived"
+      fi
+    fi
+  done
+  rm -f xtb_protocol.complete xtb_stages.protocol
+fi
+cp xtb_input.sha256 xtb_input.complete
+if [[ -s xtbopt.xyz && ! -s xtbopt_initial.xyz ]]; then
   mv xtbopt.xyz xtbopt_initial.xyz
   [[ ! -s xtbopt.log ]] || mv xtbopt.log xtbopt_initial.log
 fi
@@ -1892,7 +1918,8 @@ $end
         (directory / "steering_restraints.json").unlink(missing_ok=True)
 
     protocol = {
-        "schema_version": 3,
+        "schema_version": 4,
+        "input_xyz_sha256": _sha256(directory / "input.xyz"),
         "total_md_time_ps": total_time_ps,
         "temperature_K": temperature,
         "step_fs": step_fs,
@@ -1916,6 +1943,9 @@ $end
     protocol_path.write_text(json.dumps(protocol, indent=2) + "\n", encoding="utf-8")
     (directory / "xtb_protocol.sha256").write_text(
         _sha256(protocol_path) + "\n", encoding="utf-8"
+    )
+    (directory / "xtb_input.sha256").write_text(
+        protocol["input_xyz_sha256"] + "\n", encoding="utf-8"
     )
     return protocol
 

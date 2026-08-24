@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import shutil
@@ -82,6 +83,10 @@ def _molecule_centers(case: Path):
 
 def _distance(first, second):
     return math.sqrt(sum((a - b) ** 2 for a, b in zip(first, second)))
+
+
+def _file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _potcar(path: Path, elements: list[str]) -> Path:
@@ -430,6 +435,57 @@ def test_mixed_agglomeration_rejects_conflicting_potcar_datasets(tmp_path):
         )
 
 
+def test_mixed_agglomeration_resumes_from_xtb_into_vasp_runs(tmp_path):
+    config = _mixed_config(tmp_path / "mixed-xtb.toml")
+    config.write_text(
+        config.read_text(encoding="utf-8")
+        + (
+            "\n[xtb]\nenabled = true\nhead_bias_enabled = false\n"
+            "maximum_nearest_molecule_distance_angstrom = 40.0\n"
+        ),
+        encoding="utf-8",
+    )
+    references = {}
+    for slug, encut in (("me-4pacz", 400), ("dcz-4p", 520)):
+        reference = tmp_path / slug
+        reference.mkdir()
+        (reference / "INCAR").write_text(f"ENCUT = {encut}\n", encoding="utf-8")
+        (reference / "KPOINTS").write_text(
+            "Gamma\n0\nGamma\n1 1 1\n0 0 0\n", encoding="utf-8"
+        )
+        _molecular_poscar_for_slug(reference / "POSCAR", slug)
+        _potcar(reference / "POTCAR", ["C", "H", "N", "O", "P"])
+        references[slug] = reference
+
+    output = tmp_path / "mixed"
+    first = prepare_agglomeration(
+        config,
+        output,
+        reference_dirs=references,
+        vasp_template_slug="dcz-4p",
+        packed_xyz=_mixed_packed(tmp_path / "mixed.xyz"),
+    )
+    assert json.loads(first.read_text())["status"] == "XTB_REQUIRED"
+    xtb_work = output / "xtb/r000_s00_1p000"
+    assert int((xtb_work / "input.xyz").read_text().splitlines()[0]) == 121
+    shutil.copy2(xtb_work / "input.xyz", xtb_work / "xtbfinal.xyz")
+    shutil.copy2(
+        xtb_work / "xtb_protocol.sha256", xtb_work / "xtb_protocol.complete"
+    )
+
+    second = prepare_agglomeration(
+        config,
+        output,
+        reference_dirs=references,
+        vasp_template_slug="dcz-4p",
+        packed_xyz=_mixed_packed(tmp_path / "mixed-again.xyz"),
+    )
+    assert json.loads(second.read_text())["status"] == "COMPLETE"
+    case = output / "vasp_runs/r000_s00_1p000"
+    assert (case / "300K/INCAR").read_text().startswith("ENCUT = 520\n")
+    assert sum(map(int, (case / "POSCAR").read_text().splitlines()[6].split())) == 121
+
+
 def test_xtb_stage_resumes_into_300_and_400_kelvin_vasp_runs(tmp_path):
     config = tmp_path / "xtb.toml"
     config.write_text(
@@ -497,6 +553,10 @@ count = 2
     assert "xtbfinal.xyz" in xtb_launcher
     assert "xtb_protocol.complete" in xtb_launcher
     assert "xtb_stages.protocol" in xtb_launcher
+    assert "xtb_input.complete" in xtb_launcher
+    assert xtb_launcher.index("input_changed=false") < xtb_launcher.index(
+        "if [[ -s xtbopt.xyz && ! -s xtbopt_initial.xyz ]]"
+    )
     assert not (output / "vasp_runs/r000_s00_1p000/POSCAR").exists()
     xtb_work = output / "xtb/r000_s00_1p000"
     md_input = (xtb_work / "md.inp").read_text()
@@ -577,11 +637,78 @@ count = 2
     case_manifest = json.loads((case / "agglomeration_manifest.json").read_text())
     assert case_manifest["xtb"]["vasp_source_xyz"] == "xtbfinal.xyz"
     assert case_manifest["xtb"]["protocol"]["total_md_time_ps"] == 20.0
+    assert case_manifest["xtb"]["protocol"]["input_xyz_sha256"] == _file_sha256(
+        xtb_work / "input.xyz"
+    )
     assert case_manifest["xtb"]["protocol"]["head_bias"]["enabled"] is True
     assert case_manifest["xtb"]["protocol"]["head_bias"]["unbiased_time_ps"] == 14.0
     assert case_manifest["xtb"]["protocol"]["head_bias"][
         "target_axis_angle_degrees"
     ] == 170.0
+
+
+def test_xtb_input_geometry_change_invalidates_completed_protocol(tmp_path):
+    config = tmp_path / "xtb-unbiased.toml"
+    config.write_text(
+        """[agglomeration]
+replicas = 1
+base_seed = 12345
+radius_angstrom = 15.0
+packmol_tolerance_angstrom = 3.0
+vacuum_angstrom = 8.0
+minimum_distance_angstrom = 2.5
+compact_to_distance_angstrom = 3.0
+center_scales = [1.0]
+
+[xtb]
+enabled = true
+head_bias_enabled = false
+
+[[molecules]]
+slug = "me-4pacz"
+count = 2
+""",
+        encoding="utf-8",
+    )
+    reference = tmp_path / "reference"
+    reference.mkdir()
+    (reference / "INCAR").write_text("ENCUT = 520\n", encoding="utf-8")
+    (reference / "KPOINTS").write_text(
+        "Gamma\n0\nGamma\n1 1 1\n0 0 0\n", encoding="utf-8"
+    )
+    _molecular_poscar(reference / "POSCAR")
+    _potcar(reference / "POTCAR", ["C", "H", "N", "O", "P"])
+
+    first_packed = _packed(tmp_path / "packed-first.xyz")
+    output = tmp_path / "campaign"
+    first = prepare_agglomeration(
+        config, output, reference_dir=reference, packed_xyz=first_packed
+    )
+    assert json.loads(first.read_text())["status"] == "XTB_REQUIRED"
+    xtb_work = output / "xtb/r000_s00_1p000"
+    first_protocol = (xtb_work / "xtb_protocol.sha256").read_text()
+    shutil.copy2(xtb_work / "input.xyz", xtb_work / "xtbfinal.xyz")
+    shutil.copy2(
+        xtb_work / "xtb_protocol.sha256", xtb_work / "xtb_protocol.complete"
+    )
+
+    changed_packed = _packed(tmp_path / "packed-changed.xyz")
+    lines = changed_packed.read_text(encoding="utf-8").splitlines()
+    atoms_per_molecule = parse(
+        ROOT / "inputs/molecules/me-4pacz/ligpargen.lmp"
+    ).count("Atoms")
+    for index in range(2, 2 + atoms_per_molecule):
+        fields = lines[index].split()
+        fields[1] = f"{float(fields[1]) + 1.0:.10f}"
+        lines[index] = " ".join(fields)
+    changed_packed.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    second = prepare_agglomeration(
+        config, output, reference_dir=reference, packed_xyz=changed_packed
+    )
+    assert json.loads(second.read_text())["status"] == "XTB_REQUIRED"
+    assert (xtb_work / "xtb_protocol.sha256").read_text() != first_protocol
+    assert (xtb_work / "xtb_protocol.complete").read_text() == first_protocol
 
 
 def test_agglomeration_uses_loose_cost_conscious_defaults(tmp_path):

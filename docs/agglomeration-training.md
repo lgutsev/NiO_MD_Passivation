@@ -172,6 +172,11 @@ nio-md-prep prepare-agglomeration \
 
 The second invocation validates the two-species xTB atom order and creates the
 same 300 K, heating, and 400 K VASP stages used by single-species campaigns.
+The xTB protocol fingerprints the generated mixed-species `input.xyz`. If a
+reference POSCAR or packed geometry changes during a resumable campaign, the
+launcher archives the stale initial optimization and downstream xTB products
+before recalculating them; an old `xtbfinal.xyz` cannot be accepted for the new
+geometry.
 
 ## Installing xTB on LONI
 
