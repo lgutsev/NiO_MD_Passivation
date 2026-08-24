@@ -1489,6 +1489,15 @@ def _prepare_vasp_schedule(
         """#!/bin/bash
 set -euo pipefail
 root=$(cd "$(dirname "$0")" && pwd)
+if [[ "${1:-}" == "--dry-run" ]]; then
+  printf '(cd %q && sbatch --parsable runvasp.sh)\n' "$root/300K"
+  printf '(cd %q && sbatch --parsable runvasp.sh)\n' "$root/400K/01_heat_300_to_400K"
+  printf '(cd %q && sbatch --parsable --dependency=afterok:<HEAT_JOB_ID> runvasp.sh)\n' "$root/400K/02_hold_400K"
+  exit 0
+elif [[ $# -ne 0 ]]; then
+  echo "usage: $0 [--dry-run]" >&2
+  exit 2
+fi
 job300=$(cd "$root/300K" && sbatch --parsable runvasp.sh)
 jobheat=$(cd "$root/400K/01_heat_300_to_400K" && sbatch --parsable runvasp.sh)
 job400=$(cd "$root/400K/02_hold_400K" && sbatch --parsable "--dependency=afterok:${jobheat}" runvasp.sh)
@@ -1511,6 +1520,81 @@ printf 'submitted 300K=%s heat=%s 400K-hold=%s\n' "$job300" "$jobheat" "$job400"
         lines.insert(insert_at, marker)
         hold_launcher.write_text("".join(lines), encoding="utf-8")
     return records
+
+
+def _write_vasp_campaign_launcher(output: Path, case_root_name: str) -> Path:
+    launcher = output / "launch_vasp_runs.sh"
+    launcher.write_text(
+        f'''#!/bin/bash
+set -euo pipefail
+dry_run=false
+assume_yes=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run) dry_run=true ;;
+    --yes|-y) assume_yes=true ;;
+    -h|--help)
+      echo "usage: $0 [--dry-run] [--yes]"
+      exit 0
+      ;;
+    *)
+      echo "unknown option: $1" >&2
+      echo "usage: $0 [--dry-run] [--yes]" >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+root=$(cd "$(dirname "$0")" && pwd)
+case_root="$root/{case_root_name}"
+cases=()
+while IFS= read -r -d '' submit; do
+  cases+=("$(dirname "$submit")")
+done < <(find "$case_root" -type f -name submit_temperature_jobs.sh -print0 | sort -z)
+
+if [[ ${{#cases[@]}} -eq 0 ]]; then
+  echo "no submit_temperature_jobs.sh files found under $case_root" >&2
+  exit 1
+fi
+
+case_count=${{#cases[@]}}
+stage_count=$((case_count * 3))
+printf 'Found %d structure case(s) and %d VASP stage job(s) under %s\n' \
+  "$case_count" "$stage_count" "$case_root"
+
+if [[ "$dry_run" == true ]]; then
+  echo "DRY RUN: no jobs will be submitted"
+  for case_dir in "${{cases[@]}}"; do
+    bash "$case_dir/submit_temperature_jobs.sh" --dry-run
+  done
+  exit 0
+fi
+
+if [[ "$assume_yes" != true ]]; then
+  reply=""
+  if ! read -r -p "Submit all $stage_count VASP stage jobs? [y/N] " reply; then
+    reply=""
+  fi
+  case "$reply" in
+    y|Y|yes|YES|Yes) ;;
+    *)
+      echo "Submission cancelled; no jobs were launched."
+      exit 0
+      ;;
+  esac
+fi
+
+for case_dir in "${{cases[@]}}"; do
+  printf 'Submitting %s\n' "$case_dir"
+  bash "$case_dir/submit_temperature_jobs.sh"
+done
+echo "All VASP stage jobs were submitted."
+''',
+        encoding="utf-8",
+    )
+    launcher.chmod(0o755)
+    return launcher
 
 
 def _write_xtb_batch(output: Path, cases: list[dict], settings: dict) -> None:
@@ -2580,6 +2664,11 @@ def prepare_agglomeration(
             writer = csv.DictWriter(handle, fieldnames=list(sanity_rows[0]))
             writer.writeheader()
             writer.writerows(sanity_rows)
+    vasp_launcher = output / "launch_vasp_runs.sh"
+    if status == "COMPLETE" and xtb_enabled and not structures_only and index_rows:
+        _write_vasp_campaign_launcher(output, case_root_name)
+    else:
+        vasp_launcher.unlink(missing_ok=True)
     root_manifest = {
         "schema_version": 4,
         "generator": "nio-md-prep prepare-agglomeration",
@@ -2646,6 +2735,9 @@ def prepare_agglomeration(
         },
         "output_mode": "structures_only" if structures_only else "vasp_runs",
         "case_root": case_root_name,
+        "vasp_launcher": (
+            vasp_launcher.name if vasp_launcher.is_file() else None
+        ),
         "templates": [
             {
                 "slug": template.slug,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import shutil
 import subprocess
 import sys
@@ -18,6 +19,7 @@ from nio_md_prep.agglomeration import (
     _potcar_elements,
     prepare_agglomeration,
 )
+from nio_md_prep.cli import _agglomeration_completion_message
 from nio_md_prep.geometry import elements
 from nio_md_prep.lammps import atom_coordinates, parse
 
@@ -188,6 +190,31 @@ def _mixed_packed(path: Path) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def test_completion_message_reports_created_vasp_folders(tmp_path):
+    manifest = {
+        "case_root": "vasp_runs",
+        "xtb": {"enabled": True},
+        "vasp_md": {"schedules": ["300K", "300K_to_400K", "400K"]},
+        "replicas": [
+            {
+                "structures": [
+                    {"path": "vasp_runs/n02/r000_s00_1p000"},
+                    {"path": "vasp_runs/n02/r001_s00_1p000"},
+                ]
+            }
+        ],
+    }
+    message = _agglomeration_completion_message(
+        manifest, tmp_path / "campaign", structures_only=False
+    )
+    assert f"created under {tmp_path / 'campaign/vasp_runs'}" in message
+    assert "2 structure case(s)" in message
+    assert "6 temperature-stage run folder(s)" in message
+    assert "300K, 300K_to_400K, 400K" in message
+    assert "submit_temperature_jobs.sh" in message
+    assert "launch_vasp_runs.sh --dry-run" in message
 
 
 def test_adaptive_compaction_connects_an_isolated_molecule_without_overlap():
@@ -484,6 +511,49 @@ def test_mixed_agglomeration_resumes_from_xtb_into_vasp_runs(tmp_path):
     case = output / "vasp_runs/r000_s00_1p000"
     assert (case / "300K/INCAR").read_text().startswith("ENCUT = 520\n")
     assert sum(map(int, (case / "POSCAR").read_text().splitlines()[6].split())) == 121
+    campaign_manifest = json.loads(second.read_text())
+    assert campaign_manifest["vasp_launcher"] == "launch_vasp_runs.sh"
+    campaign_launcher = output / "launch_vasp_runs.sh"
+    assert campaign_launcher.stat().st_mode & 0o111
+    subprocess.run(["bash", "-n", str(campaign_launcher)], check=True)
+    dry_run = subprocess.run(
+        [str(campaign_launcher), "--dry-run"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "DRY RUN: no jobs will be submitted" in dry_run.stdout
+    assert dry_run.stdout.count("sbatch --parsable") == 3
+    cancelled = subprocess.run(
+        [str(campaign_launcher)],
+        input="n\n",
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "Submission cancelled; no jobs were launched." in cancelled.stdout
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    fake_sbatch = fake_bin / "sbatch"
+    fake_sbatch.write_text(
+        "#!/bin/bash\nprintf '%s\\n' \"$*\" >> \"$SBATCH_LOG\"\nprintf '12345\\n'\n",
+        encoding="utf-8",
+    )
+    fake_sbatch.chmod(0o755)
+    sbatch_log = tmp_path / "sbatch.log"
+    launched = subprocess.run(
+        [str(campaign_launcher), "--yes"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=os.environ
+        | {
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "SBATCH_LOG": str(sbatch_log),
+        },
+    )
+    assert "All VASP stage jobs were submitted." in launched.stdout
+    assert len(sbatch_log.read_text(encoding="utf-8").splitlines()) == 3
 
 
 def test_xtb_stage_resumes_into_300_and_400_kelvin_vasp_runs(tmp_path):

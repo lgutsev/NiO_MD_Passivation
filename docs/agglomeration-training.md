@@ -123,7 +123,21 @@ molecular neighbor is farther than 6.0 A. It then creates three VASP stages:
 a 300 K hold, a 300-to-400 K heating ramp, and a 400 K hold. The latter is
 submitted with an `afterok` dependency and copies the heating `CONTCAR` to its
 own `POSCAR`. Run `submit_temperature_jobs.sh` inside a completed case to submit
-all three jobs.
+all three jobs. A completed campaign also contains a root launcher covering
+every structure case. Preview every `sbatch` command without submitting:
+
+```bash
+agglomeration/me-4pacz/launch_vasp_runs.sh --dry-run
+```
+
+Launch interactively with a single campaign-wide `y/N` confirmation:
+
+```bash
+agglomeration/me-4pacz/launch_vasp_runs.sh
+```
+
+For an intentional noninteractive submission, use `--yes`. The 400 K hold is
+still submitted with an `afterok` dependency on its corresponding heating job.
 
 ## Mixed agglomerates from two VASP folders
 

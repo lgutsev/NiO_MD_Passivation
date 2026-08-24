@@ -13,6 +13,42 @@ from .analysis.model_scope import MODEL_PROFILES
 
 TEMPLATE='''[molecule]\ndisplay_name = "{name}"\nslug = "{slug}"\nrole = "secondary"\nexpected_net_charge = 0.0\nphosphonic_acid_anchors = 1\nanchor_atom_ids = []\n\n[files]\nligpargen = "ligpargen.lmp"\ngeometry = ""\noverride = ""\n'''
 
+
+def _agglomeration_completion_message(
+    manifest: dict, output: Path, *, structures_only: bool
+) -> str:
+    case_root = output / manifest.get(
+        "case_root", "structures" if structures_only else "vasp_runs"
+    )
+    completed_cases = sum(
+        1
+        for replica in manifest.get("replicas", [])
+        for structure in replica.get("structures", [])
+        if structure.get("path")
+    )
+    if structures_only:
+        return (
+            f"Agglomeration structures created under {case_root}: "
+            f"{completed_cases} structure case(s)."
+        )
+    if manifest.get("xtb", {}).get("enabled", False):
+        schedules = manifest.get("vasp_md", {}).get("schedules", [])
+        stage_count = completed_cases * len(schedules)
+        schedule_text = ", ".join(schedules)
+        launcher = output / manifest.get("vasp_launcher", "launch_vasp_runs.sh")
+        return (
+            f"Agglomeration launch-ready VASP folders created under {case_root}: "
+            f"{completed_cases} structure case(s), {stage_count} temperature-stage "
+            f"run folder(s) ({schedule_text}). Each structure case contains "
+            f"submit_temperature_jobs.sh. Preview submissions with {launcher} "
+            f"--dry-run; launch with confirmation using {launcher}."
+        )
+    return (
+        f"Agglomeration launch-ready VASP folders created under {case_root}: "
+        f"{completed_cases} structure case(s)."
+    )
+
+
 def main(argv=None)->int:
     p=argparse.ArgumentParser(prog="nio-md-prep"); sub=p.add_subparsers(dest="command",required=True)
     i=sub.add_parser("init-molecule"); i.add_argument("name")
@@ -173,14 +209,18 @@ def main(argv=None)->int:
                 packed_xyz=a.packed_xyz,
                 structures_only=a.structures_only,
             )
-            status=json.loads(manifest.read_text(encoding="utf-8"))["status"]
+            manifest_data=json.loads(manifest.read_text(encoding="utf-8"))
+            status=manifest_data["status"]
             if status=="PACKMOL_REQUIRED":
                 print(f"Agglomeration Packmol inputs written to {a.output}; run packmol in each replica directory and rerun this command with the same output path")
             elif status=="XTB_REQUIRED":
                 print(f"Agglomeration xTB inputs written to {a.output}; submit run_xtb_array.sbatch and rerun this command with the same output path after the array finishes")
             else:
-                mode="structures" if a.structures_only else "launch-ready VASP runs"
-                print(f"Agglomeration {mode} written to {a.output}")
+                print(
+                    _agglomeration_completion_message(
+                        manifest_data, a.output, structures_only=a.structures_only
+                    )
+                )
         elif a.command=="archive-runs":
             from .archive import create_run_archive
             result=create_run_archive(a.roots,a.output,force=a.force)
