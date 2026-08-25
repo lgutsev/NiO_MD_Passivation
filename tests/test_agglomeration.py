@@ -19,7 +19,10 @@ from nio_md_prep.agglomeration import (
     _potcar_elements,
     prepare_agglomeration,
 )
-from nio_md_prep.cli import _agglomeration_completion_message
+from nio_md_prep.cli import (
+    _agglomeration_completion_message,
+    _agglomeration_xtb_pending_message,
+)
 from nio_md_prep.geometry import elements
 from nio_md_prep.lammps import atom_coordinates, parse
 
@@ -222,6 +225,25 @@ def test_completion_message_reports_created_vasp_folders(tmp_path):
         regenerated_vasp=True,
     )
     assert "VASP folders regenerated under" in regenerated
+
+
+def test_xtb_pending_message_points_to_audit_and_safe_launcher(tmp_path):
+    manifest = {
+        "replicas": [
+            {
+                "structures": [
+                    {"path": "vasp_runs/finished"},
+                    {"status": "XTB_REQUIRED"},
+                    {"status": "XTB_REQUIRED"},
+                ]
+            }
+        ]
+    }
+    message = _agglomeration_xtb_pending_message(manifest, tmp_path / "campaign")
+    assert "1 completed case(s), 2 pending case(s)" in message
+    assert str(tmp_path / "campaign/audit_xtb_runs.py") in message
+    assert str(tmp_path / "campaign/launch_xtb.sh") in message
+    assert "--dry-run" in message
 
 
 def test_adaptive_compaction_connects_an_isolated_molecule_without_overlap():
@@ -503,15 +525,38 @@ def test_mixed_agglomeration_resumes_from_xtb_into_vasp_runs(tmp_path):
     xtb_work = output / "xtb/r000_s00_1p000"
     assert int((xtb_work / "input.xyz").read_text().splitlines()[0]) == 121
     shutil.copy2(xtb_work / "input.xyz", xtb_work / "xtbfinal.xyz")
-    shutil.copy2(
-        xtb_work / "xtb_protocol.sha256", xtb_work / "xtb_protocol.complete"
+    original_xtb_input = (xtb_work / "input.xyz").read_text(encoding="utf-8")
+    original_xtb_protocol = (xtb_work / "xtb_protocol.json").read_text(
+        encoding="utf-8"
     )
+    assert not (xtb_work / "xtb_protocol.complete").exists()
     config.write_text(
         config.read_text(encoding="utf-8") + "\n# harmless post-run comment\n",
         encoding="utf-8",
     )
     assert json.loads(first.read_text())["config_sha256"] != _file_sha256(config)
 
+    incomplete = prepare_agglomeration(
+        config,
+        output,
+        reference_dirs=references,
+        vasp_template_slug="dcz-4p",
+        packed_xyz=_mixed_packed(tmp_path / "mixed-incomplete.xyz"),
+        regenerate_vasp=True,
+    )
+    assert json.loads(incomplete.read_text())["status"] == "XTB_REQUIRED"
+    assert not (output / "launch_vasp_runs.sh").exists()
+
+    completed_protocol = xtb_work / "xtb_protocol.complete"
+    completed_protocol.write_text("legacy-protocol-hash\n", encoding="utf-8")
+    legacy_audit = subprocess.run(
+        [str(output / "audit_xtb_runs.py")],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "HASH_MISMATCH=1" in legacy_audit.stdout
+    assert "--regenerate-vasp" in legacy_audit.stdout
     second = prepare_agglomeration(
         config,
         output,
@@ -526,6 +571,32 @@ def test_mixed_agglomeration_resumes_from_xtb_into_vasp_runs(tmp_path):
     assert sum(map(int, (case / "POSCAR").read_text().splitlines()[6].split())) == 121
     campaign_manifest = json.loads(second.read_text())
     assert campaign_manifest["vasp_launcher"] == "launch_vasp_runs.sh"
+    assert (xtb_work / "input.xyz").read_text(encoding="utf-8") == original_xtb_input
+    assert (
+        xtb_work / "xtb_protocol.json"
+    ).read_text(encoding="utf-8") == original_xtb_protocol
+    case_manifest = json.loads((case / "agglomeration_manifest.json").read_text())
+    assert case_manifest["xtb"]["protocol"][
+        "regeneration_reused_completed_xtb"
+    ] is True
+    assert case_manifest["xtb"]["protocol"][
+        "legacy_completion_marker_present"
+    ] is True
+    assert case_manifest["xtb"]["protocol"][
+        "legacy_completion_marker_migrated"
+    ] is True
+    assert completed_protocol.read_text(encoding="utf-8") == (
+        xtb_work / "xtb_protocol.sha256"
+    ).read_text(encoding="utf-8")
+    migrated_audit = subprocess.run(
+        [str(output / "audit_xtb_runs.py")],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "xTB progress: 1/1 safely complete (100.0%); 0 pending" in (
+        migrated_audit.stdout
+    )
     campaign_launcher = output / "launch_vasp_runs.sh"
     assert campaign_launcher.stat().st_mode & 0o111
     subprocess.run(["bash", "-n", str(campaign_launcher)], check=True)
@@ -665,6 +736,39 @@ count = 2
     assert xtb_launcher.index("input_changed=false") < xtb_launcher.index(
         "if [[ -s xtbopt.xyz && ! -s xtbopt_initial.xyz ]]"
     )
+    xtb_audit = output / "audit_xtb_runs.py"
+    xtb_submitter = output / "launch_xtb.sh"
+    assert xtb_audit.stat().st_mode & 0o111
+    assert xtb_submitter.stat().st_mode & 0o111
+    subprocess.run([sys.executable, "-m", "py_compile", str(xtb_audit)], check=True)
+    subprocess.run(["bash", "-n", str(xtb_submitter)], check=True)
+    audit_result = subprocess.run(
+        [str(xtb_audit)], check=True, capture_output=True, text=True
+    )
+    assert "xTB progress: 0/1 safely complete (0.0%); 1 pending" in audit_result.stdout
+    assert "INITIAL_OPT_COMPLETE=0" not in audit_result.stdout
+    assert "[PENDING] xtb/r000_s00_1p000" in audit_result.stdout
+    assert json.loads((output / "xtb_progress.json").read_text())["pending"] == 1
+    assert "case,status,charge,uhf,detail" in (
+        output / "xtb_progress.csv"
+    ).read_text()
+    submit_dry_run = subprocess.run(
+        [str(xtb_submitter), "--dry-run"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "1 xTB case(s) remain pending" in submit_dry_run.stdout
+    assert "DRY RUN: no jobs will be submitted" in submit_dry_run.stdout
+    assert "run_xtb_array.sbatch" in submit_dry_run.stdout
+    cancelled_xtb = subprocess.run(
+        [str(xtb_submitter)],
+        input="n\n",
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "Submission cancelled; no jobs were launched" in cancelled_xtb.stdout
     assert not (output / "vasp_runs/r000_s00_1p000/POSCAR").exists()
     xtb_work = output / "xtb/r000_s00_1p000"
     md_input = (xtb_work / "md.inp").read_text()
@@ -719,6 +823,21 @@ count = 2
     shutil.copy2(
         xtb_work / "xtb_protocol.sha256",
         xtb_work / "xtb_protocol.complete",
+    )
+    completed_audit = subprocess.run(
+        [str(xtb_audit)], check=True, capture_output=True, text=True
+    )
+    assert "xTB progress: 1/1 safely complete (100.0%); 0 pending" in (
+        completed_audit.stdout
+    )
+    no_submit = subprocess.run(
+        [str(xtb_submitter), "--yes"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "All xTB cases are safely complete; no array was submitted" in (
+        no_submit.stdout
     )
 
     second = prepare_agglomeration(

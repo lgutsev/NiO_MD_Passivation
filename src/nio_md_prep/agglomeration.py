@@ -1923,6 +1923,212 @@ fi
     )
     script.chmod(0o755)
 
+    audit = output / "audit_xtb_runs.py"
+    audit.write_text(
+        f'''#!/usr/bin/env python3
+"""Audit resumable xTB cases without changing calculation outputs."""
+
+import argparse
+import csv
+import json
+from collections import Counter
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+MD_ENABLED = {md_enabled!r}
+COMPLETE_STATES = {{"COMPLETE"}}
+
+
+def same_hash(left: Path, right: Path) -> bool:
+    return (
+        left.is_file()
+        and right.is_file()
+        and left.read_bytes() == right.read_bytes()
+    )
+
+
+def classify(work: Path) -> tuple[str, str]:
+    if not work.is_dir():
+        return "MISSING_DIRECTORY", "case directory is absent"
+    if not MD_ENABLED:
+        if (work / "xtbopt.xyz").is_file():
+            return "COMPLETE", "xtbopt.xyz present"
+        if (work / "xtb.err").is_file() or (work / "xtb.out").is_file():
+            return "OPTIMIZATION_STARTED", "xTB output exists; no xtbopt.xyz"
+        return "PENDING", "optimization has not produced xtbopt.xyz"
+
+    final = work / "xtbfinal.xyz"
+    expected = work / "xtb_protocol.sha256"
+    completed = work / "xtb_protocol.complete"
+    if final.is_file() and same_hash(expected, completed):
+        return "COMPLETE", "final geometry and current completion marker present"
+    if final.is_file() and completed.is_file():
+        return (
+            "HASH_MISMATCH",
+            "final geometry present but completion hash differs; rerun preparation "
+            "with --regenerate-vasp to validate/migrate a legacy result",
+        )
+    if final.is_file():
+        return "FINAL_UNMARKED", "xtbfinal.xyz present without completion marker"
+    if completed.is_file():
+        return "MARKER_WITHOUT_FINAL", "completion marker present without xtbfinal.xyz"
+    if (work / "xtbmd_unbiased_last.xyz").is_file():
+        return "UNBIASED_MD_COMPLETE", "final optimization remains"
+    if (work / "xtbsteered_last.xyz").is_file():
+        return "STEERING_COMPLETE", "unbiased MD and final optimization remain"
+    if (work / "xtbopt_initial.xyz").is_file():
+        return "INITIAL_OPT_COMPLETE", "MD and final optimization remain"
+    if (work / "xtb_initial_opt.out").is_file():
+        return "INITIAL_OPT_STARTED", "initial optimization output exists"
+    return "PENDING", "initial optimization has not completed"
+
+
+def rows() -> list[dict[str, str]]:
+    result = []
+    for raw in (ROOT / "xtb_cases.tsv").read_text(encoding="utf-8").splitlines():
+        if not raw.strip():
+            continue
+        relative, charge, uhf = raw.split("\\t")
+        status, detail = classify(ROOT / relative)
+        result.append(
+            {{
+                "case": relative,
+                "status": status,
+                "charge": charge,
+                "uhf": uhf,
+                "detail": detail,
+            }}
+        )
+    return result
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--count-pending",
+        action="store_true",
+        help="print only the number of cases that are not safely complete",
+    )
+    parser.add_argument(
+        "--summary-only", action="store_true", help="omit per-case status lines"
+    )
+    args = parser.parse_args()
+    audited = rows()
+    pending = sum(row["status"] not in COMPLETE_STATES for row in audited)
+    if args.count_pending:
+        print(pending)
+        return 0
+
+    counts = Counter(row["status"] for row in audited)
+    completed = len(audited) - pending
+    timestamp = datetime.now(timezone.utc).isoformat()
+    csv_path = ROOT / "xtb_progress.csv"
+    json_path = ROOT / "xtb_progress.json"
+    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(
+            handle, fieldnames=["case", "status", "charge", "uhf", "detail"]
+        )
+        writer.writeheader()
+        writer.writerows(audited)
+    json_path.write_text(
+        json.dumps(
+            {{
+                "audited_at_utc": timestamp,
+                "total": len(audited),
+                "completed": completed,
+                "pending": pending,
+                "counts_by_status": dict(sorted(counts.items())),
+                "cases": audited,
+            }},
+            indent=2,
+        )
+        + "\\n",
+        encoding="utf-8",
+    )
+
+    percent = 100.0 if not audited else 100.0 * completed / len(audited)
+    print(
+        f"xTB progress: {{completed}}/{{len(audited)}} safely complete "
+        f"({{percent:.1f}}%); {{pending}} pending or requiring attention."
+    )
+    print(
+        "Stages: "
+        + (", ".join(f"{{name}}={{count}}" for name, count in sorted(counts.items())) or "none")
+    )
+    if not args.summary_only:
+        for row in audited:
+            print(f"[{{row['status']}}] {{row['case']}} - {{row['detail']}}")
+    print(f"Reports written: {{csv_path}} and {{json_path}}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+''',
+        encoding="utf-8",
+    )
+    audit.chmod(0o755)
+
+    launcher = output / "launch_xtb.sh"
+    launcher.write_text(
+        """#!/bin/bash
+set -euo pipefail
+
+root=$(cd "$(dirname "$0")" && pwd)
+audit="$root/audit_xtb_runs.py"
+array="$root/run_xtb_array.sbatch"
+dry_run=false
+assume_yes=false
+
+usage() {
+  cat <<'EOF'
+Usage: launch_xtb.sh [--dry-run] [--yes]
+
+Audit xTB progress and submit the resumable Slurm array. The array itself
+checks every case and skips cases carrying the current completion marker.
+EOF
+}
+
+while (($#)); do
+  case "$1" in
+    --dry-run) dry_run=true ;;
+    --yes|-y) assume_yes=true ;;
+    --help|-h) usage; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
+  esac
+  shift
+done
+
+"$audit"
+pending=$("$audit" --count-pending)
+if ((pending == 0)); then
+  echo "All xTB cases are safely complete; no array was submitted."
+  exit 0
+fi
+
+echo "$pending xTB case(s) remain pending or require attention."
+if [[ "$dry_run" == true ]]; then
+  echo "DRY RUN: no jobs will be submitted."
+  printf 'Would run: cd %q && sbatch %q\n' "$root" "$(basename "$array")"
+  exit 0
+fi
+
+if [[ "$assume_yes" != true ]]; then
+  read -r -p "Submit the resumable xTB array now? [y/N] " reply
+  case "$reply" in
+    y|Y|yes|YES|Yes) ;;
+    *) echo "Submission cancelled; no jobs were launched."; exit 0 ;;
+  esac
+fi
+
+(cd "$root" && sbatch "$(basename "$array")")
+echo "xTB array submitted. Re-run $audit at any time to check progress."
+""",
+        encoding="utf-8",
+    )
+    launcher.chmod(0o755)
+
 
 def _md_seed(seed: int, offset: int) -> int:
     resolved = (seed + offset) % 899999999
@@ -2405,32 +2611,10 @@ def prepare_agglomeration(
                     xtb_work /= case_name
                     xtb_work.mkdir(parents=True, exist_ok=True)
                     xtb_relative = xtb_work.relative_to(output)
-                    xtb_input = xtb_work / "input.xyz"
-                    _write_raw_xyz(
-                        symbols,
-                        raw_variant,
-                        xtb_input,
-                        f"Packmol seed {seed}; adaptive center scale {compact_scale:.8f}",
+                    optimized = xtb_work / (
+                        "xtbfinal.xyz" if xtb_md_enabled else "xtbopt.xyz"
                     )
-                    if xtb_md_enabled:
-                        p_pairs = _nearest_phosphonate_pairs(
-                            raw_variant, instances
-                        )
-                        steered = _head_bias_for_replica(
-                            replica, spec.replicas, xtb_settings
-                        )
-                        xtb_protocol = _write_xtb_md_inputs(
-                            xtb_work,
-                            xtb_settings,
-                            seed + variant_index,
-                            p_pairs,
-                            steered,
-                        )
-                        realized_restraints = xtb_work / "steering_restraints.json"
-                        if steered and realized_restraints.is_file():
-                            xtb_protocol["head_bias"]["realized_pairs"] = json.loads(
-                                realized_restraints.read_text(encoding="utf-8")
-                            )["pairs"]
+                    completed_protocol = xtb_work / "xtb_protocol.complete"
                     total_charge = sum(
                         template.count * template.net_charge
                         for template in spec.templates
@@ -2447,33 +2631,93 @@ def prepare_agglomeration(
                             "uhf": int(xtb_settings.get("uhf", 0)),
                         }
                     )
-                    optimized = xtb_work / (
-                        "xtbfinal.xyz" if xtb_md_enabled else "xtbopt.xyz"
+                    reuse_completed_xtb = (
+                        regenerate_vasp
+                        and optimized.is_file()
+                        and (not xtb_md_enabled or completed_protocol.is_file())
                     )
-                    protocol_ready = True
-                    if xtb_md_enabled:
-                        expected_protocol = xtb_work / "xtb_protocol.sha256"
-                        completed_protocol = xtb_work / "xtb_protocol.complete"
-                        protocol_ready = (
+                    if reuse_completed_xtb:
+                        optimized_symbols, raw_variant = _read_xyz(optimized)
+                        if optimized_symbols != expected_symbols:
+                            raise ValueError(
+                                f"{optimized}: xTB changed atom ordering or element "
+                                "identities"
+                            )
+                        protocol_path = xtb_work / "xtb_protocol.json"
+                        if protocol_path.is_file():
+                            try:
+                                xtb_protocol = json.loads(
+                                    protocol_path.read_text(encoding="utf-8")
+                                )
+                            except json.JSONDecodeError:
+                                xtb_protocol = {"legacy_protocol_readable": False}
+                        else:
+                            xtb_protocol = {"legacy_protocol_present": False}
+                        xtb_protocol["regeneration_reused_completed_xtb"] = True
+                        xtb_protocol["legacy_completion_marker_present"] = (
                             completed_protocol.is_file()
+                        )
+                        expected_protocol = xtb_work / "xtb_protocol.sha256"
+                        if (
+                            completed_protocol.is_file()
+                            and expected_protocol.is_file()
                             and completed_protocol.read_text(encoding="utf-8")
-                            == expected_protocol.read_text(encoding="utf-8")
+                            != expected_protocol.read_text(encoding="utf-8")
+                        ):
+                            shutil.copy2(expected_protocol, completed_protocol)
+                            xtb_protocol[
+                                "legacy_completion_marker_migrated"
+                            ] = True
+                    else:
+                        xtb_input = xtb_work / "input.xyz"
+                        _write_raw_xyz(
+                            symbols,
+                            raw_variant,
+                            xtb_input,
+                            f"Packmol seed {seed}; adaptive center scale {compact_scale:.8f}",
                         )
-                    if not optimized.is_file() or not protocol_ready:
-                        status = "XTB_REQUIRED"
-                        structures.append(
-                            {
-                                "case": case_name,
-                                "status": "XTB_REQUIRED",
-                                "xtb_working_directory": str(xtb_relative),
-                            }
-                        )
-                        continue
-                    optimized_symbols, raw_variant = _read_xyz(optimized)
-                    if optimized_symbols != expected_symbols:
-                        raise ValueError(
-                            f"{optimized}: xTB changed atom ordering or element identities"
-                        )
+                        if xtb_md_enabled:
+                            p_pairs = _nearest_phosphonate_pairs(
+                                raw_variant, instances
+                            )
+                            steered = _head_bias_for_replica(
+                                replica, spec.replicas, xtb_settings
+                            )
+                            xtb_protocol = _write_xtb_md_inputs(
+                                xtb_work,
+                                xtb_settings,
+                                seed + variant_index,
+                                p_pairs,
+                                steered,
+                            )
+                            realized_restraints = xtb_work / "steering_restraints.json"
+                            if steered and realized_restraints.is_file():
+                                xtb_protocol["head_bias"]["realized_pairs"] = json.loads(
+                                    realized_restraints.read_text(encoding="utf-8")
+                                )["pairs"]
+                        protocol_ready = True
+                        if xtb_md_enabled:
+                            expected_protocol = xtb_work / "xtb_protocol.sha256"
+                            protocol_ready = (
+                                completed_protocol.is_file()
+                                and completed_protocol.read_text(encoding="utf-8")
+                                == expected_protocol.read_text(encoding="utf-8")
+                            )
+                        if not optimized.is_file() or not protocol_ready:
+                            status = "XTB_REQUIRED"
+                            structures.append(
+                                {
+                                    "case": case_name,
+                                    "status": "XTB_REQUIRED",
+                                    "xtb_working_directory": str(xtb_relative),
+                                }
+                            )
+                            continue
+                        optimized_symbols, raw_variant = _read_xyz(optimized)
+                        if optimized_symbols != expected_symbols:
+                            raise ValueError(
+                                f"{optimized}: xTB changed atom ordering or element identities"
+                            )
                 cell = (
                     _fixed_cell({1.0: raw_variant}, spec.vacuum)
                     if xtb_enabled

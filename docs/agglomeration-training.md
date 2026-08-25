@@ -106,7 +106,9 @@ enabled the first invocation normally stops with `XTB_REQUIRED`:
 
 ```bash
 cd agglomeration/me-4pacz
-sbatch run_xtb_array.sbatch
+./audit_xtb_runs.py
+./launch_xtb.sh --dry-run
+./launch_xtb.sh
 # after every array task has produced xtbfinal.xyz:
 cd -
 nio-md-prep prepare-agglomeration \
@@ -114,6 +116,15 @@ nio-md-prep prepare-agglomeration \
   --reference-dir /path/to/working/vasp-reference \
   --output agglomeration/me-4pacz
 ```
+
+`audit_xtb_runs.py` is safe to run while jobs are active. It reports the
+completed fraction and classifies every case as pending, initial optimization,
+steering, unbiased MD, final-but-unmarked, hash mismatch, or safely complete.
+It also refreshes `xtb_progress.csv` and `xtb_progress.json` for automated
+monitoring. `launch_xtb.sh` runs that audit automatically, reports how many
+cases remain, and asks for one campaign-wide `y/N` confirmation before calling
+Slurm. Use `--yes` for intentional noninteractive submission. The underlying
+array checks each case again and skips current completed cases.
 
 The rerun converts `xtbfinal.xyz` automatically; no separate XYZ-to-POSCAR
 command is needed. It validates the xTB atom order and rejects a quenched
@@ -160,6 +171,12 @@ temperature-stage VASP inputs, and creates or refreshes
 the same `--regenerate-vasp` flag. This mode tolerates a changed TOML checksum
 for older campaigns; Packmol geometry and xTB protocol fingerprints still
 invalidate incompatible intermediates instead of silently reusing them.
+In explicit regeneration mode, an existing `xtbfinal.xyz` accompanied by
+`xtb_protocol.complete` is treated as the operator-confirmed completed xTB
+result even when the completion marker uses an older hash schema. A final XYZ
+without the completion marker remains pending. The final XYZ atom identities,
+ordering, distances, molecular association, and VASP compatibility are still
+validated before any VASP launcher is created.
 Regeneration fails closed if it finds VASP runtime outputs such as `OUTCAR`,
 `CONTCAR`, `vasprun.xml`, or Slurm output, preventing an already-started
 calculation from being overwritten.
@@ -198,7 +215,8 @@ With xTB enabled, continue exactly as for a pure campaign:
 
 ```bash
 cd agglomeration/me-4pacz-dcz-4p
-sbatch run_xtb_array.sbatch
+./audit_xtb_runs.py
+./launch_xtb.sh
 cd -
 
 nio-md-prep prepare-agglomeration \
@@ -237,7 +255,7 @@ default:
 ```bash
 export XTB_EXE=/path/to/project/envs/xtb/bin/xtb
 cd agglomeration/me-4pacz
-sbatch run_xtb_array.sbatch
+./launch_xtb.sh
 ```
 
 No exports are necessary for the current LONI installation: the generated
@@ -247,7 +265,7 @@ can be selected without editing the generated script:
 ```bash
 export XTB_ENV=/path/to/another/xtb/environment
 cd agglomeration/me-4pacz
-sbatch run_xtb_array.sbatch
+./launch_xtb.sh
 ```
 
 The generated array embeds the campaign root's absolute path, so Slurm's spool

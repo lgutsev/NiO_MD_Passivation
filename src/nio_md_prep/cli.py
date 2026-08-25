@@ -54,6 +54,28 @@ def _agglomeration_completion_message(
     )
 
 
+def _agglomeration_xtb_pending_message(manifest: dict, output: Path) -> str:
+    structures = [
+        structure
+        for replica in manifest.get("replicas", [])
+        for structure in replica.get("structures", [])
+    ]
+    completed = sum(bool(structure.get("path")) for structure in structures)
+    pending = sum(
+        structure.get("status") == "XTB_REQUIRED" for structure in structures
+    )
+    audit = output / "audit_xtb_runs.py"
+    launcher = output / "launch_xtb.sh"
+    return (
+        f"Agglomeration xTB status for {output}: {completed} completed case(s), "
+        f"{pending} pending case(s). Audit stages with {audit}; preview a "
+        f"resumable submission with {launcher} --dry-run, or launch with "
+        f"confirmation using {launcher}. Completed cases are detected and "
+        "skipped. Rerun this preparation command with the same output path "
+        "after the remaining array tasks finish."
+    )
+
+
 def main(argv=None)->int:
     p=argparse.ArgumentParser(prog="nio-md-prep"); sub=p.add_subparsers(dest="command",required=True)
     i=sub.add_parser("init-molecule"); i.add_argument("name")
@@ -228,7 +250,7 @@ def main(argv=None)->int:
             if status=="PACKMOL_REQUIRED":
                 print(f"Agglomeration Packmol inputs written to {a.output}; run packmol in each replica directory and rerun this command with the same output path")
             elif status=="XTB_REQUIRED":
-                print(f"Agglomeration xTB inputs written to {a.output}; submit run_xtb_array.sbatch and rerun this command with the same output path after the array finishes")
+                print(_agglomeration_xtb_pending_message(manifest_data, a.output))
             else:
                 print(
                     _agglomeration_completion_message(
