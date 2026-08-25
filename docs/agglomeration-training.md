@@ -274,7 +274,15 @@ cd agglomeration/me-4pacz
 The generated array embeds the campaign root's absolute path, so Slurm's spool
 copy of the script cannot redirect it away from `xtb_cases.tsv`. If the campaign
 directory is moved, regenerate the launcher or update its `root=` line. The
-array uses one task and one CPU per aggregate and sets `ulimit -s unlimited`.
+array uses the `workq` partition with one task and eight shared-memory OpenMP
+cores per aggregate by default, and sets `ulimit -s unlimited`. Both xTB and
+its MKL dense-linear-algebra backend receive the allocated core count; nested
+OpenMP is disabled and the per-thread OpenMP stack defaults to `1G`. With
+`array_concurrency = 4`, at most four cases and 32 allocated cores are active
+at once. Set `cpus = 16` in `[xtb]` to benchmark the largest aggregates, but do
+not assume that doubling from 8 to 16 cores will halve wall time: xTB's memory
+use grows with both atom count and thread count. `XTB_OMP_STACKSIZE` can
+override the generated stack setting at submission time.
 Each `xtb/...` directory records the complete staged provenance:
 
 ```text
@@ -370,6 +378,10 @@ head_bias_target_axis_angle_degrees = 170.0
 head_bias_force_constant = 0.005
 minimum_oxygen_oxygen_distance_angstrom = 2.20
 maximum_nearest_molecule_distance_angstrom = 6.0
+cpus = 8
+omp_stacksize = "1G"
+array_concurrency = 4
+partition = "workq"
 
 [vasp_md]
 heating_steps = 1000

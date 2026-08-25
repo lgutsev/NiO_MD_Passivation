@@ -718,12 +718,16 @@ count = 2
     )
     assert json.loads(first.read_text())["status"] == "XTB_REQUIRED"
     xtb_launcher = (output / "run_xtb_array.sbatch").read_text()
-    assert "#SBATCH -p single" in xtb_launcher
-    assert "#SBATCH -c 1" in xtb_launcher
+    assert "#SBATCH -p workq" in xtb_launcher
+    assert "#SBATCH --cpus-per-task=8" in xtb_launcher
     assert f"root={output.resolve()}" in xtb_launcher
     assert "SLURM_SUBMIT_DIR" not in xtb_launcher
     assert 'dirname "$0"' not in xtb_launcher
     assert "XTB_ENV:=/project/lgutsev/env/xtb_env" in xtb_launcher
+    assert 'OMP_NUM_THREADS="${threads},1"' in xtb_launcher
+    assert 'MKL_NUM_THREADS="$threads"' in xtb_launcher
+    assert "OMP_MAX_ACTIVE_LEVELS=1" in xtb_launcher
+    assert "OMP_STACKSIZE=${XTB_OMP_STACKSIZE:-1G}" in xtb_launcher
     assert "--md --input md.inp" in xtb_launcher
     assert "--md --input md_steered.inp" in xtb_launcher
     assert "xtbopt_initial.xyz" in xtb_launcher
@@ -746,6 +750,8 @@ count = 2
         [str(xtb_audit)], check=True, capture_output=True, text=True
     )
     assert "xTB progress: 0/1 safely complete (0.0%); 1 pending" in audit_result.stdout
+    assert "Resources: 8 OpenMP core(s) per case" in audit_result.stdout
+    assert "at most 32 allocated cores" in audit_result.stdout
     assert "INITIAL_OPT_COMPLETE=0" not in audit_result.stdout
     assert "[PENDING] xtb/r000_s00_1p000" in audit_result.stdout
     pending_indices = subprocess.run(

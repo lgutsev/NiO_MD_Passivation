@@ -1622,13 +1622,22 @@ def _write_xtb_batch(output: Path, cases: list[dict], settings: dict) -> None:
         encoding="utf-8",
     )
     account = str(settings.get("account", "loni_perovsk27"))
-    partition = str(settings.get("partition", "single"))
-    cpus = int(settings.get("cpus", 1))
+    partition = str(settings.get("partition", "workq"))
+    cpus = int(settings.get("cpus", 8))
     walltime = str(settings.get("walltime", "24:00:00"))
     gfn = int(settings.get("gfn", 2))
     opt_level = str(settings.get("opt_level", "loose"))
     max_cycles = int(settings.get("max_cycles", 100))
     concurrency = int(settings.get("array_concurrency", 4))
+    omp_stacksize = str(settings.get("omp_stacksize", "1G")).upper()
+    if cpus < 1:
+        raise ValueError("xtb.cpus must be positive")
+    if concurrency < 1:
+        raise ValueError("xtb.array_concurrency must be positive")
+    if not re.fullmatch(r"[1-9][0-9]*[KMGT]", omp_stacksize):
+        raise ValueError(
+            "xtb.omp_stacksize must be a positive size such as '512M', '1G', or '4G'"
+        )
     md_enabled = bool(settings.get("md_enabled", True))
     campaign_root = shlex.quote(str(output.resolve()))
     extractor = output / "extract_last_xtb_frame.py"
@@ -1872,7 +1881,7 @@ test -s xtbopt.xyz'''
 #SBATCH -p {partition}
 #SBATCH -N 1
 #SBATCH -n 1
-#SBATCH -c {cpus}
+#SBATCH --cpus-per-task={cpus}
 #SBATCH -t {walltime}
 #SBATCH -A {account}
 #SBATCH -J "me4pacz_xtb"
@@ -1909,8 +1918,14 @@ if ! command -v "$XTB_EXE" >/dev/null 2>&1; then
   echo "xTB not found; set XTB_EXE or provide a valid XTB_ENV" >&2
   exit 127
 fi
-export OMP_NUM_THREADS=${{SLURM_CPUS_PER_TASK:-{cpus}}}
-export MKL_NUM_THREADS=1
+threads=${{SLURM_CPUS_PER_TASK:-{cpus}}}
+export OMP_NUM_THREADS="${{threads}},1"
+export OMP_MAX_ACTIVE_LEVELS=1
+export OMP_DYNAMIC=FALSE
+export OMP_SCHEDULE=dynamic
+export OMP_STACKSIZE=${{XTB_OMP_STACKSIZE:-{omp_stacksize}}}
+export MKL_NUM_THREADS="$threads"
+export MKL_DYNAMIC=FALSE
 ulimit -s unlimited
 if [[ -x "$XTB_ENV/bin/python" ]]; then
   PYTHON_EXE="$XTB_ENV/bin/python"
@@ -1937,6 +1952,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 MD_ENABLED = {md_enabled!r}
+CPUS_PER_CASE = {cpus}
+ARRAY_CONCURRENCY = {concurrency}
 COMPLETE_STATES = {{"COMPLETE"}}
 
 
@@ -2092,6 +2109,11 @@ def main() -> int:
     print(
         f"xTB progress: {{completed}}/{{len(audited)}} safely complete "
         f"({{percent:.1f}}%); {{pending}} pending or requiring attention."
+    )
+    print(
+        f"Resources: {{CPUS_PER_CASE}} OpenMP core(s) per case; "
+        f"array concurrency {{ARRAY_CONCURRENCY}}; at most "
+        f"{{CPUS_PER_CASE * ARRAY_CONCURRENCY}} allocated cores."
     )
     print(
         "Stages: "
