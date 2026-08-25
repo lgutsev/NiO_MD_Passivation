@@ -546,6 +546,21 @@ def test_mixed_agglomeration_resumes_from_xtb_into_vasp_runs(tmp_path):
     )
     assert json.loads(incomplete.read_text())["status"] == "XTB_REQUIRED"
     assert not (output / "launch_vasp_runs.sh").exists()
+    regenerated_xtb_launch = prepare_agglomeration(
+        config,
+        output,
+        regenerate_xtb_launcher=True,
+    )
+    regenerated_xtb_manifest = json.loads(regenerated_xtb_launch.read_text())
+    assert regenerated_xtb_manifest["status"] == "XTB_REQUIRED"
+    assert regenerated_xtb_manifest["xtb_launcher_regenerated"] is True
+    assert regenerated_xtb_manifest["xtb_launcher"] == "launch_xtb.sh"
+    assert regenerated_xtb_manifest["xtb_pool_launcher"] == "run_xtb_pool.sbatch"
+    assert (xtb_work / "input.xyz").read_text(encoding="utf-8") == original_xtb_input
+    assert (
+        xtb_work / "xtb_protocol.json"
+    ).read_text(encoding="utf-8") == original_xtb_protocol
+    assert not (output / "launch_vasp_runs.sh").exists()
 
     completed_protocol = xtb_work / "xtb_protocol.complete"
     completed_protocol.write_text("legacy-protocol-hash\n", encoding="utf-8")
@@ -742,16 +757,25 @@ count = 2
     )
     xtb_audit = output / "audit_xtb_runs.py"
     xtb_submitter = output / "launch_xtb.sh"
+    xtb_pool = output / "run_xtb_pool.sbatch"
     assert xtb_audit.stat().st_mode & 0o111
     assert xtb_submitter.stat().st_mode & 0o111
+    assert xtb_pool.stat().st_mode & 0o111
     subprocess.run([sys.executable, "-m", "py_compile", str(xtb_audit)], check=True)
     subprocess.run(["bash", "-n", str(xtb_submitter)], check=True)
+    subprocess.run(["bash", "-n", str(xtb_pool)], check=True)
+    pool_text = xtb_pool.read_text(encoding="utf-8")
+    assert "#SBATCH --ntasks-per-node=8" in pool_text
+    assert "#SBATCH --cpus-per-task=8" in pool_text
+    assert "#SBATCH --exclusive" in pool_text
+    assert "srun --exclusive" in pool_text
+    assert 'SLURM_ARRAY_TASK_ID="$index"' in pool_text
     audit_result = subprocess.run(
         [str(xtb_audit)], check=True, capture_output=True, text=True
     )
     assert "xTB progress: 0/1 safely complete (0.0%); 1 pending" in audit_result.stdout
-    assert "Resources: 8 OpenMP core(s) per case" in audit_result.stdout
-    assert "at most 32 allocated cores" in audit_result.stdout
+    assert "Resources: one 64-core node carousel" in audit_result.stdout
+    assert "8 simultaneous worker(s) x 8 OpenMP cores" in audit_result.stdout
     assert "INITIAL_OPT_COMPLETE=0" not in audit_result.stdout
     assert "[PENDING] xtb/r000_s00_1p000" in audit_result.stdout
     pending_indices = subprocess.run(
@@ -798,10 +822,49 @@ count = 2
         text=True,
     )
     assert "1 xTB case(s) remain pending" in submit_dry_run.stdout
-    assert "Selected Slurm array indices: 0%4" in submit_dry_run.stdout
-    assert "sbatch --array=0%4 run_xtb_array.sbatch" in submit_dry_run.stdout
+    assert "Selected pending case indices: 0" in submit_dry_run.stdout
+    assert "workq carousel: 8 workers x 8 cores = 64 cores" in (
+        submit_dry_run.stdout
+    )
+    assert "run_xtb_pool.sbatch" in submit_dry_run.stdout
+    assert "run_xtb_array.sbatch" not in submit_dry_run.stdout
     assert "DRY RUN: no jobs will be submitted" in submit_dry_run.stdout
-    assert "run_xtb_array.sbatch" in submit_dry_run.stdout
+    fake_srun_bin = tmp_path / "fake-srun-bin"
+    fake_srun_bin.mkdir()
+    fake_srun = fake_srun_bin / "srun"
+    fake_srun.write_text(
+        "#!/bin/bash\nprintf '%s\\n' \"$*\" >> \"$SRUN_LOG\"\n",
+        encoding="utf-8",
+    )
+    fake_srun.chmod(0o755)
+    srun_log = tmp_path / "srun.log"
+    carousel = subprocess.run(
+        [str(xtb_pool)],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=os.environ
+        | {
+            "PATH": f"{fake_srun_bin}:{os.environ['PATH']}",
+            "SRUN_LOG": str(srun_log),
+            "XTB_ARRAY_INDICES": "0,2-3",
+            "SLURM_JOB_ID": "123456",
+            "TMPDIR": str(tmp_path),
+        },
+    )
+    assert "3 selected case(s)" in carousel.stdout
+    assert "8 simultaneous worker(s), 8 cores per worker" in carousel.stdout
+    srun_lines = srun_log.read_text(encoding="utf-8").splitlines()
+    assert len(srun_lines) == 3
+    assert all("--cpus-per-task=8" in line for line in srun_lines)
+    assert {
+        next(field for field in line.split() if field.startswith("SLURM_ARRAY_TASK_ID="))
+        for line in srun_lines
+    } == {
+        "SLURM_ARRAY_TASK_ID=0",
+        "SLURM_ARRAY_TASK_ID=2",
+        "SLURM_ARRAY_TASK_ID=3",
+    }
     cancelled_xtb = subprocess.run(
         [str(xtb_submitter)],
         input="n\n",
@@ -830,9 +893,9 @@ count = 2
             "SBATCH_LOG": str(xtb_sbatch_log),
         },
     )
-    assert "xTB array submitted" in submitted_xtb.stdout
+    assert "xTB work submitted" in submitted_xtb.stdout
     assert xtb_sbatch_log.read_text(encoding="utf-8").strip() == (
-        "--array=0%4 run_xtb_array.sbatch"
+        "--export=ALL,XTB_ARRAY_INDICES=0 run_xtb_pool.sbatch"
     )
     assert not (output / "vasp_runs/r000_s00_1p000/POSCAR").exists()
     xtb_work = output / "xtb/r000_s00_1p000"
@@ -901,7 +964,7 @@ count = 2
         capture_output=True,
         text=True,
     )
-    assert "All xTB cases are safely complete; no array was submitted" in (
+    assert "All xTB cases are safely complete; no work was submitted" in (
         no_submit.stdout
     )
 

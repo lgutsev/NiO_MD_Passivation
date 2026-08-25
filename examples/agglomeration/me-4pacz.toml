@@ -23,7 +23,10 @@ omp_stacksize = "1G"
 walltime = "24:00:00"
 partition = "workq"
 account = "loni_perovsk27"
-array_concurrency = 4
+array_concurrency = 8
+node_pool_enabled = true
+node_cpus = 64
+pool_workers = 8
 
 [vasp_md]
 # Hold lengths can be increased after the pilot. The heating branch linearly

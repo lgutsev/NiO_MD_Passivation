@@ -109,7 +109,7 @@ cd agglomeration/me-4pacz
 ./audit_xtb_runs.py
 ./launch_xtb.sh --dry-run
 ./launch_xtb.sh
-# after every array task has produced xtbfinal.xyz:
+# after every selected worker has produced xtbfinal.xyz:
 cd -
 nio-md-prep prepare-agglomeration \
   examples/agglomeration/me-4pacz.toml \
@@ -123,11 +123,32 @@ steering, unbiased MD, final-but-unmarked, hash mismatch, or safely complete.
 It also refreshes `xtb_progress.csv` and `xtb_progress.json` for automated
 monitoring. `launch_xtb.sh` runs that audit automatically, reports how many
 cases remain, and asks for one campaign-wide `y/N` confirmation before calling
-Slurm. Use `--yes` for intentional noninteractive submission. The underlying
-launcher compacts the unfinished TSV row numbers into a Slurm selection such
-as `--array=2,5,7-10%4`, so completed folders do not receive array jobs. Each
-selected task still checks its completion marker again immediately before xTB
-as protection against a calculation finishing between the audit and submission.
+Slurm. Use `--yes` for intentional noninteractive submission. On the 64-core
+`workq` partition, the launcher submits one whole-node carousel allocation and
+passes only the compacted unfinished TSV row numbers to it. Eight exclusive
+`srun` workers consume eight cores each; when one finishes, the next pending
+case takes its slot. Completed folders receive no worker. Each selected worker
+still checks its completion marker immediately before xTB as protection against
+a calculation finishing between the audit and submission.
+
+### Regenerating only the xTB audit and carousel
+
+An existing pure or mixed campaign can refresh its xTB launch files without
+VASP references and without rebuilding Packmol, calculation inputs, or VASP
+folders:
+
+```bash
+nio-md-prep prepare-agglomeration \
+  examples/agglomeration/me-4pacz-dcz-4p.toml \
+  --output agglomeration/me-4pacz-dcz-4p \
+  --regenerate-xtb-launcher
+```
+
+This regenerates `audit_xtb_runs.py`, `launch_xtb.sh`,
+`run_xtb_pool.sbatch`, and the direct-array fallback
+`run_xtb_array.sbatch`. Only scheduler/resource keys from the current TOML are
+overlaid on the campaign's recorded scientific xTB settings, so changing the
+launcher cannot silently change an in-progress xTB protocol.
 
 The rerun converts `xtbfinal.xyz` automatically; no separate XYZ-to-POSCAR
 command is needed. It validates the xTB atom order and rejects a quenched
@@ -271,18 +292,17 @@ cd agglomeration/me-4pacz
 ./launch_xtb.sh
 ```
 
-The generated array embeds the campaign root's absolute path, so Slurm's spool
-copy of the script cannot redirect it away from `xtb_cases.tsv`. If the campaign
-directory is moved, regenerate the launcher or update its `root=` line. The
-array uses the `workq` partition with one task and eight shared-memory OpenMP
-cores per aggregate by default, and sets `ulimit -s unlimited`. Both xTB and
-its MKL dense-linear-algebra backend receive the allocated core count; nested
-OpenMP is disabled and the per-thread OpenMP stack defaults to `1G`. With
-`array_concurrency = 4`, at most four cases and 32 allocated cores are active
-at once. Set `cpus = 16` in `[xtb]` to benchmark the largest aggregates, but do
-not assume that doubling from 8 to 16 cores will halve wall time: xTB's memory
-use grows with both atom count and thread count. `XTB_OMP_STACKSIZE` can
-override the generated stack setting at submission time.
+The generated worker embeds the campaign root's absolute path, so Slurm's
+spool copy cannot redirect it away from `xtb_cases.tsv`. If the campaign
+directory is moved, regenerate the launcher. The `workq` carousel requests one
+64-core node as eight tasks with eight shared-memory OpenMP cores each. Both
+xTB and its MKL dense-linear-algebra backend receive the eight-core allocation;
+nested OpenMP is disabled and the per-thread OpenMP stack defaults to `1G`.
+Set `cpus = 16` together with `pool_workers = 4` to benchmark the largest
+aggregates while still filling the 64-core node, but do not assume that
+doubling from 8 to 16 cores will halve wall time: xTB's memory use grows with
+both atom count and thread count. `XTB_OMP_STACKSIZE` can override the generated
+stack setting at submission time.
 Each `xtb/...` directory records the complete staged provenance:
 
 ```text
@@ -314,8 +334,10 @@ Completed stages are skipped on resubmission, so an interrupted task resumes
 from its last valid file. Results from a different protocol fingerprint are not
 accepted. The launcher preserves their stage files with a
 `.protocol_<old-hash>` suffix, retains the reusable initial optimization, and
-reruns steering, unbiased MD, and the final quench. Test one array index first with
-`sbatch --array=0 run_xtb_array.sbatch` before releasing the complete array.
+reruns steering, unbiased MD, and the final quench. For a one-case diagnostic,
+submit `sbatch --export=ALL,XTB_ARRAY_INDICES=0 run_xtb_pool.sbatch`; normal
+production relaunches should use `launch_xtb.sh` so all eight workq slots can be
+filled efficiently.
 
 Geometry-only generation remains available, but must be requested explicitly:
 
@@ -380,8 +402,11 @@ minimum_oxygen_oxygen_distance_angstrom = 2.20
 maximum_nearest_molecule_distance_angstrom = 6.0
 cpus = 8
 omp_stacksize = "1G"
-array_concurrency = 4
+array_concurrency = 8
 partition = "workq"
+node_pool_enabled = true
+node_cpus = 64
+pool_workers = 8
 
 [vasp_md]
 heating_steps = 1000

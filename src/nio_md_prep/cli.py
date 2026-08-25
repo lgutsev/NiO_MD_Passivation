@@ -97,6 +97,14 @@ def main(argv=None)->int:
         ),
     )
     agglomeration_mode.add_argument("--structures-only",action="store_true",help="write POSCAR/XYZ structures without VASP calculation inputs")
+    agglomeration_mode.add_argument(
+        "--regenerate-xtb-launcher",
+        action="store_true",
+        help=(
+            "rebuild only the xTB audit, workq carousel, and launcher files "
+            "for an existing pure or mixed campaign"
+        ),
+    )
     i.add_argument(
         "--vasp-template-slug",
         help="qualified reference whose INCAR, KPOINTS, launchers, and other shared files are reused",
@@ -244,7 +252,15 @@ def main(argv=None)->int:
                 packed_xyz=a.packed_xyz,
                 structures_only=a.structures_only,
                 regenerate_vasp=a.regenerate_vasp,
+                regenerate_xtb_launcher=a.regenerate_xtb_launcher,
             )
+            if a.regenerate_xtb_launcher:
+                print(
+                    f"xTB launch files regenerated in {a.output}. Audit with "
+                    f"{a.output / 'audit_xtb_runs.py'}; preview the pending-only "
+                    f"workq carousel with {a.output / 'launch_xtb.sh'} --dry-run."
+                )
+                return 0
             manifest_data=json.loads(manifest.read_text(encoding="utf-8"))
             status=manifest_data["status"]
             if status=="PACKMOL_REQUIRED":

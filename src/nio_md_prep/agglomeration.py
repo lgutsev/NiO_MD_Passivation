@@ -1613,7 +1613,7 @@ echo "All VASP stage jobs were submitted."
     return launcher
 
 
-def _write_xtb_batch(output: Path, cases: list[dict], settings: dict) -> None:
+def _write_xtb_batch(output: Path, cases: list[dict], settings: dict) -> dict:
     case_list = output / "xtb_cases.tsv"
     case_list.write_text(
         "".join(
@@ -1630,10 +1630,23 @@ def _write_xtb_batch(output: Path, cases: list[dict], settings: dict) -> None:
     max_cycles = int(settings.get("max_cycles", 100))
     concurrency = int(settings.get("array_concurrency", 4))
     omp_stacksize = str(settings.get("omp_stacksize", "1G")).upper()
+    node_pool_enabled = bool(
+        settings.get("node_pool_enabled", partition == "workq")
+    )
+    node_cpus = int(settings.get("node_cpus", 64))
+    pool_workers = int(settings.get("pool_workers", max(1, node_cpus // cpus)))
     if cpus < 1:
         raise ValueError("xtb.cpus must be positive")
     if concurrency < 1:
         raise ValueError("xtb.array_concurrency must be positive")
+    if node_cpus < 1 or pool_workers < 1:
+        raise ValueError("xtb.node_cpus and xtb.pool_workers must be positive")
+    if node_pool_enabled and pool_workers * cpus != node_cpus:
+        raise ValueError(
+            "xtb node pool must fill the allocation exactly: "
+            f"pool_workers ({pool_workers}) * cpus ({cpus}) != "
+            f"node_cpus ({node_cpus})"
+        )
     if not re.fullmatch(r"[1-9][0-9]*[KMGT]", omp_stacksize):
         raise ValueError(
             "xtb.omp_stacksize must be a positive size such as '512M', '1G', or '4G'"
@@ -1938,6 +1951,103 @@ fi
     )
     script.chmod(0o755)
 
+    pool = output / "run_xtb_pool.sbatch"
+    pool.write_text(
+        f'''#!/bin/bash
+#SBATCH -p {partition}
+#SBATCH --nodes=1
+#SBATCH --ntasks={pool_workers}
+#SBATCH --ntasks-per-node={pool_workers}
+#SBATCH --cpus-per-task={cpus}
+#SBATCH --exclusive
+#SBATCH -t {walltime}
+#SBATCH -A {account}
+#SBATCH -J "me4pacz_xtb_pool"
+#SBATCH -o xtb-pool.%j.out
+#SBATCH -e xtb-pool.%j.err
+
+set -euo pipefail
+root={campaign_root}
+: "${{XTB_ARRAY_INDICES:?submit with XTB_ARRAY_INDICES set by launch_xtb.sh}}"
+if [[ ! "$XTB_ARRAY_INDICES" =~ ^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$ ]]; then
+  echo "invalid XTB_ARRAY_INDICES: $XTB_ARRAY_INDICES" >&2
+  exit 2
+fi
+
+indices=()
+IFS=',' read -r -a chunks <<< "$XTB_ARRAY_INDICES"
+for chunk in "${{chunks[@]}}"; do
+  if [[ "$chunk" == *-* ]]; then
+    first=${{chunk%-*}}
+    last=${{chunk#*-}}
+    if ((last < first)); then
+      echo "invalid descending xTB index range: $chunk" >&2
+      exit 2
+    fi
+    for ((index=first; index<=last; index++)); do
+      indices+=("$index")
+    done
+  else
+    indices+=("$chunk")
+  fi
+done
+
+echo "xTB workq carousel: ${{#indices[@]}} selected case(s), "\
+"{pool_workers} simultaneous worker(s), {cpus} cores per worker."
+echo "Host: $(hostname)"
+date
+
+fifo="${{TMPDIR:-/tmp}}/nio_xtb_pool.${{SLURM_JOB_ID:-$$}}.fifo"
+rm -f "$fifo"
+mkfifo "$fifo"
+exec 9<>"$fifo"
+rm -f "$fifo"
+for ((slot=0; slot<{pool_workers}; slot++)); do echo >&9; done
+cleanup_pool() {{
+  exec 9>&- 9<&- || true
+}}
+trap cleanup_pool EXIT
+
+pids=()
+for index in "${{indices[@]}}"; do
+  read -r -u 9
+  {{
+    trap 'echo >&9' EXIT
+    echo ">>> Starting xTB case index $index at $(date)"
+    set +e
+    srun --exclusive --nodes=1 --ntasks=1 --cpus-per-task={cpus} \
+      --cpu-bind=cores --kill-on-bad-exit=0 \
+      env SLURM_ARRAY_TASK_ID="$index" SLURM_CPUS_PER_TASK={cpus} \
+      bash "$root/run_xtb_array.sbatch"
+    rc=$?
+    set -e
+    if ((rc == 0)); then
+      echo "<<< Finished xTB case index $index OK at $(date)"
+    else
+      echo "<<< Finished xTB case index $index with ERROR $rc at $(date)" >&2
+    fi
+    exit "$rc"
+  }} &
+  pids+=("$!")
+done
+
+failures=0
+for pid in "${{pids[@]}}"; do
+  if ! wait "$pid"; then
+    failures=$((failures + 1))
+  fi
+done
+date
+if ((failures)); then
+  echo "$failures xTB carousel worker(s) failed." >&2
+  exit 1
+fi
+echo "All selected xTB carousel workers completed successfully."
+''',
+        encoding="utf-8",
+    )
+    pool.chmod(0o755)
+
     audit = output / "audit_xtb_runs.py"
     audit.write_text(
         f'''#!/usr/bin/env python3
@@ -1954,6 +2064,9 @@ ROOT = Path(__file__).resolve().parent
 MD_ENABLED = {md_enabled!r}
 CPUS_PER_CASE = {cpus}
 ARRAY_CONCURRENCY = {concurrency}
+NODE_POOL_ENABLED = {node_pool_enabled!r}
+POOL_WORKERS = {pool_workers}
+NODE_CPUS = {node_cpus}
 COMPLETE_STATES = {{"COMPLETE"}}
 
 
@@ -2110,11 +2223,18 @@ def main() -> int:
         f"xTB progress: {{completed}}/{{len(audited)}} safely complete "
         f"({{percent:.1f}}%); {{pending}} pending or requiring attention."
     )
-    print(
-        f"Resources: {{CPUS_PER_CASE}} OpenMP core(s) per case; "
-        f"array concurrency {{ARRAY_CONCURRENCY}}; at most "
-        f"{{CPUS_PER_CASE * ARRAY_CONCURRENCY}} allocated cores."
-    )
+    if NODE_POOL_ENABLED:
+        print(
+            f"Resources: one {{NODE_CPUS}}-core node carousel; "
+            f"{{POOL_WORKERS}} simultaneous worker(s) x "
+            f"{{CPUS_PER_CASE}} OpenMP cores."
+        )
+    else:
+        print(
+            f"Resources: {{CPUS_PER_CASE}} OpenMP core(s) per case; "
+            f"array concurrency {{ARRAY_CONCURRENCY}}; at most "
+            f"{{CPUS_PER_CASE * ARRAY_CONCURRENCY}} allocated cores."
+        )
     print(
         "Stages: "
         + (", ".join(f"{{name}}={{count}}" for name, count in sorted(counts.items())) or "none")
@@ -2134,6 +2254,25 @@ if __name__ == "__main__":
     audit.chmod(0o755)
 
     launcher = output / "launch_xtb.sh"
+    if node_pool_enabled:
+        resource_summary = (
+            f"workq carousel: {pool_workers} workers x {cpus} cores "
+            f"= {node_cpus} cores"
+        )
+        preview_command = '''printf 'Would run: cd %q && sbatch --export=%q %q\\n' \\
+    "$root" "ALL,XTB_ARRAY_INDICES=$pending_indices" "$(basename "$pool")"'''
+        submit_command = """(cd "$root" && sbatch \\
+  --export="ALL,XTB_ARRAY_INDICES=$pending_indices" "$(basename "$pool")")"""
+    else:
+        resource_summary = (
+            f"Slurm array: at most {concurrency} workers x {cpus} cores"
+        )
+        preview_command = '''printf 'Would run: cd %q && sbatch --array=%q %q\\n' \\
+    "$root" "$array_selection" "$(basename "$array")"'''
+        submit_command = (
+            '''(cd "$root" && sbatch --array="$array_selection" '''
+            '''"$(basename "$array")")'''
+        )
     launcher.write_text(
         """#!/bin/bash
 set -euo pipefail
@@ -2141,6 +2280,7 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")" && pwd)
 audit="$root/audit_xtb_runs.py"
 array="$root/run_xtb_array.sbatch"
+pool="$root/run_xtb_pool.sbatch"
 dry_run=false
 assume_yes=false
 
@@ -2148,8 +2288,8 @@ usage() {
   cat <<'EOF'
 Usage: launch_xtb.sh [--dry-run] [--yes]
 
-Audit xTB progress and submit the resumable Slurm array. The array itself
-checks every case and skips cases carrying the current completion marker.
+Audit xTB progress and submit resumable work. The selected worker checks each
+case again and skips a case if its current completion marker appeared meanwhile.
 EOF
 }
 
@@ -2167,34 +2307,134 @@ done
 pending=$("$audit" --count-pending)
 pending_indices=$("$audit" --pending-indices)
 if ((pending == 0)); then
-  echo "All xTB cases are safely complete; no array was submitted."
+  echo "All xTB cases are safely complete; no work was submitted."
   exit 0
 fi
 
 echo "$pending xTB case(s) remain pending or require attention."
 array_selection="${pending_indices}%CONCURRENCY_PLACEHOLDER"
-echo "Selected Slurm array indices: $array_selection"
+echo "Selected pending case indices: $pending_indices"
+echo "Submission layout: RESOURCE_SUMMARY_PLACEHOLDER"
 if [[ "$dry_run" == true ]]; then
   echo "DRY RUN: no jobs will be submitted."
-  printf 'Would run: cd %q && sbatch --array=%q %q\n' \
-    "$root" "$array_selection" "$(basename "$array")"
+  PREVIEW_COMMAND_PLACEHOLDER
   exit 0
 fi
 
 if [[ "$assume_yes" != true ]]; then
-  read -r -p "Submit the resumable xTB array now? [y/N] " reply
+  read -r -p "Submit the resumable xTB work now? [y/N] " reply
   case "$reply" in
     y|Y|yes|YES|Yes) ;;
     *) echo "Submission cancelled; no jobs were launched."; exit 0 ;;
   esac
 fi
 
-(cd "$root" && sbatch --array="$array_selection" "$(basename "$array")")
-echo "xTB array submitted. Re-run $audit at any time to check progress."
-""".replace("CONCURRENCY_PLACEHOLDER", str(concurrency)),
+SUBMIT_COMMAND_PLACEHOLDER
+echo "xTB work submitted. Re-run $audit at any time to check progress."
+"""
+        .replace("CONCURRENCY_PLACEHOLDER", str(concurrency))
+        .replace("RESOURCE_SUMMARY_PLACEHOLDER", resource_summary)
+        .replace("PREVIEW_COMMAND_PLACEHOLDER", preview_command)
+        .replace("SUBMIT_COMMAND_PLACEHOLDER", submit_command),
         encoding="utf-8",
     )
     launcher.chmod(0o755)
+    return {
+        "account": account,
+        "partition": partition,
+        "cpus": cpus,
+        "walltime": walltime,
+        "array_concurrency": concurrency,
+        "omp_stacksize": omp_stacksize,
+        "node_pool_enabled": node_pool_enabled,
+        "node_cpus": node_cpus,
+        "pool_workers": pool_workers,
+    }
+
+
+_XTB_LAUNCH_RESOURCE_KEYS = {
+    "account",
+    "partition",
+    "cpus",
+    "walltime",
+    "array_concurrency",
+    "omp_stacksize",
+    "node_pool_enabled",
+    "node_cpus",
+    "pool_workers",
+}
+
+
+def regenerate_xtb_launch_files(config_path: Path, output: Path) -> Path:
+    """Rebuild only xTB launch/audit files for an existing campaign."""
+    manifest_path = output / "agglomeration_manifest.json"
+    case_list = output / "xtb_cases.tsv"
+    if not manifest_path.is_file():
+        raise FileNotFoundError(
+            f"{output}: existing agglomeration_manifest.json is required"
+        )
+    if not case_list.is_file():
+        raise FileNotFoundError(f"{output}: existing xtb_cases.tsv is required")
+    with config_path.open("rb") as handle:
+        current_config = tomllib.load(handle)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    recorded_settings = manifest.get("xtb", {})
+    if not isinstance(recorded_settings, dict) or not recorded_settings.get(
+        "enabled", False
+    ):
+        raise ValueError(f"{output}: manifest is not an xTB-enabled campaign")
+    current_settings = current_config.get("xtb", {})
+    if not isinstance(current_settings, dict):
+        raise ValueError(f"{config_path}: [xtb] must be a TOML table")
+    settings = dict(recorded_settings)
+    for key in _XTB_LAUNCH_RESOURCE_KEYS:
+        if key in current_settings:
+            settings[key] = current_settings[key]
+
+    cases = []
+    for line_number, raw in enumerate(
+        case_list.read_text(encoding="utf-8").splitlines(), 1
+    ):
+        if not raw.strip():
+            continue
+        fields = raw.split("\t")
+        if len(fields) != 3:
+            raise ValueError(
+                f"{case_list}:{line_number}: expected path, charge, and UHF"
+            )
+        relative = Path(fields[0])
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError(
+                f"{case_list}:{line_number}: unsafe xTB case path {fields[0]!r}"
+            )
+        if not (output / relative).is_dir():
+            raise FileNotFoundError(
+                f"{case_list}:{line_number}: xTB case directory is missing: {relative}"
+            )
+        try:
+            charge_value = int(fields[1])
+            uhf_value = int(fields[2])
+        except ValueError as error:
+            raise ValueError(
+                f"{case_list}:{line_number}: charge and UHF must be integers"
+            ) from error
+        cases.append(
+            {"path": str(relative), "charge": charge_value, "uhf": uhf_value}
+        )
+    if not cases:
+        raise ValueError(f"{case_list}: no xTB cases found")
+
+    settings.update(_write_xtb_batch(output, cases, settings))
+    manifest["xtb"] = settings
+    manifest["xtb_launcher_regenerated"] = True
+    manifest["xtb_launcher"] = "launch_xtb.sh"
+    manifest["xtb_pool_launcher"] = (
+        "run_xtb_pool.sbatch" if settings["node_pool_enabled"] else None
+    )
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+    )
+    return manifest_path
 
 
 def _md_seed(seed: int, offset: int) -> int:
@@ -2348,6 +2588,7 @@ def prepare_agglomeration(
     packed_xyz: Path | None = None,
     structures_only: bool = False,
     regenerate_vasp: bool = False,
+    regenerate_xtb_launcher: bool = False,
 ) -> Path:
     """Prepare size-stratified molecular clusters as VASP run packages."""
     if reference_dir is not None and reference_dirs is not None:
@@ -2360,6 +2601,21 @@ def prepare_agglomeration(
         raise ValueError("--reference-dir and --structures-only are mutually exclusive")
     if regenerate_vasp and structures_only:
         raise ValueError("--regenerate-vasp cannot be used with --structures-only")
+    if regenerate_xtb_launcher:
+        if regenerate_vasp or structures_only:
+            raise ValueError(
+                "--regenerate-xtb-launcher is mutually exclusive with other "
+                "regeneration/output modes"
+            )
+        if reference_dir is not None or reference_dirs is not None:
+            raise ValueError(
+                "--regenerate-xtb-launcher does not accept VASP reference directories"
+            )
+        if vasp_template_slug is not None or packed_xyz is not None:
+            raise ValueError(
+                "--regenerate-xtb-launcher does not rebuild geometry or VASP inputs"
+            )
+        return regenerate_xtb_launch_files(config_path, output)
     if reference_dir is not None:
         reference_dir = Path(reference_dir)
     if reference_dirs is not None:
@@ -2557,6 +2813,7 @@ def prepare_agglomeration(
     sanity_rows: list[dict] = []
     replica_records: list[dict] = []
     xtb_cases: list[dict] = []
+    xtb_launch_resources: dict = {}
     status = "COMPLETE"
 
     for spec in specs:
@@ -3000,7 +3257,7 @@ def prepare_agglomeration(
             )
 
     if xtb_enabled and xtb_cases:
-        _write_xtb_batch(output, xtb_cases, xtb_settings)
+        xtb_launch_resources = _write_xtb_batch(output, xtb_cases, xtb_settings)
 
     if index_rows:
         with (output / "agglomeration_index.csv").open("w", newline="", encoding="utf-8") as handle:
@@ -3050,6 +3307,7 @@ def prepare_agglomeration(
         "vasp_reference_sanity": reference_validation,
         "molecular_geometry": geometry_metadata,
         "xtb": xtb_settings
+        | xtb_launch_resources
         | {
             "enabled": xtb_enabled,
             "md_enabled": xtb_md_enabled,
