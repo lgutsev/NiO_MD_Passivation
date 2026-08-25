@@ -1,0 +1,66 @@
+[agglomeration]
+packmol_tolerance_angstrom = 3.0
+vacuum_angstrom = 8.0
+minimum_distance_angstrom = 2.5
+compact_to_distance_angstrom = 3.0
+center_scales = [1.00]
+
+[xtb]
+enabled = true
+gfn = 2
+opt_level = "loose"
+max_cycles = 100
+minimum_distance_angstrom = 0.70
+minimum_oxygen_oxygen_distance_angstrom = 2.20
+maximum_nearest_molecule_distance_angstrom = 6.0
+md_temperature_K = 450
+md_time_ps = 20.0
+head_bias_time_ps = 6.0
+cpus = 8
+omp_stacksize = "1G"
+walltime = "24:00:00"
+partition = "workq"
+account = "loni_perovsk27"
+array_concurrency = 8
+node_pool_enabled = true
+node_cpus = 64
+pool_workers = 8
+
+[vasp_md]
+heating_steps = 1000
+hold_steps = 3000
+
+[[agglomerates]]
+name = "n02"
+replicas = 3
+base_seed = 2445202
+radius_angstrom = 12.6
+molecules = [{ slug = "meo-4padbc", count = 2 }]
+
+[[agglomerates]]
+name = "n03"
+replicas = 3
+base_seed = 2445303
+radius_angstrom = 14.2
+molecules = [{ slug = "meo-4padbc", count = 3 }]
+
+[[agglomerates]]
+name = "n04"
+replicas = 3
+base_seed = 2445404
+radius_angstrom = 15.3
+molecules = [{ slug = "meo-4padbc", count = 4 }]
+
+[[agglomerates]]
+name = "n06"
+replicas = 2
+base_seed = 2445606
+radius_angstrom = 18.1
+molecules = [{ slug = "meo-4padbc", count = 6 }]
+
+[[agglomerates]]
+name = "n08"
+replicas = 1
+base_seed = 2445808
+radius_angstrom = 20.3
+molecules = [{ slug = "meo-4padbc", count = 8 }]

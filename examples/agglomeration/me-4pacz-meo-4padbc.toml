@@ -1,0 +1,63 @@
+[agglomeration]
+# Mixed Me-4PACz/MeO-4PADBC campaign with the same inventory matrix used by
+# the Me-4PACz/DCZ-4P campaign.
+packmol_tolerance_angstrom = 3.0
+vacuum_angstrom = 8.0
+minimum_distance_angstrom = 2.5
+compact_to_distance_angstrom = 3.0
+center_scales = [1.00]
+
+[xtb]
+enabled = true
+gfn = 2
+opt_level = "loose"
+max_cycles = 100
+minimum_distance_angstrom = 0.70
+minimum_oxygen_oxygen_distance_angstrom = 2.20
+maximum_nearest_molecule_distance_angstrom = 6.0
+md_temperature_K = 450
+md_time_ps = 20.0
+head_bias_time_ps = 6.0
+cpus = 8
+omp_stacksize = "1G"
+walltime = "24:00:00"
+partition = "workq"
+account = "loni_perovsk27"
+array_concurrency = 8
+node_pool_enabled = true
+node_cpus = 64
+pool_workers = 8
+
+[vasp_md]
+heating_steps = 1000
+hold_steps = 3000
+
+[[agglomerates]]
+name = "mixed-1-1"
+replicas = 3
+base_seed = 2414100
+radius_angstrom = 13.3
+molecules = [
+  { slug = "me-4pacz", count = 1 },
+  { slug = "meo-4padbc", count = 1 },
+]
+
+[[agglomerates]]
+name = "mixed-2-1"
+replicas = 3
+base_seed = 2414200
+radius_angstrom = 15.4
+molecules = [
+  { slug = "me-4pacz", count = 2 },
+  { slug = "meo-4padbc", count = 1 },
+]
+
+[[agglomerates]]
+name = "mixed-2-2"
+replicas = 2
+base_seed = 2414300
+radius_angstrom = 17.1
+molecules = [
+  { slug = "me-4pacz", count = 2 },
+  { slug = "meo-4padbc", count = 2 },
+]

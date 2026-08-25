@@ -207,6 +207,65 @@ calculation from being overwritten.
 
 ## Mixed agglomerates from two VASP folders
 
+### Complete four-SAM campaign matrix
+
+The repository provides pure campaigns for all four registered SAMs and a
+Me-4PACz mixture with each of the other three:
+
+| Campaign | Configuration | VASP reference folder(s) |
+| --- | --- | --- |
+| pure Me-4PACz | `me-4pacz.toml` | `Me4PACz` |
+| pure DCZ-4P | `dcz-4p.toml` | `DCZ4P` |
+| pure MeO-2PACz | `meo-2pacz.toml` | `MeO-2PACz` |
+| pure MeO-4PADBC | `meo-4padbc.toml` | `MeO-4PADBC` |
+| Me-4PACz + DCZ-4P | `me-4pacz-dcz-4p.toml` | `Me4PACz`, `DCZ4P` |
+| Me-4PACz + MeO-2PACz | `me-4pacz-meo-2pacz.toml` | `Me4PACz`, `MeO-2PACz` |
+| Me-4PACz + MeO-4PADBC | `me-4pacz-meo-4padbc.toml` | `Me4PACz`, `MeO-4PADBC` |
+
+From the directory containing the molecular VASP folders, prepare the three
+additional pure campaigns with:
+
+```bash
+nio-md-prep prepare-agglomeration \
+  /path/to/NiO_MD_Passivation/examples/agglomeration/dcz-4p.toml \
+  --reference-dir DCZ4P \
+  --output DCZ4P_agglo
+
+nio-md-prep prepare-agglomeration \
+  /path/to/NiO_MD_Passivation/examples/agglomeration/meo-2pacz.toml \
+  --reference-dir MeO-2PACz \
+  --output MeO-2PACz_agglo
+
+nio-md-prep prepare-agglomeration \
+  /path/to/NiO_MD_Passivation/examples/agglomeration/meo-4padbc.toml \
+  --reference-dir MeO-4PADBC \
+  --output MeO-4PADBC_agglo
+```
+
+Prepare the two additional Me-4PACz mixtures with:
+
+```bash
+nio-md-prep prepare-agglomeration \
+  /path/to/NiO_MD_Passivation/examples/agglomeration/me-4pacz-meo-2pacz.toml \
+  --reference-dir me-4pacz=Me4PACz \
+  --reference-dir meo-2pacz=MeO-2PACz \
+  --vasp-template-slug me-4pacz \
+  --output Me4PACz_MeO-2PACz_agglo
+
+nio-md-prep prepare-agglomeration \
+  /path/to/NiO_MD_Passivation/examples/agglomeration/me-4pacz-meo-4padbc.toml \
+  --reference-dir me-4pacz=Me4PACz \
+  --reference-dir meo-4padbc=MeO-4PADBC \
+  --vasp-template-slug me-4pacz \
+  --output Me4PACz_MeO-4PADBC_agglo
+```
+
+Every pure campaign uses the `n02`, `n03`, `n04`, `n06`, and `n08` size
+families with replica counts `3, 3, 3, 2, 1`. Every mixed campaign uses the
+same `1:1`, `2:1`, and `2:2` inventory matrix with replica counts `3, 3, 2`.
+The initial Packmol radii are scaled from molecular atom counts; adaptive
+compaction and the same post-xTB distance checks remain authoritative.
+
 Use a configuration whose composition contains both slugs; the ready-made
 example is `examples/agglomeration/me-4pacz-dcz-4p.toml`. Supply one qualified
 reference per slug:

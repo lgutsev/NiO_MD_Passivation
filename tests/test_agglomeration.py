@@ -7,12 +7,14 @@ import os
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
 
 from nio_md_prep.agglomeration import (
     MoleculeInstance,
+    _agglomerate_specs,
     _compact_molecule_centers,
     _head_bias_for_replica,
     _nearest_phosphonate_pairs,
@@ -27,6 +29,39 @@ from nio_md_prep.geometry import elements
 from nio_md_prep.lammps import atom_coordinates, parse
 
 ROOT = Path(__file__).parents[1]
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected_slugs", "expected_families"),
+    [
+        ("me-4pacz.toml", {"me-4pacz"}, 5),
+        ("dcz-4p.toml", {"dcz-4p"}, 5),
+        ("meo-2pacz.toml", {"meo-2pacz"}, 5),
+        ("meo-4padbc.toml", {"meo-4padbc"}, 5),
+        ("me-4pacz-dcz-4p.toml", {"me-4pacz", "dcz-4p"}, 3),
+        ("me-4pacz-meo-2pacz.toml", {"me-4pacz", "meo-2pacz"}, 3),
+        ("me-4pacz-meo-4padbc.toml", {"me-4pacz", "meo-4padbc"}, 3),
+    ],
+)
+def test_all_sam_agglomeration_campaign_configs(
+    filename, expected_slugs, expected_families
+):
+    path = ROOT / "examples/agglomeration" / filename
+    with path.open("rb") as handle:
+        config = tomllib.load(handle)
+    specs, grouped = _agglomerate_specs(config)
+    assert grouped is True
+    assert len(specs) == expected_families
+    assert {
+        template.slug for spec in specs for template in spec.templates
+    } == expected_slugs
+    assert {
+        "partition": "workq",
+        "cpus": 8,
+        "node_pool_enabled": True,
+        "node_cpus": 64,
+        "pool_workers": 8,
+    }.items() <= config["xtb"].items()
 
 
 def _config(path: Path) -> Path:
