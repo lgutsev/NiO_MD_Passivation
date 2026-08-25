@@ -748,8 +748,41 @@ count = 2
     assert "xTB progress: 0/1 safely complete (0.0%); 1 pending" in audit_result.stdout
     assert "INITIAL_OPT_COMPLETE=0" not in audit_result.stdout
     assert "[PENDING] xtb/r000_s00_1p000" in audit_result.stdout
+    pending_indices = subprocess.run(
+        [str(xtb_audit), "--pending-indices"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert pending_indices.stdout.strip() == "0"
+    case_list = output / "xtb_cases.tsv"
+    original_case_list = case_list.read_text(encoding="utf-8")
+    synthetic_complete = output / "xtb/synthetic-complete"
+    synthetic_complete.mkdir()
+    (synthetic_complete / "xtbfinal.xyz").write_text("done\n", encoding="utf-8")
+    (synthetic_complete / "xtb_protocol.sha256").write_text(
+        "current\n", encoding="utf-8"
+    )
+    (synthetic_complete / "xtb_protocol.complete").write_text(
+        "current\n", encoding="utf-8"
+    )
+    case_list.write_text(
+        original_case_list
+        + "xtb/synthetic-complete\t0\t0\n"
+        + "xtb/synthetic-pending-a\t0\t0\n"
+        + "xtb/synthetic-pending-b\t0\t0\n",
+        encoding="utf-8",
+    )
+    compact_pending = subprocess.run(
+        [str(xtb_audit), "--pending-indices"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert compact_pending.stdout.strip() == "0,2-3"
+    case_list.write_text(original_case_list, encoding="utf-8")
     assert json.loads((output / "xtb_progress.json").read_text())["pending"] == 1
-    assert "case,status,charge,uhf,detail" in (
+    assert "array_index,case,status,charge,uhf,detail" in (
         output / "xtb_progress.csv"
     ).read_text()
     submit_dry_run = subprocess.run(
@@ -759,6 +792,8 @@ count = 2
         text=True,
     )
     assert "1 xTB case(s) remain pending" in submit_dry_run.stdout
+    assert "Selected Slurm array indices: 0%4" in submit_dry_run.stdout
+    assert "sbatch --array=0%4 run_xtb_array.sbatch" in submit_dry_run.stdout
     assert "DRY RUN: no jobs will be submitted" in submit_dry_run.stdout
     assert "run_xtb_array.sbatch" in submit_dry_run.stdout
     cancelled_xtb = subprocess.run(
@@ -769,6 +804,30 @@ count = 2
         text=True,
     )
     assert "Submission cancelled; no jobs were launched" in cancelled_xtb.stdout
+    fake_xtb_bin = tmp_path / "fake-xtb-bin"
+    fake_xtb_bin.mkdir()
+    fake_xtb_sbatch = fake_xtb_bin / "sbatch"
+    fake_xtb_sbatch.write_text(
+        "#!/bin/bash\nprintf '%s\\n' \"$*\" >> \"$SBATCH_LOG\"\nprintf '98765\\n'\n",
+        encoding="utf-8",
+    )
+    fake_xtb_sbatch.chmod(0o755)
+    xtb_sbatch_log = tmp_path / "xtb-sbatch.log"
+    submitted_xtb = subprocess.run(
+        [str(xtb_submitter), "--yes"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=os.environ
+        | {
+            "PATH": f"{fake_xtb_bin}:{os.environ['PATH']}",
+            "SBATCH_LOG": str(xtb_sbatch_log),
+        },
+    )
+    assert "xTB array submitted" in submitted_xtb.stdout
+    assert xtb_sbatch_log.read_text(encoding="utf-8").strip() == (
+        "--array=0%4 run_xtb_array.sbatch"
+    )
     assert not (output / "vasp_runs/r000_s00_1p000/POSCAR").exists()
     xtb_work = output / "xtb/r000_s00_1p000"
     md_input = (xtb_work / "md.inp").read_text()

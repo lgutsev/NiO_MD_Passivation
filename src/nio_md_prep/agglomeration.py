@@ -1984,15 +1984,17 @@ def classify(work: Path) -> tuple[str, str]:
     return "PENDING", "initial optimization has not completed"
 
 
-def rows() -> list[dict[str, str]]:
+def rows() -> list[dict[str, object]]:
     result = []
-    for raw in (ROOT / "xtb_cases.tsv").read_text(encoding="utf-8").splitlines():
+    lines = (ROOT / "xtb_cases.tsv").read_text(encoding="utf-8").splitlines()
+    for array_index, raw in enumerate(lines):
         if not raw.strip():
             continue
         relative, charge, uhf = raw.split("\\t")
         status, detail = classify(ROOT / relative)
         result.append(
             {{
+                "array_index": array_index,
                 "case": relative,
                 "status": status,
                 "charge": charge,
@@ -2003,12 +2005,32 @@ def rows() -> list[dict[str, str]]:
     return result
 
 
+def compact_indices(indices: list[int]) -> str:
+    if not indices:
+        return ""
+    ranges = []
+    start = previous = indices[0]
+    for index in indices[1:]:
+        if index == previous + 1:
+            previous = index
+            continue
+        ranges.append(str(start) if start == previous else f"{{start}}-{{previous}}")
+        start = previous = index
+    ranges.append(str(start) if start == previous else f"{{start}}-{{previous}}")
+    return ",".join(ranges)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--count-pending",
         action="store_true",
         help="print only the number of cases that are not safely complete",
+    )
+    parser.add_argument(
+        "--pending-indices",
+        action="store_true",
+        help="print only the compact Slurm indices requiring submission",
     )
     parser.add_argument(
         "--summary-only", action="store_true", help="omit per-case status lines"
@@ -2019,6 +2041,17 @@ def main() -> int:
     if args.count_pending:
         print(pending)
         return 0
+    if args.pending_indices:
+        print(
+            compact_indices(
+                [
+                    int(row["array_index"])
+                    for row in audited
+                    if row["status"] not in COMPLETE_STATES
+                ]
+            )
+        )
+        return 0
 
     counts = Counter(row["status"] for row in audited)
     completed = len(audited) - pending
@@ -2027,7 +2060,15 @@ def main() -> int:
     json_path = ROOT / "xtb_progress.json"
     with csv_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(
-            handle, fieldnames=["case", "status", "charge", "uhf", "detail"]
+            handle,
+            fieldnames=[
+                "array_index",
+                "case",
+                "status",
+                "charge",
+                "uhf",
+                "detail",
+            ],
         )
         writer.writeheader()
         writer.writerows(audited)
@@ -2102,15 +2143,19 @@ done
 
 "$audit"
 pending=$("$audit" --count-pending)
+pending_indices=$("$audit" --pending-indices)
 if ((pending == 0)); then
   echo "All xTB cases are safely complete; no array was submitted."
   exit 0
 fi
 
 echo "$pending xTB case(s) remain pending or require attention."
+array_selection="${pending_indices}%CONCURRENCY_PLACEHOLDER"
+echo "Selected Slurm array indices: $array_selection"
 if [[ "$dry_run" == true ]]; then
   echo "DRY RUN: no jobs will be submitted."
-  printf 'Would run: cd %q && sbatch %q\n' "$root" "$(basename "$array")"
+  printf 'Would run: cd %q && sbatch --array=%q %q\n' \
+    "$root" "$array_selection" "$(basename "$array")"
   exit 0
 fi
 
@@ -2122,9 +2167,9 @@ if [[ "$assume_yes" != true ]]; then
   esac
 fi
 
-(cd "$root" && sbatch "$(basename "$array")")
+(cd "$root" && sbatch --array="$array_selection" "$(basename "$array")")
 echo "xTB array submitted. Re-run $audit at any time to check progress."
-""",
+""".replace("CONCURRENCY_PLACEHOLDER", str(concurrency)),
         encoding="utf-8",
     )
     launcher.chmod(0o755)

@@ -124,7 +124,10 @@ It also refreshes `xtb_progress.csv` and `xtb_progress.json` for automated
 monitoring. `launch_xtb.sh` runs that audit automatically, reports how many
 cases remain, and asks for one campaign-wide `y/N` confirmation before calling
 Slurm. Use `--yes` for intentional noninteractive submission. The underlying
-array checks each case again and skips current completed cases.
+launcher compacts the unfinished TSV row numbers into a Slurm selection such
+as `--array=2,5,7-10%4`, so completed folders do not receive array jobs. Each
+selected task still checks its completion marker again immediately before xTB
+as protection against a calculation finishing between the audit and submission.
 
 The rerun converts `xtbfinal.xyz` automatically; no separate XYZ-to-POSCAR
 command is needed. It validates the xTB atom order and rejects a quenched
