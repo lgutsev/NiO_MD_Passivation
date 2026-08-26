@@ -19,6 +19,7 @@ from nio_md_prep.agglomeration import (
     _head_bias_for_replica,
     _nearest_phosphonate_pairs,
     _potcar_elements,
+    _write_xtb_batch,
     prepare_agglomeration,
 )
 from nio_md_prep.cli import (
@@ -1035,6 +1036,77 @@ count = 2
     assert case_manifest["xtb"]["protocol"]["head_bias"][
         "target_axis_angle_degrees"
     ] == 170.0
+
+
+def test_xtb_launcher_rescue_mode_submits_individual_exclusive_node_jobs(tmp_path):
+    output = tmp_path / "campaign"
+    output.mkdir()
+    cases = [
+        {"path": f"xtb/case{index}", "charge": "0", "uhf": "0"} for index in range(4)
+    ]
+    for case in cases:
+        (output / case["path"]).mkdir(parents=True)
+    _write_xtb_batch(output, cases, {})
+
+    launcher = output / "launch_xtb.sh"
+    subprocess.run(["bash", "-n", str(launcher)], check=True)
+
+    help_text = subprocess.run(
+        [str(launcher), "--help"], check=True, capture_output=True, text=True
+    ).stdout
+    assert "--rescue" in help_text
+    assert "--rescue-pending" in help_text
+
+    # Explicit indices, dry run: one preview line per case, full-node/exclusive,
+    # never routed through the shared pool/carousel.
+    dry_run = subprocess.run(
+        [str(launcher), "--dry-run", "--rescue", "1,3"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "Rescuing 2 case(s)" in dry_run.stdout
+    assert "--cpus-per-task=64 --exclusive -p workq" in dry_run.stdout
+    assert "--array=1 -J xtb_rescue_1 run_xtb_array.sbatch  # xtb/case1" in dry_run.stdout
+    assert "--array=3 -J xtb_rescue_3 run_xtb_array.sbatch  # xtb/case3" in dry_run.stdout
+    assert "case0" not in dry_run.stdout
+    assert "case2" not in dry_run.stdout
+    assert "run_xtb_pool.sbatch" not in dry_run.stdout
+
+    # --rescue-pending resolves to every currently pending/attention index.
+    pending_dry_run = subprocess.run(
+        [str(launcher), "--dry-run", "--rescue-pending"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "Rescuing 4 case(s)" in pending_dry_run.stdout
+
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    fake_sbatch = fake_bin / "sbatch"
+    fake_sbatch.write_text(
+        "#!/bin/bash\nprintf '%s\\n' \"$*\" >> \"$SBATCH_LOG\"\nprintf '1\\n'\n",
+        encoding="utf-8",
+    )
+    fake_sbatch.chmod(0o755)
+    sbatch_log = tmp_path / "sbatch.log"
+    submitted = subprocess.run(
+        [str(launcher), "--yes", "--rescue", "1,3"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=os.environ
+        | {"PATH": f"{fake_bin}:{os.environ['PATH']}", "SBATCH_LOG": str(sbatch_log)},
+    )
+    assert "Submitted rescue job for case index 1" in submitted.stdout
+    assert "Submitted rescue job for case index 3" in submitted.stdout
+    sbatch_calls = sbatch_log.read_text(encoding="utf-8").splitlines()
+    # One standalone sbatch call per rescued case, not a combined array job.
+    assert len(sbatch_calls) == 2
+    assert all("--cpus-per-task=64" in call and "--exclusive" in call for call in sbatch_calls)
+    assert any("--array=1 " in call for call in sbatch_calls)
+    assert any("--array=3 " in call for call in sbatch_calls)
 
 
 def test_xtb_input_geometry_change_invalidates_completed_protocol(tmp_path):

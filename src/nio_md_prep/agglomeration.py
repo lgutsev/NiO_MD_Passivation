@@ -2283,13 +2283,25 @@ array="$root/run_xtb_array.sbatch"
 pool="$root/run_xtb_pool.sbatch"
 dry_run=false
 assume_yes=false
+rescue_indices=""
+rescue_pending=false
 
 usage() {
   cat <<'EOF'
 Usage: launch_xtb.sh [--dry-run] [--yes]
+       launch_xtb.sh [--dry-run] [--yes] --rescue INDEX[,INDEX,-INDEX...]
+       launch_xtb.sh [--dry-run] [--yes] --rescue-pending
 
 Audit xTB progress and submit resumable work. The selected worker checks each
 case again and skips a case if its current completion marker appeared meanwhile.
+
+--rescue/--rescue-pending submit each named case (or every currently pending
+or attention-needing case) as its own exclusive RESCUE_NODE_CPUS_PLACEHOLDER-core node job
+instead of a shared pooled worker slot. Use this when a case is stuck mid-
+protocol (e.g. steering/unbiased MD complete but nothing progressing further)
+with no error in its own logs -- most likely a carousel/pool scheduling
+artifact rather than a real xTB failure. The same resumable per-case workflow
+runs either way, so this only redoes whatever stage was interrupted.
 EOF
 }
 
@@ -2297,6 +2309,11 @@ while (($#)); do
   case "$1" in
     --dry-run) dry_run=true ;;
     --yes|-y) assume_yes=true ;;
+    --rescue)
+      rescue_indices="${2:?--rescue requires a comma-separated index list, e.g. 3,7,11-13}"
+      shift
+      ;;
+    --rescue-pending) rescue_pending=true ;;
     --help|-h) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -2304,6 +2321,65 @@ while (($#)); do
 done
 
 "$audit"
+
+if [[ "$rescue_pending" == true || -n "$rescue_indices" ]]; then
+  if [[ "$rescue_pending" == true ]]; then
+    rescue_indices=$("$audit" --pending-indices)
+  fi
+  if [[ -z "$rescue_indices" ]]; then
+    echo "No pending/attention case indices to rescue; nothing was submitted."
+    exit 0
+  fi
+  expanded=()
+  IFS=',' read -r -a chunks <<< "$rescue_indices"
+  for chunk in "${chunks[@]}"; do
+    if [[ "$chunk" == *-* ]]; then
+      first=${chunk%-*}
+      last=${chunk#*-}
+      if ((last < first)); then
+        echo "invalid descending rescue index range: $chunk" >&2
+        exit 2
+      fi
+      for ((index=first; index<=last; index++)); do
+        expanded+=("$index")
+      done
+    else
+      expanded+=("$chunk")
+    fi
+  done
+  echo "Rescuing ${#expanded[@]} case(s) individually on RESCUE_PARTITION_PLACEHOLDER as exclusive RESCUE_NODE_CPUS_PLACEHOLDER-core node job(s): $rescue_indices"
+  for index in "${expanded[@]}"; do
+    line_number=$((index + 1))
+    case_line=$(sed -n "${line_number}p" "$root/xtb_cases.tsv")
+    if [[ -z "$case_line" ]]; then
+      echo "index $index has no matching row in xtb_cases.tsv; skipped" >&2
+      continue
+    fi
+    case_relative="${case_line%%$'\t'*}"
+    if [[ "$dry_run" == true ]]; then
+      printf 'Would run: cd %q && sbatch --nodes=1 --ntasks=1 --cpus-per-task=RESCUE_NODE_CPUS_PLACEHOLDER --exclusive -p RESCUE_PARTITION_PLACEHOLDER -t RESCUE_WALLTIME_PLACEHOLDER -A RESCUE_ACCOUNT_PLACEHOLDER --array=%q -J %q %q  # %s\n' \
+        "$root" "$index" "xtb_rescue_${index}" "$(basename "$array")" "$case_relative"
+      continue
+    fi
+    if [[ "$assume_yes" != true ]]; then
+      reply=""
+      if ! read -r -p "Submit exclusive rescue job for case index $index ($case_relative)? [y/N] " reply; then
+        reply=""
+      fi
+      case "$reply" in
+        y|Y|yes|YES|Yes) ;;
+        *) echo "Skipped case index $index ($case_relative)."; continue ;;
+      esac
+    fi
+    (cd "$root" && sbatch --nodes=1 --ntasks=1 --cpus-per-task=RESCUE_NODE_CPUS_PLACEHOLDER --exclusive \
+      -p RESCUE_PARTITION_PLACEHOLDER -t RESCUE_WALLTIME_PLACEHOLDER -A RESCUE_ACCOUNT_PLACEHOLDER \
+      --array="$index" -J "xtb_rescue_${index}" "$(basename "$array")")
+    echo "Submitted rescue job for case index $index ($case_relative)."
+  done
+  echo "Re-run $audit at any time to check progress."
+  exit 0
+fi
+
 pending=$("$audit" --count-pending)
 pending_indices=$("$audit" --pending-indices)
 if ((pending == 0)); then
@@ -2335,7 +2411,11 @@ echo "xTB work submitted. Re-run $audit at any time to check progress."
         .replace("CONCURRENCY_PLACEHOLDER", str(concurrency))
         .replace("RESOURCE_SUMMARY_PLACEHOLDER", resource_summary)
         .replace("PREVIEW_COMMAND_PLACEHOLDER", preview_command)
-        .replace("SUBMIT_COMMAND_PLACEHOLDER", submit_command),
+        .replace("SUBMIT_COMMAND_PLACEHOLDER", submit_command)
+        .replace("RESCUE_NODE_CPUS_PLACEHOLDER", str(node_cpus))
+        .replace("RESCUE_PARTITION_PLACEHOLDER", partition)
+        .replace("RESCUE_WALLTIME_PLACEHOLDER", walltime)
+        .replace("RESCUE_ACCOUNT_PLACEHOLDER", account),
         encoding="utf-8",
     )
     launcher.chmod(0o755)
