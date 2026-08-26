@@ -131,6 +131,22 @@ case takes its slot. Completed folders receive no worker. Each selected worker
 still checks its completion marker immediately before xTB as protection against
 a calculation finishing between the audit and submission.
 
+To audit every pure and mixed agglomeration campaign under one parent directory
+without submitting jobs, run:
+
+```bash
+cd /path/to/Agglo_DFT
+nio-md-prep audit-agglomerations .
+```
+
+The command discovers campaign manifests recursively, refreshes each existing
+per-campaign audit, and classifies campaigns as `COMPLETE`, `IN_PROGRESS`,
+`ATTENTION`, or `PACKMOL_REQUIRED`. It writes consolidated
+`agglomeration_xtb_audit.csv` and `agglomeration_xtb_audit.json` reports in the
+audited root. A campaign marked `ATTENTION` has inconsistent or missing
+completion data and should not be treated as finished merely because an
+`xtbfinal.xyz` file exists.
+
 ### Regenerating only the xTB audit and carousel
 
 An existing pure or mixed campaign can refresh its xTB launch files without

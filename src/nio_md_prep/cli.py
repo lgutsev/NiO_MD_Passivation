@@ -118,6 +118,16 @@ def main(argv=None)->int:
             "results in an existing output directory"
         ),
     )
+    i=sub.add_parser(
+        "audit-agglomerations",
+        help="audit xTB progress across every agglomeration campaign under a root",
+    )
+    i.add_argument("root",type=Path,nargs="?",default=Path("."))
+    i.add_argument(
+        "--output-prefix",
+        type=Path,
+        help="report path without extension (default: ROOT/agglomeration_xtb_audit)",
+    )
     i=sub.add_parser("archive-runs")
     i.add_argument("roots",nargs="+",type=Path,help="prepared/work roots to archive")
     i.add_argument("--output",type=Path,required=True)
@@ -276,6 +286,9 @@ def main(argv=None)->int:
                         regenerated_vasp=a.regenerate_vasp,
                     )
                 )
+        elif a.command=="audit-agglomerations":
+            from .agglomeration_audit import audit_agglomerations
+            audit_agglomerations(a.root, a.output_prefix)
         elif a.command=="archive-runs":
             from .archive import create_run_archive
             result=create_run_archive(a.roots,a.output,force=a.force)
