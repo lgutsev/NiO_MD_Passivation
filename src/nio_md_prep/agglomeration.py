@@ -2320,7 +2320,11 @@ while (($#)); do
   shift
 done
 
-"$audit"
+if [[ "$rescue_pending" == true || -n "$rescue_indices" ]]; then
+  "$audit" --summary-only
+else
+  "$audit"
+fi
 
 if [[ "$rescue_pending" == true || -n "$rescue_indices" ]]; then
   if [[ "$rescue_pending" == true ]]; then

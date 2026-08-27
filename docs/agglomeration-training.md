@@ -141,11 +141,33 @@ nio-md-prep audit-agglomerations .
 
 The command discovers campaign manifests recursively, refreshes each existing
 per-campaign audit, and classifies campaigns as `COMPLETE`, `IN_PROGRESS`,
-`ATTENTION`, or `PACKMOL_REQUIRED`. It writes consolidated
-`agglomeration_xtb_audit.csv` and `agglomeration_xtb_audit.json` reports in the
-audited root. A campaign marked `ATTENTION` has inconsistent or missing
-completion data and should not be treated as finished merely because an
-`xtbfinal.xyz` file exists.
+`ATTENTION`, or `PACKMOL_REQUIRED`. The terminal output names every incomplete
+case folder, its TSV array index, checkpoint stage, latest log, inferred issue,
+latest Slurm job, and exact next action. When `sacct` is available, historical
+Slurm state, exit code, elapsed time, time limit, node, and reason are correlated
+with the filesystem evidence. Use `--no-slurm` for a filesystem-only audit or
+`--log-tail-lines N` to change the retained diagnostic excerpt length.
+
+The audited root receives:
+
+- `agglomeration_xtb_audit.csv`: campaign summary.
+- `agglomeration_xtb_audit_cases.csv`: every case and checkpoint/hash state.
+- `agglomeration_xtb_audit_incomplete.csv`: exact cases requiring work.
+- `agglomeration_xtb_audit_artifacts.csv`, `_logs.csv`, `_protocols.csv`,
+  `_resources.csv`, and `_slurm.csv`: normalized evidence tables suitable for
+  scripts and database import.
+- `agglomeration_xtb_audit.json`: complete nested machine-readable evidence.
+- `agglomeration_xtb_audit.xlsx`: formatted diagnostic workbook with `Overview`,
+  `Campaigns`, `Incomplete Cases`, `All Cases`, `Case Integrity`, `Artifacts`,
+  `Logs`, `Protocols`, `Resources`, `Slurm Jobs`, `Audit Metadata`, and
+  `Status Definitions` sheets.
+
+The workbook retains artifact sizes, modification times, SHA-256 checksums,
+stdout/stderr tails, completion/input/protocol hash comparisons, scientific xTB
+settings, scheduler settings, launcher checksums, and inferred failure
+signatures. A campaign marked `ATTENTION` has inconsistent or missing completion
+data and should not be treated as finished merely because an `xtbfinal.xyz` file
+exists.
 
 ### Regenerating only the xTB audit and carousel
 

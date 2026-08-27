@@ -129,21 +129,26 @@ def main(argv=None)->int:
         help="report path without extension (default: ROOT/agglomeration_xtb_audit)",
     )
     i.add_argument(
+        "--no-slurm",
+        action="store_true",
+        help="skip optional sacct correlation and audit filesystem/log evidence only",
+    )
+    i.add_argument(
+        "--log-tail-lines",
+        type=int,
+        default=30,
+        help="lines retained from each xTB stdout/stderr log (default: 30)",
+    )
+    i.add_argument(
         "--timeout",
         type=float,
         default=300.0,
-        help=(
-            "seconds to allow each campaign's audit_xtb_runs.py to run before "
-            "flagging that campaign as ERROR instead of hanging (default: 300)"
-        ),
+        help="seconds allowed for each campaign audit (default: 300)",
     )
     i.add_argument(
         "--strict",
         action="store_true",
-        help=(
-            "exit with a non-zero status if any campaign could not be audited "
-            "(ERROR) or any case needs attention"
-        ),
+        help="return nonzero when campaigns fail audit or cases need attention",
     )
     i=sub.add_parser("archive-runs")
     i.add_argument("roots",nargs="+",type=Path,help="prepared/work roots to archive")
@@ -305,11 +310,18 @@ def main(argv=None)->int:
                 )
         elif a.command=="audit-agglomerations":
             from .agglomeration_audit import audit_agglomerations
-            report=audit_agglomerations(a.root, a.output_prefix, timeout=a.timeout)
-            if a.strict:
-                error_campaigns=sum(1 for row in report["campaign_results"] if row["campaign_status"]=="ERROR")
-                if error_campaigns or report["attention"]:
-                    return 1
+            report = audit_agglomerations(
+                a.root,
+                a.output_prefix,
+                include_slurm=not a.no_slurm,
+                log_tail_lines=a.log_tail_lines,
+                timeout=a.timeout,
+            )
+            if a.strict and (
+                any(row["campaign_status"] == "ERROR" for row in report["campaign_results"])
+                or report["attention"]
+            ):
+                return 1
         elif a.command=="archive-runs":
             from .archive import create_run_archive
             result=create_run_archive(a.roots,a.output,force=a.force)
