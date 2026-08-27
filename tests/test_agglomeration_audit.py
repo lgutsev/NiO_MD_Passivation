@@ -71,6 +71,8 @@ def test_audit_agglomerations_consolidates_campaigns(tmp_path, capsys):
         "Overview",
         "Campaigns",
         "Incomplete Cases",
+        "Attention",
+        "Pending",
         "All Cases",
         "Case Integrity",
         "Artifacts",
@@ -78,6 +80,9 @@ def test_audit_agglomerations_consolidates_campaigns(tmp_path, capsys):
         "Protocols",
         "Resources",
         "Slurm Jobs",
+        "Status Counts",
+        "Campaign Issues",
+        "Scan Warnings",
         "Audit Metadata",
         "Status Definitions",
     ]

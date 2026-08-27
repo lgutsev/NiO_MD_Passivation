@@ -822,6 +822,16 @@ def _write_workbook(path: Path, report: dict) -> None:
     incomplete_sheet = add_table_sheet(
         "Incomplete Cases", report["incomplete_cases"], incomplete_case_fields
     )
+    add_table_sheet(
+        "Attention",
+        report["attention_cases"],
+        incomplete_case_fields,
+    )
+    add_table_sheet(
+        "Pending",
+        report["pending_cases"],
+        incomplete_case_fields,
+    )
     all_cases_sheet = add_table_sheet("All Cases", report["case_results"], case_fields)
     integrity_fields = [
         "campaign", "array_index", "case", "work_directory", "status",
@@ -835,6 +845,27 @@ def _write_workbook(path: Path, report: dict) -> None:
     add_table_sheet("Protocols", report["protocol_results"], protocol_fields)
     add_table_sheet("Resources", report["resource_results"], resource_fields)
     add_table_sheet("Slurm Jobs", report["slurm_jobs"], slurm_fields)
+    status_counts = [
+        {"scope": "campaign", "status": status, "count": count}
+        for status, count in sorted(report["campaign_counts_by_status"].items())
+    ]
+    status_counts.extend(
+        {"scope": "case", "status": status, "count": count}
+        for status, count in sorted(
+            Counter(str(row.get("status", "UNKNOWN")) for row in report["case_results"]).items()
+        )
+    )
+    add_table_sheet("Status Counts", status_counts, ["scope", "status", "count"])
+    add_table_sheet(
+        "Campaign Issues",
+        report["campaign_issues"],
+        campaign_fields,
+    )
+    add_table_sheet(
+        "Scan Warnings",
+        [{"warning": warning} for warning in report["scan_warnings"]],
+        ["warning"],
+    )
     metadata = [
         {"key": "schema_version", "value": report["schema_version"], "meaning": "Audit report schema"},
         {"key": "generated_by", "value": report["generated_by"], "meaning": "Installed package version"},
