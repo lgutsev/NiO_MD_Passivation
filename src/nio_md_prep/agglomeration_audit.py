@@ -1117,7 +1117,16 @@ def _case_size_hint(case: str) -> int:
     return 0
 
 
-def _rescue_pool_script(*, partition: str, account: str, walltime: str, pool_workers: int, cpus: int) -> str:
+def _rescue_pool_script(
+    *, output_dir: Path, partition: str, account: str, walltime: str, pool_workers: int, cpus: int
+) -> str:
+    # Slurm copies an sbatch script into a per-job spool directory before
+    # running it, so `$(dirname "$0")` resolves to that spool path at
+    # runtime, not to output_dir -- the case list living alongside the
+    # script would then be "not found". Bake the absolute output_dir in at
+    # generation time instead, the same way the per-campaign pool script
+    # (run_xtb_pool.sbatch) bakes in its campaign root.
+    root = shlex.quote(str(output_dir.resolve()))
     return f'''#!/bin/bash
 #SBATCH -p {partition}
 #SBATCH --nodes=1
@@ -1132,7 +1141,7 @@ def _rescue_pool_script(*, partition: str, account: str, walltime: str, pool_wor
 #SBATCH -e rescue-pool.%j.err
 
 set -euo pipefail
-root=$(cd "$(dirname "$0")" && pwd)
+root={root}
 cases_tsv="$root/rescue_cases.tsv"
 : "${{RESCUE_ROWS:?submit with RESCUE_ROWS set by the rescue-agglomerations command}}"
 if [[ ! "$RESCUE_ROWS" =~ ^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$ ]]; then
@@ -1255,6 +1264,7 @@ def write_rescue_pool(
     pool_script = output_dir / "rescue_xtb_pool.sbatch"
     pool_script.write_text(
         _rescue_pool_script(
+            output_dir=output_dir,
             partition=partition,
             account=account,
             walltime=walltime,

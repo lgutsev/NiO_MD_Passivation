@@ -274,6 +274,15 @@ def test_rescue_agglomerations_orders_largest_aggregate_first_across_campaigns(t
     assert "#SBATCH --exclusive" in script_text
     assert "#SBATCH -t 72:00:00" in script_text
 
+    # Regression: Slurm copies an sbatch script into a per-job spool
+    # directory before running it, so `$(dirname "$0")` resolves to that
+    # spool path at runtime, not to output_dir -- `rescue_cases.tsv`
+    # alongside the script is then "not found". The script must instead
+    # bake in output_dir's absolute path at generation time.
+    root_line = next(line for line in script_text.splitlines() if line.startswith("root="))
+    assert "dirname" not in root_line
+    assert str(pool_script.parent.resolve()) in root_line
+
 
 def test_write_rescue_pool_rejects_node_cpus_not_divisible_by_cpus(tmp_path):
     try:
