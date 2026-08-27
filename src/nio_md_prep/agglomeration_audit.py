@@ -444,7 +444,7 @@ def _case_diagnostics(
 
 def _campaign_protocol_rows(campaign_label: str, manifest: dict) -> list[dict]:
     rows = []
-    for section in ("xtb", "vasp_md", "agglomeration"):
+    for section in ("xtb", "vasp_md", "vasp_training", "agglomeration"):
         for key, value in _flatten("", manifest.get(section, {})):
             rows.append(
                 {

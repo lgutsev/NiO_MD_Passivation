@@ -36,16 +36,31 @@ def _agglomeration_completion_message(
             f"{completed_cases} structure case(s)."
         )
     if manifest.get("xtb", {}).get("enabled", False):
-        schedules = manifest.get("vasp_md", {}).get("schedules", [])
-        stage_count = completed_cases * len(schedules)
-        schedule_text = ", ".join(schedules)
+        structures = [
+            structure
+            for replica in manifest.get("replicas", [])
+            for structure in replica.get("structures", [])
+            if structure.get("path")
+        ]
+        legacy_jobs_per_case = len(manifest.get("vasp_md", {}).get("schedules", []))
+        job_count = sum(
+            int(structure.get("vasp_job_count", legacy_jobs_per_case))
+            for structure in structures
+        )
+        default_mode = "vasp_md" if legacy_jobs_per_case else "unknown"
+        modes = sorted(
+            {
+                str(structure.get("vasp_training_mode", default_mode))
+                for structure in structures
+            }
+        )
         launcher = output / manifest.get("vasp_launcher", "launch_vasp_runs.sh")
         verb = "regenerated" if regenerated_vasp else "created"
         return (
             f"Agglomeration launch-ready VASP folders {verb} under {case_root}: "
-            f"{completed_cases} structure case(s), {stage_count} temperature-stage "
-            f"run folder(s) ({schedule_text}). Each structure case contains "
-            f"submit_temperature_jobs.sh. Preview submissions with {launcher} "
+            f"{completed_cases} structure case(s), {job_count} VASP job folder(s); "
+            f"training modes: {', '.join(modes)}. Each structure case contains "
+            f"submit_vasp_jobs.sh. Preview submissions with {launcher} "
             f"--dry-run; launch with confirmation using {launcher}."
         )
     return (
@@ -112,10 +127,13 @@ def main(argv=None)->int:
     i.add_argument("--packed-xyz",type=Path,help="use a supplied ordered Packmol XYZ for a one-replica offline build")
     i.add_argument(
         "--regenerate-vasp",
+        "--regenerate-vasp-training",
+        dest="regenerate_vasp",
         action="store_true",
         help=(
-            "rebuild VASP folders and the campaign launcher from completed xTB "
-            "results in an existing output directory"
+            "rebuild VASP training folders and the campaign launcher from completed "
+            "xTB results in an existing output directory; applies the default hybrid "
+            "MD/single-point policy"
         ),
     )
     i=sub.add_parser(

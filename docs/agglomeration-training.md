@@ -188,16 +188,24 @@ This regenerates `audit_xtb_runs.py`, `launch_xtb.sh`,
 overlaid on the campaign's recorded scientific xTB settings, so changing the
 launcher cannot silently change an in-progress xTB protocol.
 
-The rerun converts `xtbfinal.xyz` automatically; no separate XYZ-to-POSCAR
-command is needed. It validates the xTB atom order and rejects a quenched
-structure with
-an intermolecular O--O distance below 2.2 A or any molecule whose nearest
-molecular neighbor is farther than 6.0 A. It then creates three VASP stages:
-a 300 K hold, a 300-to-400 K heating ramp, and a 400 K hold. The latter is
-submitted with an `afterok` dependency and copies the heating `CONTCAR` to its
-own `POSCAR`. Run `submit_temperature_jobs.sh` inside a completed case to submit
-all three jobs. A completed campaign also contains a root launcher covering
-every structure case. Preview every `sbatch` command without submitting:
+The rerun validates xTB atom order and rejects a structure with an
+intermolecular O--O distance below 2.2 A or any molecule whose nearest
+molecular neighbor is farther than 6.0 A. VASP training then follows the
+default hybrid policy:
+
+- `n02`, `n03`, and `n04` receive full VASP MD: a 300 K hold, a 300-to-400 K
+  heating ramp, and a dependent 400 K hold.
+- `n06` and `n08` receive six independent VASP single-point calculations.
+  Two are the terminal unbiased-MD and optimized xTB structures; the remaining
+  four are greedily diversity-selected from the final 40% of the unbiased xTB
+  trajectory using intermolecular center-distance descriptors.
+
+This avoids disproportionately expensive ab initio MD for the largest
+aggregates while retaining large-aggregate energy/force labels. The policy is
+configurable with `[vasp_training]`. Each case has `submit_vasp_jobs.sh`; MD
+cases retain `submit_temperature_jobs.sh` for compatibility. A completed
+campaign also contains a root launcher covering every job. Preview every
+`sbatch` command without submitting:
 
 ```bash
 agglomeration/me-4pacz/launch_vasp_runs.sh --dry-run
@@ -216,21 +224,23 @@ still submitted with an `afterok` dependency on its corresponding heating job.
 
 Older campaigns whose root manifest is already `COMPLETE` can be upgraded or
 rebuilt in place without rerunning Packmol or xTB. Repeat the original command
-with `--regenerate-vasp`:
+with `--regenerate-vasp-training` (an explicit alias for
+`--regenerate-vasp`):
 
 ```bash
 nio-md-prep prepare-agglomeration \
   examples/agglomeration/me-4pacz.toml \
   --reference-dir /path/to/working/vasp-reference \
   --output agglomeration/me-4pacz \
-  --regenerate-vasp
+  --regenerate-vasp-training
 ```
 
-The command reuses the existing completed `xtbfinal.xyz` files, rebuilds the
-temperature-stage VASP inputs, and creates or refreshes
-`launch_vasp_runs.sh`. For a mixed campaign, repeat both slug-qualified
+The command reuses the existing completed xTB checkpoints and trajectory,
+rebuilds the VASP training inputs under the hybrid policy, and creates or
+refreshes `launch_vasp_runs.sh`. It does not rerun Packmol or xTB. For a mixed
+campaign, repeat both slug-qualified
 `--reference-dir` arguments and the original `--vasp-template-slug`, then add
-the same `--regenerate-vasp` flag. This mode tolerates a changed TOML checksum
+the same regeneration flag. This mode tolerates a changed TOML checksum
 for older campaigns; Packmol geometry and xTB protocol fingerprints still
 invalidate incompatible intermediates instead of silently reusing them.
 In explicit regeneration mode, an existing `xtbfinal.xyz` accompanied by
@@ -348,8 +358,8 @@ nio-md-prep prepare-agglomeration \
   --output agglomeration/me-4pacz-dcz-4p
 ```
 
-The second invocation validates the two-species xTB atom order and creates the
-same 300 K, heating, and 400 K VASP stages used by single-species campaigns.
+The second invocation validates the two-species xTB atom order and applies the
+same size-aware hybrid VASP training policy used by single-species campaigns.
 The xTB protocol fingerprints the generated mixed-species `input.xyz`. If a
 reference POSCAR or packed geometry changes during a resumable campaign, the
 launcher archives the stale initial optimization and downstream xTB products

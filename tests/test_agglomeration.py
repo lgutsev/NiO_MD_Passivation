@@ -19,7 +19,9 @@ from nio_md_prep.agglomeration import (
     _compact_molecule_centers,
     _head_bias_for_replica,
     _nearest_phosphonate_pairs,
+    _prepare_vasp_single_points,
     _potcar_elements,
+    _select_large_aggregate_frames,
     _split_light_heavy,
     _write_xtb_batch,
     prepare_agglomeration,
@@ -130,6 +132,89 @@ def _distance(first, second):
 
 def _file_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_large_aggregate_vasp_training_selects_diverse_xtb_frames(tmp_path):
+    xtb = tmp_path / "xtb"
+    xtb.mkdir()
+    symbols = ["C"] * 6
+    instances = [
+        MoleculeInstance("sam", index, index, index + 1, (12.0,))
+        for index in range(6)
+    ]
+
+    def xyz_frame(frame: int, comment: str) -> str:
+        coordinates = [
+            (index * 3.0 + frame * 0.025 * index * index, 0.1 * frame * index, 0.0)
+            for index in range(6)
+        ]
+        rows = [
+            f"{symbol} {x:.10f} {y:.10f} {z:.10f}"
+            for symbol, (x, y, z) in zip(symbols, coordinates)
+        ]
+        return f"6\n{comment}\n" + "\n".join(rows) + "\n"
+
+    (xtb / "xtb_unbiased.trj").write_text(
+        "".join(xyz_frame(index, f"frame {index}") for index in range(10)),
+        encoding="utf-8",
+    )
+    (xtb / "xtbmd_unbiased_last.xyz").write_text(
+        xyz_frame(10, "unbiased terminal"), encoding="utf-8"
+    )
+    (xtb / "xtbfinal.xyz").write_text(
+        xyz_frame(11, "optimized terminal"), encoding="utf-8"
+    )
+    selected = _select_large_aggregate_frames(
+        xtb,
+        symbols,
+        instances,
+        frame_count=6,
+        trajectory_fraction=0.6,
+        minimum_distance=0.7,
+    )
+    assert len(selected) == 6
+    assert [item["source"] for item in selected[-2:]] == [
+        "xtbmd_unbiased_last.xyz",
+        "xtbfinal.xyz",
+    ]
+    assert len(
+        {item["trajectory_frame_index"] for item in selected[:-2]}
+    ) == 4
+
+    reference = tmp_path / "reference"
+    reference.mkdir()
+    (reference / "INCAR").write_text(
+        "ENCUT = 520\nIBRION = 0\nNSW = 3000\nTEBEG = 300\nTEEND = 400\n",
+        encoding="utf-8",
+    )
+    (reference / "KPOINTS").write_text("Gamma\n", encoding="utf-8")
+    (reference / "POTCAR").write_text("synthetic\n", encoding="utf-8")
+    (reference / "runvasp.sh").write_text(
+        "#!/bin/bash\n#SBATCH -J old\nsrun vasp_gam\n", encoding="utf-8"
+    )
+    case = tmp_path / "case"
+    records = _prepare_vasp_single_points(
+        case,
+        reference,
+        selected,
+        instances,
+        vacuum=8.0,
+        job_prefix="n06_r000",
+        md_dump_fs=50.0,
+    )
+    assert len(records) == 6
+    assert subprocess.run(
+        [str(case / "submit_vasp_jobs.sh"), "--count"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip() == "6"
+    incar = (case / "single_points/frame_000/INCAR").read_text()
+    assert "IBRION = -1" in incar
+    assert "NSW = 0" in incar
+    assert "TEBEG" not in incar and "TEEND" not in incar
+    selection = json.loads((case / "vasp_training_selection.json").read_text())
+    assert selection["mode"] == "xtb_selected_single_points"
 
 
 def _potcar(path: Path, elements: list[str]) -> Path:
@@ -252,9 +337,9 @@ def test_completion_message_reports_created_vasp_folders(tmp_path):
     )
     assert f"created under {tmp_path / 'campaign/vasp_runs'}" in message
     assert "2 structure case(s)" in message
-    assert "6 temperature-stage run folder(s)" in message
-    assert "300K, 300K_to_400K, 400K" in message
-    assert "submit_temperature_jobs.sh" in message
+    assert "6 VASP job folder(s)" in message
+    assert "training modes: vasp_md" in message
+    assert "submit_vasp_jobs.sh" in message
     assert "launch_vasp_runs.sh --dry-run" in message
     regenerated = _agglomeration_completion_message(
         manifest,
@@ -689,7 +774,7 @@ def test_mixed_agglomeration_resumes_from_xtb_into_vasp_runs(tmp_path):
             "SBATCH_LOG": str(sbatch_log),
         },
     )
-    assert "All VASP stage jobs were submitted." in launched.stdout
+    assert "All VASP jobs were submitted." in launched.stdout
     assert len(sbatch_log.read_text(encoding="utf-8").splitlines()) == 3
 
     campaign_launcher.unlink()

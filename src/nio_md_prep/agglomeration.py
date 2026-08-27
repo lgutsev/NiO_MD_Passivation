@@ -1478,7 +1478,9 @@ def _write_raw_xyz(
     )
 
 
-def _replace_incar_tags(path: Path, updates: dict[str, int | float]) -> None:
+def _replace_incar_tags(
+    path: Path, updates: dict[str, int | float | str | None]
+) -> None:
     text = path.read_text(encoding="utf-8")
     keys = {key.upper() for key in updates}
     kept = [
@@ -1490,8 +1492,166 @@ def _replace_incar_tags(path: Path, updates: dict[str, int | float]) -> None:
         )
     ]
     kept.extend(["", "# Generated agglomeration MD schedule"])
-    kept.extend(f"{key} = {value}" for key, value in updates.items())
+    kept.extend(
+        f"{key} = {value}" for key, value in updates.items() if value is not None
+    )
     path.write_text("\n".join(kept).rstrip() + "\n", encoding="utf-8")
+
+
+def _read_xyz_trajectory(
+    path: Path,
+) -> list[tuple[list[str], list[tuple[float, float, float]], str]]:
+    """Read every complete frame from an xTB-format XYZ trajectory."""
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    frames = []
+    cursor = 0
+    while cursor < len(lines):
+        while cursor < len(lines) and not lines[cursor].strip():
+            cursor += 1
+        if cursor >= len(lines):
+            break
+        try:
+            atoms = int(lines[cursor].strip())
+        except ValueError as error:
+            raise ValueError(
+                f"{path}:{cursor + 1}: invalid XYZ trajectory atom count"
+            ) from error
+        stop = cursor + atoms + 2
+        if stop > len(lines):
+            raise ValueError(f"{path}: incomplete XYZ trajectory frame")
+        symbols = []
+        coordinates = []
+        for line_number, row in enumerate(lines[cursor + 2 : stop], cursor + 3):
+            fields = row.split()
+            if len(fields) < 4:
+                raise ValueError(f"{path}:{line_number}: malformed XYZ row")
+            symbols.append(fields[0])
+            point = tuple(float(value) for value in fields[1:4])
+            if not all(math.isfinite(value) for value in point):
+                raise ValueError(f"{path}:{line_number}: non-finite coordinate")
+            coordinates.append(point)
+        frames.append((symbols, coordinates, lines[cursor + 1]))
+        cursor = stop
+    if not frames:
+        raise ValueError(f"{path}: no complete XYZ trajectory frames")
+    return frames
+
+
+def _aggregate_descriptor(
+    coordinates: list[tuple[float, float, float]],
+    instances: list[MoleculeInstance],
+) -> tuple[float, ...]:
+    """Rotation/translation-invariant descriptor of aggregate organization."""
+    centers = []
+    for instance in instances:
+        points = coordinates[instance.start : instance.stop]
+        centers.append(
+            tuple(sum(point[axis] for point in points) / len(points) for axis in range(3))
+        )
+    return tuple(
+        sorted(
+            _distance(centers[left], centers[right])
+            for left in range(len(centers))
+            for right in range(left + 1, len(centers))
+        )
+    )
+
+
+def _descriptor_distance(left: tuple[float, ...], right: tuple[float, ...]) -> float:
+    if len(left) != len(right):
+        raise ValueError("aggregate descriptors have different dimensions")
+    return math.sqrt(sum((a - b) ** 2 for a, b in zip(left, right)))
+
+
+def _select_large_aggregate_frames(
+    xtb_work: Path,
+    expected_symbols: list[str],
+    instances: list[MoleculeInstance],
+    *,
+    frame_count: int,
+    trajectory_fraction: float,
+    minimum_distance: float,
+) -> list[dict]:
+    """Select diverse late-unbiased xTB frames plus terminal checkpoints."""
+    if frame_count < 2:
+        raise ValueError("large_aggregate_frames_per_replica must be at least 2")
+    if not 0 < trajectory_fraction <= 1:
+        raise ValueError("large_aggregate_trajectory_fraction must be in (0, 1]")
+    trajectory = xtb_work / "xtb_unbiased.trj"
+    if not trajectory.is_file():
+        raise FileNotFoundError(
+            f"{trajectory}: completed large aggregate needs its unbiased xTB trajectory"
+        )
+    raw_frames = _read_xyz_trajectory(trajectory)
+    start = max(0, len(raw_frames) - max(1, math.ceil(len(raw_frames) * trajectory_fraction)))
+    candidates = []
+    for frame_index, (symbols, coordinates, comment) in enumerate(raw_frames[start:], start):
+        if symbols != expected_symbols:
+            raise ValueError(f"{trajectory}: frame {frame_index} changed atom ordering")
+        contact = _closest_intermolecular_pair(coordinates, symbols, instances)
+        if contact["minimum_distance_angstrom"] + 1.0e-8 < minimum_distance:
+            continue
+        candidates.append(
+            {
+                "source": "xtb_unbiased.trj",
+                "trajectory_frame_index": frame_index,
+                "trajectory_frames_total": len(raw_frames),
+                "comment": comment,
+                "symbols": symbols,
+                "coordinates": coordinates,
+                "descriptor": _aggregate_descriptor(coordinates, instances),
+            }
+        )
+    terminal = []
+    for source_name, label in (
+        ("xtbmd_unbiased_last.xyz", "unbiased_last"),
+        ("xtbfinal.xyz", "final_optimized"),
+    ):
+        source_path = xtb_work / source_name
+        if not source_path.is_file():
+            raise FileNotFoundError(f"{source_path}: required large-aggregate checkpoint")
+        symbols, coordinates = _read_xyz(source_path)
+        if symbols != expected_symbols:
+            raise ValueError(f"{source_path}: atom ordering differs from xTB input")
+        terminal.append(
+            {
+                "source": source_name,
+                "trajectory_frame_index": None,
+                "trajectory_frames_total": len(raw_frames),
+                "comment": label,
+                "symbols": symbols,
+                "coordinates": coordinates,
+                "descriptor": _aggregate_descriptor(coordinates, instances),
+            }
+        )
+    selected = list(terminal)
+    remaining = []
+    for candidate in candidates:
+        if any(
+            _descriptor_distance(candidate["descriptor"], other["descriptor"])
+            <= 1.0e-8
+            for other in selected + remaining
+        ):
+            continue
+        remaining.append(candidate)
+    while remaining and len(selected) < frame_count:
+        chosen = max(
+            remaining,
+            key=lambda item: min(
+                _descriptor_distance(item["descriptor"], kept["descriptor"])
+                for kept in selected
+            ),
+        )
+        selected.insert(len(selected) - 2, chosen)
+        remaining.remove(chosen)
+    if len(selected) < frame_count:
+        raise ValueError(
+            f"{trajectory}: only {len(selected)} valid/distinct training frame(s) "
+            f"available; requested {frame_count}"
+        )
+    for item in selected:
+        item.pop("descriptor", None)
+    return selected[:frame_count]
 
 
 def _set_slurm_job_name(path: Path, job_name: str) -> None:
@@ -1512,6 +1672,116 @@ def _set_slurm_job_name(path: Path, job_name: str) -> None:
         lines.insert(1, replacement)
         text = "\n".join(lines) + "\n"
     path.write_text(text, encoding="utf-8")
+
+
+def _write_independent_vasp_submitter(
+    case: Path, directories: list[Path], *, legacy_temperature_name: bool = False
+) -> Path:
+    relative = [str(directory.relative_to(case)) for directory in directories]
+    quoted = " ".join(shlex.quote(item) for item in relative)
+    script_text = f'''#!/bin/bash
+set -euo pipefail
+root=$(cd "$(dirname "$0")" && pwd)
+runs=({quoted})
+if [[ "${{1:-}}" == "--count" ]]; then
+  echo "${{#runs[@]}}"
+  exit 0
+elif [[ "${{1:-}}" == "--dry-run" ]]; then
+  for run in "${{runs[@]}}"; do
+    printf '(cd %q && sbatch --parsable runvasp.sh)\n' "$root/$run"
+  done
+  exit 0
+elif [[ $# -ne 0 ]]; then
+  echo "usage: $0 [--count|--dry-run]" >&2
+  exit 2
+fi
+for run in "${{runs[@]}}"; do
+  job=$(cd "$root/$run" && sbatch --parsable runvasp.sh)
+  printf 'submitted %s=%s\n' "$run" "$job"
+done
+'''
+    submitter = case / "submit_vasp_jobs.sh"
+    submitter.write_text(script_text, encoding="utf-8")
+    submitter.chmod(0o755)
+    if legacy_temperature_name:
+        legacy = case / "submit_temperature_jobs.sh"
+        legacy.write_text(script_text, encoding="utf-8")
+        legacy.chmod(0o755)
+    return submitter
+
+
+def _prepare_vasp_single_points(
+    case: Path,
+    reference: Path,
+    selected_frames: list[dict],
+    instances: list[MoleculeInstance],
+    *,
+    vacuum: float,
+    job_prefix: str,
+    md_dump_fs: float,
+) -> list[dict]:
+    root = case / "single_points"
+    records = []
+    directories = []
+    for frame_number, frame in enumerate(selected_frames):
+        directory = root / f"frame_{frame_number:03d}"
+        directory.mkdir(parents=True, exist_ok=True)
+        copied = _copy_reference(reference, directory)
+        coordinates = frame["coordinates"]
+        cell = _fixed_cell({1.0: coordinates}, vacuum)
+        centered = _center_in_cell(coordinates, cell)
+        ordered = _ordered_atoms(frame["symbols"], centered, instances)
+        title = f"{job_prefix} xTB-selected training frame {frame_number:03d}"
+        _write_poscar(ordered, cell, directory / "POSCAR", title)
+        _write_xyz(ordered, directory / "structure.xyz", title)
+        _replace_incar_tags(
+            directory / "INCAR",
+            {
+                "IBRION": -1,
+                "NSW": 0,
+                "TEBEG": None,
+                "TEEND": None,
+                "SMASS": None,
+                "MDALGO": None,
+                "POTIM": None,
+            },
+        )
+        _set_slurm_job_name(directory / "runvasp.sh", f"{job_prefix}_sp{frame_number:02d}"[:64])
+        trajectory_index = frame["trajectory_frame_index"]
+        record = {
+            "path": str(directory.relative_to(case)),
+            "calculation_type": "single_point",
+            "source": frame["source"],
+            "trajectory_frame_index": trajectory_index,
+            "trajectory_frames_total": frame["trajectory_frames_total"],
+            "estimated_unbiased_time_ps": (
+                None
+                if trajectory_index is None
+                else trajectory_index * md_dump_fs / 1000.0
+            ),
+            "cell_angstrom": cell,
+            "atoms": len(frame["symbols"]),
+            "reference_files": copied,
+        }
+        (directory / "training_frame.json").write_text(
+            json.dumps(record, indent=2) + "\n", encoding="utf-8"
+        )
+        records.append(record)
+        directories.append(directory)
+    _write_independent_vasp_submitter(case, directories)
+    (case / "vasp_training_selection.json").write_text(
+        json.dumps(
+            {
+                "mode": "xtb_selected_single_points",
+                "selection": "greedy farthest-point sampling of molecule-center distances",
+                "frames": records,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return records
 
 
 def _prepare_vasp_schedule(
@@ -1559,28 +1829,30 @@ def _prepare_vasp_schedule(
                 "reference_files": copied,
             }
         )
-    submit = case / "submit_temperature_jobs.sh"
-    submit.write_text(
-        """#!/bin/bash
+    submit_text = """#!/bin/bash
 set -euo pipefail
 root=$(cd "$(dirname "$0")" && pwd)
-if [[ "${1:-}" == "--dry-run" ]]; then
+if [[ "${1:-}" == "--count" ]]; then
+  echo 3
+  exit 0
+elif [[ "${1:-}" == "--dry-run" ]]; then
   printf '(cd %q && sbatch --parsable runvasp.sh)\n' "$root/300K"
   printf '(cd %q && sbatch --parsable runvasp.sh)\n' "$root/400K/01_heat_300_to_400K"
   printf '(cd %q && sbatch --parsable --dependency=afterok:<HEAT_JOB_ID> runvasp.sh)\n' "$root/400K/02_hold_400K"
   exit 0
 elif [[ $# -ne 0 ]]; then
-  echo "usage: $0 [--dry-run]" >&2
+  echo "usage: $0 [--count|--dry-run]" >&2
   exit 2
 fi
 job300=$(cd "$root/300K" && sbatch --parsable runvasp.sh)
 jobheat=$(cd "$root/400K/01_heat_300_to_400K" && sbatch --parsable runvasp.sh)
 job400=$(cd "$root/400K/02_hold_400K" && sbatch --parsable "--dependency=afterok:${jobheat}" runvasp.sh)
 printf 'submitted 300K=%s heat=%s 400K-hold=%s\n' "$job300" "$jobheat" "$job400"
-""",
-        encoding="utf-8",
-    )
-    submit.chmod(0o755)
+"""
+    for submit_name in ("submit_temperature_jobs.sh", "submit_vasp_jobs.sh"):
+        submit = case / submit_name
+        submit.write_text(submit_text, encoding="utf-8")
+        submit.chmod(0o755)
     hold_launcher = case / "400K/02_hold_400K/runvasp.sh"
     if hold_launcher.is_file():
         text = hold_launcher.read_text(encoding="utf-8")
@@ -1623,32 +1895,36 @@ done
 
 root=$(cd "$(dirname "$0")" && pwd)
 case_root="$root/{case_root_name}"
-cases=()
+submitters=()
 while IFS= read -r -d '' submit; do
-  cases+=("$(dirname "$submit")")
-done < <(find "$case_root" -type f -name submit_temperature_jobs.sh -print0 | sort -z)
+  submitters+=("$submit")
+done < <(find "$case_root" -type f -name submit_vasp_jobs.sh -print0 | sort -z)
 
-if [[ ${{#cases[@]}} -eq 0 ]]; then
-  echo "no submit_temperature_jobs.sh files found under $case_root" >&2
+if [[ ${{#submitters[@]}} -eq 0 ]]; then
+  echo "no submit_vasp_jobs.sh files found under $case_root" >&2
   exit 1
 fi
 
-case_count=${{#cases[@]}}
-stage_count=$((case_count * 3))
-printf 'Found %d structure case(s) and %d VASP stage job(s) under %s\n' \
-  "$case_count" "$stage_count" "$case_root"
+case_count=${{#submitters[@]}}
+job_count=0
+for submit in "${{submitters[@]}}"; do
+  count=$(bash "$submit" --count)
+  job_count=$((job_count + count))
+done
+printf 'Found %d structure case(s) and %d VASP job(s) under %s\n' \
+  "$case_count" "$job_count" "$case_root"
 
 if [[ "$dry_run" == true ]]; then
   echo "DRY RUN: no jobs will be submitted"
-  for case_dir in "${{cases[@]}}"; do
-    bash "$case_dir/submit_temperature_jobs.sh" --dry-run
+  for submit in "${{submitters[@]}}"; do
+    bash "$submit" --dry-run
   done
   exit 0
 fi
 
 if [[ "$assume_yes" != true ]]; then
   reply=""
-  if ! read -r -p "Submit all $stage_count VASP stage jobs? [y/N] " reply; then
+  if ! read -r -p "Submit all $job_count VASP jobs? [y/N] " reply; then
     reply=""
   fi
   case "$reply" in
@@ -1660,11 +1936,11 @@ if [[ "$assume_yes" != true ]]; then
   esac
 fi
 
-for case_dir in "${{cases[@]}}"; do
-  printf 'Submitting %s\n' "$case_dir"
-  bash "$case_dir/submit_temperature_jobs.sh"
+for submit in "${{submitters[@]}}"; do
+  printf 'Submitting %s\n' "$(dirname "$submit")"
+  bash "$submit"
 done
-echo "All VASP stage jobs were submitted."
+echo "All VASP jobs were submitted."
 ''',
         encoding="utf-8",
     )
@@ -3202,6 +3478,28 @@ def prepare_agglomeration(
     heating_steps = int(md_settings.get("heating_steps", 1000))
     if hold_steps < 1 or heating_steps < 1:
         raise ValueError("vasp_md hold_steps and heating_steps must be positive")
+    training_settings = config.get("vasp_training", {})
+    if not isinstance(training_settings, dict):
+        raise ValueError("vasp_training must be a TOML table")
+    md_max_aggregate_size = int(
+        training_settings.get("md_max_aggregate_size", 4)
+    )
+    large_frames_per_replica = int(
+        training_settings.get("large_aggregate_frames_per_replica", 6)
+    )
+    large_trajectory_fraction = float(
+        training_settings.get("large_aggregate_trajectory_fraction", 0.40)
+    )
+    if md_max_aggregate_size < 1:
+        raise ValueError("vasp_training.md_max_aggregate_size must be positive")
+    if large_frames_per_replica < 2:
+        raise ValueError(
+            "vasp_training.large_aggregate_frames_per_replica must be at least 2"
+        )
+    if not 0 < large_trajectory_fraction <= 1:
+        raise ValueError(
+            "vasp_training.large_aggregate_trajectory_fraction must be in (0, 1]"
+        )
     total_replicas = sum(spec.replicas for spec in specs)
     if packed_xyz is not None and total_replicas != 1:
         raise ValueError(
@@ -3483,6 +3781,8 @@ def prepare_agglomeration(
                 )
                 variant = _center_in_cell(raw_variant, cell)
                 case = family_cases / case_name
+                if regenerate_vasp and case.is_dir():
+                    shutil.rmtree(case)
                 case.mkdir(parents=True, exist_ok=resume)
                 ordered = _ordered_atoms(symbols, variant, instances)
                 title = (
@@ -3556,15 +3856,44 @@ def prepare_agglomeration(
                     for template in spec.templates
                 ]
                 schedules = []
+                training_mode = "structure_only" if structures_only else "static_structure"
+                aggregate_size = sum(template.count for template in spec.templates)
                 if not structures_only and xtb_enabled:
-                    schedules = _prepare_vasp_schedule(
-                        case,
-                        calculation_reference,
-                        case / "POSCAR",
-                        job_prefix=f"{spec.name}_r{replica:03d}",
-                        hold_steps=hold_steps,
-                        heating_steps=heating_steps,
-                    )
+                    if calculation_reference is None:
+                        raise ValueError("VASP preparation requires a calculation reference")
+                    if aggregate_size <= md_max_aggregate_size:
+                        training_mode = "vasp_md"
+                        schedules = _prepare_vasp_schedule(
+                            case,
+                            calculation_reference,
+                            case / "POSCAR",
+                            job_prefix=f"{spec.name}_r{replica:03d}",
+                            hold_steps=hold_steps,
+                            heating_steps=heating_steps,
+                        )
+                    else:
+                        training_mode = "xtb_selected_single_points"
+                        if xtb_relative is None:
+                            raise ValueError("large-aggregate selection requires xTB")
+                        selected_frames = _select_large_aggregate_frames(
+                            output / xtb_relative,
+                            expected_symbols,
+                            instances,
+                            frame_count=large_frames_per_replica,
+                            trajectory_fraction=large_trajectory_fraction,
+                            minimum_distance=float(
+                                xtb_settings.get("minimum_distance_angstrom", 0.70)
+                            ),
+                        )
+                        schedules = _prepare_vasp_single_points(
+                            case,
+                            calculation_reference,
+                            selected_frames,
+                            instances,
+                            vacuum=spec.vacuum,
+                            job_prefix=f"{spec.name}_r{replica:03d}",
+                            md_dump_fs=float(xtb_settings.get("md_dump_fs", 50.0)),
+                        )
                 elif not structures_only:
                     copied = _copy_reference(calculation_reference, case)
                 case_manifest = {
@@ -3588,7 +3917,9 @@ def prepare_agglomeration(
                         if xtb_enabled
                         else {"enabled": False}
                     ),
-                    "vasp_md_schedule": schedules,
+                    "vasp_training_mode": training_mode,
+                    "vasp_jobs": schedules,
+                    "vasp_md_schedule": schedules if training_mode == "vasp_md" else [],
                     "cell_angstrom": [cell, cell, cell],
                     "minimum_intermolecular_distance_angstrom": nearest,
                     "sanity_status": sanity["status"],
@@ -3611,6 +3942,7 @@ def prepare_agglomeration(
                     "center_scale": scale,
                     "atoms": len(symbols),
                     "molecules": len(instances),
+                    "vasp_training_mode": training_mode,
                     "cell_angstrom": cell,
                     "minimum_intermolecular_distance_angstrom": nearest,
                 }
@@ -3670,6 +4002,8 @@ def prepare_agglomeration(
                         "case": case_name,
                         "path": str(relative),
                         "center_scale": scale,
+                        "vasp_training_mode": training_mode,
+                        "vasp_job_count": len(schedules),
                         "minimum_intermolecular_distance_angstrom": nearest,
                         "sanity_status": sanity["status"],
                     }
@@ -3774,6 +4108,17 @@ def prepare_agglomeration(
             "hold_steps": hold_steps,
             "heating_steps": heating_steps,
             "schedules": ["300K", "300K_to_400K", "400K"],
+        },
+        "vasp_training": {
+            "policy": "hybrid_md_and_xtb_selected_single_points",
+            "md_max_aggregate_size": md_max_aggregate_size,
+            "large_aggregate_frames_per_replica": large_frames_per_replica,
+            "large_aggregate_trajectory_fraction": large_trajectory_fraction,
+            "large_aggregate_sources": [
+                "late xtb_unbiased.trj diversity frames",
+                "xtbmd_unbiased_last.xyz",
+                "xtbfinal.xyz",
+            ],
         },
         "output_mode": "structures_only" if structures_only else "vasp_runs",
         "case_root": case_root_name,

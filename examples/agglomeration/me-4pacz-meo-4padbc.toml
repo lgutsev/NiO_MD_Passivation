@@ -33,6 +33,11 @@ pool_workers = 8
 heating_steps = 1000
 hold_steps = 3000
 
+[vasp_training]
+md_max_aggregate_size = 4
+large_aggregate_frames_per_replica = 6
+large_aggregate_trajectory_fraction = 0.40
+
 [[agglomerates]]
 name = "mixed-1-1"
 replicas = 3
