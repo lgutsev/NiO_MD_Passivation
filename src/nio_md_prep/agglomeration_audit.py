@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import socket
 import subprocess
@@ -398,6 +399,7 @@ def _case_diagnostics(
         status = str(source.get("status", "UNKNOWN"))
         case_row = {
             "campaign": campaign_label,
+            "campaign_path": str(campaign.resolve()),
             "array_index": array_index,
             "case": relative,
             "work_directory": str(work.resolve()),
@@ -778,13 +780,13 @@ def _write_workbook(path: Path, report: dict) -> None:
         "counts_by_status", "data_consistent", "audit_seconds", "detail",
     ]
     incomplete_case_fields = [
-        "campaign", "array_index", "case", "status", "detail", "likely_issue",
-        "next_action", "latest_log", "latest_log_modified_utc", "latest_job_id",
-        "slurm_state", "slurm_exit_code", "slurm_reason", "slurm_elapsed",
-        "slurm_time_limit",
+        "campaign", "campaign_path", "array_index", "case", "status", "detail",
+        "likely_issue", "next_action", "latest_log", "latest_log_modified_utc",
+        "latest_job_id", "slurm_state", "slurm_exit_code", "slurm_reason",
+        "slurm_elapsed", "slurm_time_limit",
     ]
     case_fields = [
-        "campaign", "array_index", "case", "work_directory", "status",
+        "campaign", "campaign_path", "array_index", "case", "work_directory", "status",
         "safe_complete", "charge", "uhf", "detail", "next_action",
         "likely_issue", "latest_log", "latest_log_modified_utc", "latest_log_tail",
         "input_hash_match", "protocol_stage_hash_match",
@@ -1066,3 +1068,315 @@ def audit_agglomerations(
         f"{resource_csv_path}, {slurm_csv_path}, {json_path}, and {workbook_path}"
     )
     return report
+
+
+# ---------------------------------------------------------------------------
+# Cross-campaign pooled rescue
+#
+# The per-campaign carousel (run_xtb_pool.sbatch, written by
+# nio_md_prep.agglomeration._write_xtb_batch) shares one wall-clock timer
+# across every case in that campaign. Cases run smallest-first, so the
+# largest aggregates (which take the longest per xTB stage, MD included)
+# start last and are the ones most likely to still be mid-protocol -- with
+# no error of their own -- when the shared allocation's walltime runs out.
+# Symptom: cases stuck at STEERING_COMPLETE/INITIAL_OPT_COMPLETE etc. with no
+# error in their own logs, disproportionately the largest aggregates.
+#
+# rescue_agglomerations() pulls every pending (optionally attention) case
+# from across ALL campaigns under a root, orders the largest aggregates
+# first, and packs them into one or more dedicated node(s) with a long
+# walltime and no smaller cases ahead of them in the queue -- each rescued
+# case still runs through the exact same idempotent per-case workflow
+# (run_xtb_array.sbatch), so it only redoes whatever stage was interrupted.
+# ---------------------------------------------------------------------------
+
+DEFAULT_RESCUE_CPUS = 8
+DEFAULT_RESCUE_NODE_CPUS = 64
+DEFAULT_RESCUE_WALLTIME = "72:00:00"
+
+
+def _case_size_hint(case: str) -> int:
+    """Best-effort aggregate-size proxy used to schedule expensive cases first.
+
+    Case paths follow "xtb/<aggregate>/<replica>" (e.g. "xtb/n08/r000_s00_1p000"
+    for a pure campaign, "xtb/mixed-2-2/r000_s00_1p000" for a mixed one). The
+    digits in the aggregate name are the molecule count(s) and the cheapest
+    available proxy for wall-clock cost, since a bigger aggregate means a
+    bigger system for every xTB stage, MD included. A case whose aggregate
+    name doesn't match a known convention returns 0 and sorts after every
+    recognized case -- this is scheduling advice, not a correctness gate.
+    """
+    parts = str(case).split("/")
+    segment = parts[1] if len(parts) > 1 else parts[0]
+    match = re.match(r"^n(\d+)$", segment)
+    if match:
+        return int(match.group(1))
+    match = re.match(r"^mixed-(\d+)-(\d+)$", segment)
+    if match:
+        return int(match.group(1)) + int(match.group(2))
+    return 0
+
+
+def _rescue_pool_script(*, partition: str, account: str, walltime: str, pool_workers: int, cpus: int) -> str:
+    return f'''#!/bin/bash
+#SBATCH -p {partition}
+#SBATCH --nodes=1
+#SBATCH --ntasks={pool_workers}
+#SBATCH --ntasks-per-node={pool_workers}
+#SBATCH --cpus-per-task={cpus}
+#SBATCH --exclusive
+#SBATCH -t {walltime}
+#SBATCH -A {account}
+#SBATCH -J "xtb_rescue_pool"
+#SBATCH -o rescue-pool.%j.out
+#SBATCH -e rescue-pool.%j.err
+
+set -euo pipefail
+root=$(cd "$(dirname "$0")" && pwd)
+cases_tsv="$root/rescue_cases.tsv"
+: "${{RESCUE_ROWS:?submit with RESCUE_ROWS set by the rescue-agglomerations command}}"
+if [[ ! "$RESCUE_ROWS" =~ ^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$ ]]; then
+  echo "invalid RESCUE_ROWS: $RESCUE_ROWS" >&2
+  exit 2
+fi
+
+rows=()
+IFS=',' read -r -a chunks <<< "$RESCUE_ROWS"
+for chunk in "${{chunks[@]}}"; do
+  if [[ "$chunk" == *-* ]]; then
+    first=${{chunk%-*}}
+    last=${{chunk#*-}}
+    if ((last < first)); then
+      echo "invalid descending rescue row range: $chunk" >&2
+      exit 2
+    fi
+    for ((row=first; row<=last; row++)); do
+      rows+=("$row")
+    done
+  else
+    rows+=("$chunk")
+  fi
+done
+
+echo "xTB rescue pool: ${{#rows[@]}} selected case(s) across campaigns, "\\
+"{pool_workers} simultaneous worker(s), {cpus} cores per worker."
+echo "Host: $(hostname)"
+date
+
+fifo="${{TMPDIR:-/tmp}}/nio_xtb_rescue_pool.${{SLURM_JOB_ID:-$$}}.fifo"
+rm -f "$fifo"
+mkfifo "$fifo"
+exec 9<>"$fifo"
+rm -f "$fifo"
+for ((slot=0; slot<{pool_workers}; slot++)); do echo >&9; done
+cleanup_pool() {{
+  exec 9>&- 9<&- || true
+}}
+trap cleanup_pool EXIT
+
+pids=()
+for row in "${{rows[@]}}"; do
+  read -r -u 9
+  {{
+    trap 'echo >&9' EXIT
+    line=$(sed -n "$((row + 1))p" "$cases_tsv")
+    IFS=$'\\t' read -r campaign_root array_index case_relative campaign_label <<< "$line"
+    echo ">>> Starting rescue row $row: $campaign_label $case_relative (array index $array_index) at $(date)"
+    set +e
+    srun --exclusive --nodes=1 --ntasks=1 --cpus-per-task={cpus} \\
+      --cpu-bind=cores --kill-on-bad-exit=0 \\
+      env SLURM_ARRAY_TASK_ID="$array_index" SLURM_CPUS_PER_TASK={cpus} \\
+      bash "$campaign_root/run_xtb_array.sbatch"
+    rc=$?
+    set -e
+    if ((rc == 0)); then
+      echo "<<< Finished rescue row $row: $campaign_label $case_relative OK at $(date)"
+    else
+      echo "<<< Finished rescue row $row: $campaign_label $case_relative with ERROR $rc at $(date)" >&2
+    fi
+    exit "$rc"
+  }} &
+  pids+=("$!")
+done
+
+failures=0
+for pid in "${{pids[@]}}"; do
+  if ! wait "$pid"; then
+    failures=$((failures + 1))
+  fi
+done
+date
+if ((failures)); then
+  echo "$failures xTB rescue worker(s) failed." >&2
+  exit 1
+fi
+echo "All selected xTB rescue workers completed successfully."
+'''
+
+
+def write_rescue_pool(
+    cases: list[dict],
+    output_dir: Path,
+    *,
+    cpus: int = DEFAULT_RESCUE_CPUS,
+    node_cpus: int = DEFAULT_RESCUE_NODE_CPUS,
+    walltime: str = DEFAULT_RESCUE_WALLTIME,
+    partition: str = "workq",
+    account: str = "loni_perovsk27",
+) -> dict:
+    """Write a reusable pooled-rescue sbatch script plus its case list.
+
+    One node hosts `node_cpus // cpus` concurrent workers (a FIFO carousel,
+    same mechanism as the per-campaign pool) that pull cases -- across any
+    number of campaigns -- off a shared queue; each still runs through that
+    case's own campaign's run_xtb_array.sbatch, so nothing about the
+    per-case resumable workflow changes. `node_cpus` must divide evenly by
+    `cpus` so every worker gets an equal, un-wasted share of the node
+    (e.g. 8 workers x 8 cores, or 4 workers x 16 cores, both fill 64 cores).
+    """
+    if cpus < 1:
+        raise ValueError("cpus must be positive")
+    if node_cpus < 1 or node_cpus % cpus != 0:
+        raise ValueError(
+            f"node_cpus ({node_cpus}) must be an exact multiple of cpus ({cpus}) "
+            "so every pool worker gets an equal share of the node with nothing "
+            "wasted -- e.g. cpus=8 with 8 workers, or cpus=16 with 4 workers"
+        )
+    workers_per_node = node_cpus // cpus
+    output_dir.mkdir(parents=True, exist_ok=True)
+    cases_tsv = output_dir / "rescue_cases.tsv"
+    cases_tsv.write_text(
+        "".join(
+            f"{case['campaign_path']}\t{case['array_index']}\t{case['case']}\t{case['campaign']}\n"
+            for case in cases
+        ),
+        encoding="utf-8",
+    )
+    pool_script = output_dir / "rescue_xtb_pool.sbatch"
+    pool_script.write_text(
+        _rescue_pool_script(
+            partition=partition,
+            account=account,
+            walltime=walltime,
+            pool_workers=workers_per_node,
+            cpus=cpus,
+        ),
+        encoding="utf-8",
+    )
+    pool_script.chmod(0o755)
+    row_chunks = []
+    for start in range(0, len(cases), workers_per_node):
+        end = min(start + workers_per_node, len(cases)) - 1
+        row_chunks.append(str(start) if end == start else f"{start}-{end}")
+    return {
+        "cases_tsv": cases_tsv,
+        "pool_script": pool_script,
+        "workers_per_node": workers_per_node,
+        "cpus_per_case": cpus,
+        "node_cpus": node_cpus,
+        "nodes_needed": len(row_chunks),
+        "row_chunks": row_chunks,
+    }
+
+
+def rescue_agglomerations(
+    root: Path,
+    *,
+    include_attention: bool = False,
+    cpus: int = DEFAULT_RESCUE_CPUS,
+    node_cpus: int = DEFAULT_RESCUE_NODE_CPUS,
+    walltime: str = DEFAULT_RESCUE_WALLTIME,
+    partition: str = "workq",
+    account: str = "loni_perovsk27",
+    output_dir: Path | None = None,
+    dry_run: bool = False,
+    assume_yes: bool = False,
+    timeout: float = DEFAULT_AUDIT_TIMEOUT_SECONDS,
+) -> dict:
+    """Audit every campaign under root, then queue every incomplete case
+    (largest aggregate first) into one or more dedicated pooled-rescue
+    node(s), bypassing each campaign's own shared carousel entirely.
+    """
+    root = root.resolve()
+    report = audit_agglomerations(root, include_slurm=False, timeout=timeout)
+    cases = list(report["pending_cases"])
+    if include_attention:
+        cases += list(report["attention_cases"])
+    if not cases:
+        scope = "pending or attention" if include_attention else "pending"
+        print(f"No {scope} cases were found; nothing to rescue.")
+        return {"cases": [], "submitted_jobs": []}
+
+    cases.sort(
+        key=lambda case: (
+            -_case_size_hint(str(case["case"])),
+            str(case["campaign"]),
+            int(case["array_index"]),
+        )
+    )
+
+    output_dir = (output_dir or (root / "rescue_xtb")).resolve()
+    pool = write_rescue_pool(
+        cases,
+        output_dir,
+        cpus=cpus,
+        node_cpus=node_cpus,
+        walltime=walltime,
+        partition=partition,
+        account=account,
+    )
+
+    campaign_count = len({str(case["campaign"]) for case in cases})
+    print(
+        f"Rescue pool: {len(cases)} case(s) across {campaign_count} campaign(s), "
+        "largest aggregate first (own carousel bypassed entirely):"
+    )
+    for case in cases:
+        print(
+            f"  {case['campaign']}: {case['case']} [{case['status']}] "
+            f"(size hint {_case_size_hint(str(case['case']))})"
+        )
+    print(
+        f"Layout: {pool['workers_per_node']} worker(s) x {cpus} core(s) = "
+        f"{node_cpus} cores per node, {pool['nodes_needed']} node(s), {walltime} walltime."
+    )
+    print(f"Case list written to {pool['cases_tsv']}; pool script at {pool['pool_script']}.")
+
+    submitted_jobs: list[dict[str, object]] = []
+    for chunk in pool["row_chunks"]:
+        command = ["sbatch", f"--export=ALL,RESCUE_ROWS={chunk}", pool["pool_script"].name]
+        if dry_run:
+            printable = " ".join(shlex.quote(part) for part in command)
+            print(f"Would run: cd {shlex.quote(str(output_dir))} && {printable}")
+            continue
+        if not assume_yes:
+            try:
+                reply = input(f"Submit rescue pool node for case rows {chunk}? [y/N] ").strip().lower()
+            except EOFError:
+                reply = ""
+            if reply not in {"y", "yes"}:
+                print(f"Skipped case rows {chunk}; no job was submitted.")
+                continue
+        result = subprocess.run(
+            command, cwd=output_dir, capture_output=True, text=True, check=False
+        )
+        if result.returncode:
+            print(
+                f"sbatch failed for rows {chunk} (exit {result.returncode}): "
+                f"{(result.stderr or result.stdout).strip()}"
+            )
+            continue
+        print(f"Submitted rows {chunk}: {result.stdout.strip()}")
+        submitted_jobs.append({"rows": chunk, "sbatch_output": result.stdout.strip()})
+
+    return {
+        "cases": cases,
+        "cases_tsv": str(pool["cases_tsv"]),
+        "pool_script": str(pool["pool_script"]),
+        "workers_per_node": pool["workers_per_node"],
+        "cpus_per_case": cpus,
+        "node_cpus": node_cpus,
+        "nodes_needed": pool["nodes_needed"],
+        "row_chunks": pool["row_chunks"],
+        "submitted_jobs": submitted_jobs,
+    }

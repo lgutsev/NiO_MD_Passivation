@@ -150,6 +150,29 @@ def main(argv=None)->int:
         action="store_true",
         help="return nonzero when campaigns fail audit or cases need attention",
     )
+    i=sub.add_parser(
+        "rescue-agglomerations",
+        help=(
+            "queue every incomplete xTB case across every campaign under a root "
+            "into a dedicated pooled-rescue node, largest aggregate first, "
+            "bypassing each campaign's own shared carousel"
+        ),
+    )
+    i.add_argument("root",type=Path,nargs="?",default=Path("."))
+    i.add_argument(
+        "--include-attention",
+        action="store_true",
+        help="also rescue cases already flagged ATTENTION (hash mismatch etc.), not just pending ones",
+    )
+    i.add_argument("--cpus-per-case",type=int,default=8,help="OpenMP cores per rescued case (default: 8)")
+    i.add_argument("--node-cpus",type=int,default=64,help="cores per rescue node; must be an exact multiple of --cpus-per-case (default: 64)")
+    i.add_argument("--walltime",default="72:00:00",help="walltime for each rescue node job (default: 72:00:00)")
+    i.add_argument("--partition",default="workq",help="Slurm partition for rescue node job(s) (default: workq)")
+    i.add_argument("--account",default="loni_perovsk27",help="Slurm account for rescue node job(s)")
+    i.add_argument("--output-dir",type=Path,help="directory for the generated rescue pool script and case list (default: ROOT/rescue_xtb)")
+    i.add_argument("--timeout",type=float,default=300.0,help="seconds allowed for each campaign's discovery audit (default: 300)")
+    i.add_argument("--dry-run",action="store_true",help="print the sbatch command(s) that would run without submitting anything")
+    i.add_argument("--yes","-y",action="store_true",help="submit without an interactive per-node confirmation prompt")
     i=sub.add_parser("archive-runs")
     i.add_argument("roots",nargs="+",type=Path,help="prepared/work roots to archive")
     i.add_argument("--output",type=Path,required=True)
@@ -322,6 +345,21 @@ def main(argv=None)->int:
                 or report["attention"]
             ):
                 return 1
+        elif a.command=="rescue-agglomerations":
+            from .agglomeration_audit import rescue_agglomerations
+            rescue_agglomerations(
+                a.root,
+                include_attention=a.include_attention,
+                cpus=a.cpus_per_case,
+                node_cpus=a.node_cpus,
+                walltime=a.walltime,
+                partition=a.partition,
+                account=a.account,
+                output_dir=a.output_dir,
+                dry_run=a.dry_run,
+                assume_yes=a.yes,
+                timeout=a.timeout,
+            )
         elif a.command=="archive-runs":
             from .archive import create_run_archive
             result=create_run_archive(a.roots,a.output,force=a.force)
