@@ -6,6 +6,7 @@ vacuum_angstrom = 8.0
 minimum_distance_angstrom = 2.5
 compact_to_distance_angstrom = 3.0
 center_scales = [1.00]
+round_replicas_to = 4
 
 [xtb]
 enabled = true
@@ -20,7 +21,7 @@ md_time_ps = 20.0
 head_bias_time_ps = 6.0
 cpus = 8
 omp_stacksize = "1G"
-walltime = "24:00:00"
+walltime = "48:00:00"
 partition = "workq"
 account = "loni_perovsk27"
 array_concurrency = 8

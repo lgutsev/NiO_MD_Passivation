@@ -8,6 +8,7 @@ import math
 import re
 import shlex
 import shutil
+import statistics
 import subprocess
 import tomllib
 from collections import Counter
@@ -278,7 +279,65 @@ def _agglomerate_specs(config: dict) -> tuple[list[AgglomerateSpec], bool]:
                 scales=scales,
             )
         )
+    round_to = int(defaults.get("round_replicas_to", 1))
+    if round_to < 1:
+        raise ValueError("agglomeration.round_replicas_to must be positive")
+    if round_to > 1:
+        specs = _pad_specs_to_multiple(specs, seeds, round_to)
     return specs, bool(explicit)
+
+
+def _pad_specs_to_multiple(
+    specs: list[AgglomerateSpec], seeds: set[int], multiple: int
+) -> list[AgglomerateSpec]:
+    """Pad the smallest agglomerate's replica count so the campaign's total
+    xTB case count is a multiple of `multiple` (opt in via
+    agglomeration.round_replicas_to), instead of leaving a pool carousel job
+    an odd size that wastes allocated node capacity.
+
+    Extra replicas go to the smallest aggregate (by molecule count) since
+    those are the cheapest cases to add, consistent with campaigns already
+    allocating more replicas to smaller, faster aggregates. Only a
+    single-center_scale aggregate is an eligible padding target, since
+    padding by replicas there adds exactly one case per replica; if none
+    qualify without colliding with another family's Packmol seed range, the
+    campaign is left as configured and a ValueError explains why.
+    """
+    total = sum(spec.replicas * len(spec.scales) for spec in specs)
+    remainder = total % multiple
+    if remainder == 0:
+        return specs
+    needed = multiple - remainder
+    order = sorted(
+        range(len(specs)),
+        key=lambda index: sum(template.count for template in specs[index].templates),
+    )
+    for index in order:
+        spec = specs[index]
+        if len(spec.scales) != 1:
+            continue
+        pad_range = set(
+            range(spec.base_seed + spec.replicas, spec.base_seed + spec.replicas + needed)
+        )
+        if pad_range & seeds:
+            continue
+        seeds.update(pad_range)
+        padded = replace(spec, replicas=spec.replicas + needed)
+        specs = list(specs)
+        specs[index] = padded
+        print(
+            f"Padded agglomerate '{spec.name}' from {spec.replicas} to "
+            f"{padded.replicas} replicas so the campaign totals {total + needed} "
+            f"xTB cases (a multiple of {multiple}) instead of leaving pool "
+            "carousel capacity unused."
+        )
+        return specs
+    raise ValueError(
+        f"could not round the campaign to a multiple of {multiple} xTB cases: "
+        "every single-scale agglomerate's padded seed range would collide "
+        "with another family's seeds; adjust base_seed spacing or "
+        "agglomeration.round_replicas_to"
+    )
 
 
 def _write_template_xyz(template: MoleculeTemplate, path: Path) -> None:
@@ -1613,18 +1672,86 @@ echo "All VASP stage jobs were submitted."
     return launcher
 
 
+def _aggregate_size_hint(case_path: str) -> int:
+    """Best-effort molecule-count proxy for an xTB case's aggregate size.
+
+    Case paths follow "xtb/<aggregate>/<replica>" (e.g. "xtb/n08/r000_s00_1p000"
+    for a pure campaign, "xtb/mixed-2-2/r000_s00_1p000" for a mixed one). The
+    digits in the aggregate name are the molecule count(s) and the cheapest
+    available proxy for wall-clock cost, since a bigger aggregate means a
+    bigger system for every xTB stage, MD included. A case whose aggregate
+    name doesn't match a known convention returns 0. Shared with the
+    cross-campaign rescue pool in agglomeration_audit.py, which imports this
+    function rather than duplicating it.
+    """
+    parts = str(case_path).split("/")
+    segment = parts[1] if len(parts) > 1 else parts[0]
+    match = re.match(r"^n(\d+)$", segment)
+    if match:
+        return int(match.group(1))
+    match = re.match(r"^mixed-(\d+)-(\d+)$", segment)
+    if match:
+        return int(match.group(1)) + int(match.group(2))
+    return 0
+
+
+def _split_light_heavy(
+    cases: list[dict], threshold: float | None
+) -> tuple[list[dict], list[dict], float | None]:
+    """Partition xTB cases into (light, heavy) groups by aggregate size.
+
+    A campaign's own largest and smallest aggregates run through the exact
+    same shared-walltime carousel by default, so the largest ones -- which
+    take the longest per xTB stage -- are the ones most likely to still be
+    mid-protocol with no error of their own when a shared allocation's
+    walltime expires (they also queue behind every smaller, already-finished
+    case in a single pool, per array/pool ordering). Splitting the carousel
+    by size means the slow cases get their own walltime budget instead of
+    sharing one with cases that don't need nearly as long.
+
+    `threshold` overrides the split point (heavy = size > threshold) when
+    given (agglomeration.xtb.heavy_size_threshold); otherwise it is the
+    median of the DISTINCT sizes present, so a campaign's own size spread
+    decides the cut rather than a fixed number that might not fit every
+    molecule. Returns everything as "light" with threshold=None when there
+    is nothing meaningful to split: fewer than two distinct recognized
+    sizes, or every case on one side of the threshold.
+    """
+    sizes = sorted({_aggregate_size_hint(case["path"]) for case in cases} - {0})
+    if threshold is None:
+        if len(sizes) < 2:
+            return cases, [], None
+        threshold = statistics.median(sizes)
+    heavy = [case for case in cases if _aggregate_size_hint(case["path"]) > threshold]
+    light = [case for case in cases if _aggregate_size_hint(case["path"]) <= threshold]
+    if not heavy or not light:
+        return cases, [], None
+    return light, heavy, threshold
+
+
 def _write_xtb_batch(output: Path, cases: list[dict], settings: dict) -> dict:
+    heavy_threshold_setting = settings.get("heavy_size_threshold")
+    _, heavy_cases, split_threshold = _split_light_heavy(
+        cases,
+        None if heavy_threshold_setting is None else float(heavy_threshold_setting),
+    )
+    heavy_paths = {case["path"] for case in heavy_cases}
+    split_carousel = bool(heavy_cases)
+
     case_list = output / "xtb_cases.tsv"
     case_list.write_text(
         "".join(
-            f"{item['path']}\t{item['charge']}\t{item['uhf']}\n" for item in cases
+            f"{item['path']}\t{item['charge']}\t{item['uhf']}\t"
+            f"{'heavy' if item['path'] in heavy_paths else 'light'}\n"
+            for item in cases
         ),
         encoding="utf-8",
     )
     account = str(settings.get("account", "loni_perovsk27"))
     partition = str(settings.get("partition", "workq"))
     cpus = int(settings.get("cpus", 8))
-    walltime = str(settings.get("walltime", "24:00:00"))
+    walltime = str(settings.get("walltime", "48:00:00"))
+    heavy_walltime = str(settings.get("heavy_walltime", "72:00:00"))
     gfn = int(settings.get("gfn", 2))
     opt_level = str(settings.get("opt_level", "loose"))
     max_cycles = int(settings.get("max_cycles", 100))
@@ -1904,7 +2031,7 @@ test -s xtbopt.xyz'''
 set -euo pipefail
 root={campaign_root}
 line=$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "$root/xtb_cases.tsv")
-IFS=$'\\t' read -r relative charge uhf <<< "$line"
+IFS=$'\\t' read -r relative charge uhf pool <<< "$line"
 work="$root/$relative"
 cd "$work"
 if {completion_test}; then
@@ -1951,20 +2078,19 @@ fi
     )
     script.chmod(0o755)
 
-    pool = output / "run_xtb_pool.sbatch"
-    pool.write_text(
-        f'''#!/bin/bash
+    def _pool_script_text(job_name: str, log_prefix: str, walltime_value: str) -> str:
+        return f'''#!/bin/bash
 #SBATCH -p {partition}
 #SBATCH --nodes=1
 #SBATCH --ntasks={pool_workers}
 #SBATCH --ntasks-per-node={pool_workers}
 #SBATCH --cpus-per-task={cpus}
 #SBATCH --exclusive
-#SBATCH -t {walltime}
+#SBATCH -t {walltime_value}
 #SBATCH -A {account}
-#SBATCH -J "me4pacz_xtb_pool"
-#SBATCH -o xtb-pool.%j.out
-#SBATCH -e xtb-pool.%j.err
+#SBATCH -J "{job_name}"
+#SBATCH -o {log_prefix}.%j.out
+#SBATCH -e {log_prefix}.%j.err
 
 set -euo pipefail
 root={campaign_root}
@@ -2043,10 +2169,21 @@ if ((failures)); then
   exit 1
 fi
 echo "All selected xTB carousel workers completed successfully."
-''',
-        encoding="utf-8",
+'''
+
+    pool_variants = (
+        [("run_xtb_pool_light.sbatch", "me4pacz_xtb_pool_light", "xtb-pool-light", walltime),
+         ("run_xtb_pool_heavy.sbatch", "me4pacz_xtb_pool_heavy", "xtb-pool-heavy", heavy_walltime)]
+        if split_carousel
+        else [("run_xtb_pool.sbatch", "me4pacz_xtb_pool", "xtb-pool", walltime)]
     )
-    pool.chmod(0o755)
+    for pool_filename, pool_job_name, pool_log_prefix, pool_walltime_value in pool_variants:
+        pool_path = output / pool_filename
+        pool_path.write_text(
+            _pool_script_text(pool_job_name, pool_log_prefix, pool_walltime_value),
+            encoding="utf-8",
+        )
+        pool_path.chmod(0o755)
 
     audit = output / "audit_xtb_runs.py"
     audit.write_text(
@@ -2120,7 +2257,9 @@ def rows() -> list[dict[str, object]]:
     for array_index, raw in enumerate(lines):
         if not raw.strip():
             continue
-        relative, charge, uhf = raw.split("\\t")
+        fields = raw.split("\\t")
+        relative, charge, uhf = fields[0], fields[1], fields[2]
+        pool = fields[3] if len(fields) > 3 else "light"
         status, detail = classify(ROOT / relative)
         result.append(
             {{
@@ -2129,6 +2268,7 @@ def rows() -> list[dict[str, object]]:
                 "status": status,
                 "charge": charge,
                 "uhf": uhf,
+                "pool": pool,
                 "detail": detail,
             }}
         )
@@ -2165,24 +2305,32 @@ def main() -> int:
     parser.add_argument(
         "--summary-only", action="store_true", help="omit per-case status lines"
     )
+    parser.add_argument(
+        "--pool",
+        choices=["light", "heavy"],
+        help="restrict --count-pending/--pending-indices to one carousel pool",
+    )
     args = parser.parse_args()
     audited = rows()
-    pending = sum(row["status"] not in COMPLETE_STATES for row in audited)
-    if args.count_pending:
-        print(pending)
-        return 0
-    if args.pending_indices:
+    if args.count_pending or args.pending_indices:
+        selected = [
+            row for row in audited if args.pool is None or row["pool"] == args.pool
+        ]
+        if args.count_pending:
+            print(sum(row["status"] not in COMPLETE_STATES for row in selected))
+            return 0
         print(
             compact_indices(
                 [
                     int(row["array_index"])
-                    for row in audited
+                    for row in selected
                     if row["status"] not in COMPLETE_STATES
                 ]
             )
         )
         return 0
 
+    pending = sum(row["status"] not in COMPLETE_STATES for row in audited)
     counts = Counter(row["status"] for row in audited)
     completed = len(audited) - pending
     timestamp = datetime.now(timezone.utc).isoformat()
@@ -2197,6 +2345,7 @@ def main() -> int:
                 "status",
                 "charge",
                 "uhf",
+                "pool",
                 "detail",
             ],
         )
@@ -2254,6 +2403,196 @@ if __name__ == "__main__":
     audit.chmod(0o755)
 
     launcher = output / "launch_xtb.sh"
+    if split_carousel:
+        resource_summary = (
+            f"light: {pool_workers}x{cpus} cores, {walltime} walltime; "
+            f"heavy: {pool_workers}x{cpus} cores, {heavy_walltime} walltime"
+        )
+        launcher.write_text(
+            """#!/bin/bash
+set -euo pipefail
+
+root=$(cd "$(dirname "$0")" && pwd)
+audit="$root/audit_xtb_runs.py"
+array="$root/run_xtb_array.sbatch"
+light_pool="$root/run_xtb_pool_light.sbatch"
+heavy_pool="$root/run_xtb_pool_heavy.sbatch"
+dry_run=false
+assume_yes=false
+rescue_indices=""
+rescue_pending=false
+
+usage() {
+  cat <<'EOF'
+Usage: launch_xtb.sh [--dry-run] [--yes]
+       launch_xtb.sh [--dry-run] [--yes] --rescue INDEX[,INDEX,-INDEX...]
+       launch_xtb.sh [--dry-run] [--yes] --rescue-pending
+
+Audit xTB progress and submit resumable work. This campaign's carousel is
+split by aggregate size into a "light" pool job and a "heavy" pool job, each
+with its own walltime, so the slower/larger cases never share a wall-clock
+budget with cases that finish much sooner (and never queue behind them in a
+single shared pool). The selected worker checks each case again and skips a
+case if its current completion marker appeared meanwhile.
+
+--rescue/--rescue-pending submit each named case (or every currently pending
+or attention-needing case) as its own exclusive RESCUE_NODE_CPUS_PLACEHOLDER-core node job
+instead of a shared pooled worker slot. Use this when a case is stuck mid-
+protocol (e.g. steering/unbiased MD complete but nothing progressing further)
+with no error in its own logs -- most likely a carousel/pool scheduling
+artifact rather than a real xTB failure. The same resumable per-case workflow
+runs either way, so this only redoes whatever stage was interrupted.
+EOF
+}
+
+while (($#)); do
+  case "$1" in
+    --dry-run) dry_run=true ;;
+    --yes|-y) assume_yes=true ;;
+    --rescue)
+      rescue_indices="${2:?--rescue requires a comma-separated index list, e.g. 3,7,11-13}"
+      shift
+      ;;
+    --rescue-pending) rescue_pending=true ;;
+    --help|-h) usage; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
+  esac
+  shift
+done
+
+if [[ "$rescue_pending" == true || -n "$rescue_indices" ]]; then
+  "$audit" --summary-only
+else
+  "$audit"
+fi
+
+if [[ "$rescue_pending" == true || -n "$rescue_indices" ]]; then
+  if [[ "$rescue_pending" == true ]]; then
+    rescue_indices=$("$audit" --pending-indices)
+  fi
+  if [[ -z "$rescue_indices" ]]; then
+    echo "No pending/attention case indices to rescue; nothing was submitted."
+    exit 0
+  fi
+  expanded=()
+  IFS=',' read -r -a chunks <<< "$rescue_indices"
+  for chunk in "${chunks[@]}"; do
+    if [[ "$chunk" == *-* ]]; then
+      first=${chunk%-*}
+      last=${chunk#*-}
+      if ((last < first)); then
+        echo "invalid descending rescue index range: $chunk" >&2
+        exit 2
+      fi
+      for ((index=first; index<=last; index++)); do
+        expanded+=("$index")
+      done
+    else
+      expanded+=("$chunk")
+    fi
+  done
+  echo "Rescuing ${#expanded[@]} case(s) individually on RESCUE_PARTITION_PLACEHOLDER as exclusive RESCUE_NODE_CPUS_PLACEHOLDER-core node job(s): $rescue_indices"
+  for index in "${expanded[@]}"; do
+    line_number=$((index + 1))
+    case_line=$(sed -n "${line_number}p" "$root/xtb_cases.tsv")
+    if [[ -z "$case_line" ]]; then
+      echo "index $index has no matching row in xtb_cases.tsv; skipped" >&2
+      continue
+    fi
+    case_relative="${case_line%%$'\t'*}"
+    if [[ "$dry_run" == true ]]; then
+      printf 'Would run: cd %q && sbatch --nodes=1 --ntasks=1 --cpus-per-task=RESCUE_NODE_CPUS_PLACEHOLDER --exclusive -p RESCUE_PARTITION_PLACEHOLDER -t RESCUE_WALLTIME_PLACEHOLDER -A RESCUE_ACCOUNT_PLACEHOLDER --array=%q -J %q %q  # %s\n' \
+        "$root" "$index" "xtb_rescue_${index}" "$(basename "$array")" "$case_relative"
+      continue
+    fi
+    if [[ "$assume_yes" != true ]]; then
+      reply=""
+      if ! read -r -p "Submit exclusive rescue job for case index $index ($case_relative)? [y/N] " reply; then
+        reply=""
+      fi
+      case "$reply" in
+        y|Y|yes|YES|Yes) ;;
+        *) echo "Skipped case index $index ($case_relative)."; continue ;;
+      esac
+    fi
+    (cd "$root" && sbatch --nodes=1 --ntasks=1 --cpus-per-task=RESCUE_NODE_CPUS_PLACEHOLDER --exclusive \
+      -p RESCUE_PARTITION_PLACEHOLDER -t RESCUE_WALLTIME_PLACEHOLDER -A RESCUE_ACCOUNT_PLACEHOLDER \
+      --array="$index" -J "xtb_rescue_${index}" "$(basename "$array")")
+    echo "Submitted rescue job for case index $index ($case_relative)."
+  done
+  echo "Re-run $audit at any time to check progress."
+  exit 0
+fi
+
+light_pending=$("$audit" --count-pending --pool light)
+light_indices=$("$audit" --pending-indices --pool light)
+heavy_pending=$("$audit" --count-pending --pool heavy)
+heavy_indices=$("$audit" --pending-indices --pool heavy)
+total_pending=$((light_pending + heavy_pending))
+if ((total_pending == 0)); then
+  echo "All xTB cases are safely complete; no work was submitted."
+  exit 0
+fi
+
+echo "$total_pending xTB case(s) remain pending or require attention "\
+"($light_pending light, $heavy_pending heavy)."
+echo "Submission layout: RESOURCE_SUMMARY_PLACEHOLDER"
+if [[ "$dry_run" == true ]]; then
+  echo "DRY RUN: no jobs will be submitted."
+fi
+
+submit_pool() {
+  local label="$1" pending="$2" indices="$3" script="$4"
+  if ((pending == 0)); then
+    return 0
+  fi
+  echo "Selected $label pending case indices: $indices"
+  if [[ "$dry_run" == true ]]; then
+    printf 'Would run: cd %q && sbatch --export=%q %q\n' \
+      "$root" "ALL,XTB_ARRAY_INDICES=$indices" "$(basename "$script")"
+    return 0
+  fi
+  if [[ "$assume_yes" != true ]]; then
+    local reply=""
+    if ! read -r -p "Submit the resumable $label xTB work now? [y/N] " reply; then
+      reply=""
+    fi
+    case "$reply" in
+      y|Y|yes|YES|Yes) ;;
+      *) echo "$label submission cancelled; no jobs were launched."; return 0 ;;
+    esac
+  fi
+  (cd "$root" && sbatch --export="ALL,XTB_ARRAY_INDICES=$indices" "$(basename "$script")")
+  echo "$label xTB work submitted."
+}
+
+submit_pool "light" "$light_pending" "$light_indices" "$light_pool"
+submit_pool "heavy" "$heavy_pending" "$heavy_indices" "$heavy_pool"
+echo "Re-run $audit at any time to check progress."
+"""
+            .replace("RESOURCE_SUMMARY_PLACEHOLDER", resource_summary)
+            .replace("RESCUE_NODE_CPUS_PLACEHOLDER", str(node_cpus))
+            .replace("RESCUE_PARTITION_PLACEHOLDER", partition)
+            .replace("RESCUE_WALLTIME_PLACEHOLDER", heavy_walltime)
+            .replace("RESCUE_ACCOUNT_PLACEHOLDER", account),
+            encoding="utf-8",
+        )
+        launcher.chmod(0o755)
+        return {
+            "account": account,
+            "partition": partition,
+            "cpus": cpus,
+            "walltime": walltime,
+            "heavy_walltime": heavy_walltime,
+            "heavy_size_threshold": split_threshold,
+            "split_carousel": split_carousel,
+            "array_concurrency": concurrency,
+            "omp_stacksize": omp_stacksize,
+            "node_pool_enabled": node_pool_enabled,
+            "node_cpus": node_cpus,
+            "pool_workers": pool_workers,
+        }
+
     if node_pool_enabled:
         resource_summary = (
             f"workq carousel: {pool_workers} workers x {cpus} cores "
@@ -2428,6 +2767,9 @@ echo "xTB work submitted. Re-run $audit at any time to check progress."
         "partition": partition,
         "cpus": cpus,
         "walltime": walltime,
+        "heavy_walltime": heavy_walltime,
+        "heavy_size_threshold": split_threshold,
+        "split_carousel": split_carousel,
         "array_concurrency": concurrency,
         "omp_stacksize": omp_stacksize,
         "node_pool_enabled": node_pool_enabled,
@@ -2441,6 +2783,8 @@ _XTB_LAUNCH_RESOURCE_KEYS = {
     "partition",
     "cpus",
     "walltime",
+    "heavy_walltime",
+    "heavy_size_threshold",
     "array_concurrency",
     "omp_stacksize",
     "node_pool_enabled",
@@ -2482,9 +2826,10 @@ def regenerate_xtb_launch_files(config_path: Path, output: Path) -> Path:
         if not raw.strip():
             continue
         fields = raw.split("\t")
-        if len(fields) != 3:
+        if len(fields) not in (3, 4):
             raise ValueError(
-                f"{case_list}:{line_number}: expected path, charge, and UHF"
+                f"{case_list}:{line_number}: expected path, charge, and UHF "
+                "(optionally followed by a pool label)"
             )
         relative = Path(fields[0])
         if relative.is_absolute() or ".." in relative.parts:
@@ -2512,9 +2857,14 @@ def regenerate_xtb_launch_files(config_path: Path, output: Path) -> Path:
     manifest["xtb"] = settings
     manifest["xtb_launcher_regenerated"] = True
     manifest["xtb_launcher"] = "launch_xtb.sh"
-    manifest["xtb_pool_launcher"] = (
-        "run_xtb_pool.sbatch" if settings["node_pool_enabled"] else None
-    )
+    if not settings["node_pool_enabled"]:
+        manifest["xtb_pool_launcher"] = None
+    elif settings.get("split_carousel"):
+        manifest["xtb_pool_launcher"] = [
+            "run_xtb_pool_light.sbatch", "run_xtb_pool_heavy.sbatch"
+        ]
+    else:
+        manifest["xtb_pool_launcher"] = "run_xtb_pool.sbatch"
     manifest_path.write_text(
         json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
     )

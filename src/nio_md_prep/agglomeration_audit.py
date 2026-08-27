@@ -17,6 +17,8 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Iterable
 
+from .agglomeration import _aggregate_size_hint as _case_size_hint
+
 
 ATTENTION_STATES = {
     "FINAL_UNMARKED",
@@ -1093,28 +1095,6 @@ def audit_agglomerations(
 DEFAULT_RESCUE_CPUS = 8
 DEFAULT_RESCUE_NODE_CPUS = 64
 DEFAULT_RESCUE_WALLTIME = "72:00:00"
-
-
-def _case_size_hint(case: str) -> int:
-    """Best-effort aggregate-size proxy used to schedule expensive cases first.
-
-    Case paths follow "xtb/<aggregate>/<replica>" (e.g. "xtb/n08/r000_s00_1p000"
-    for a pure campaign, "xtb/mixed-2-2/r000_s00_1p000" for a mixed one). The
-    digits in the aggregate name are the molecule count(s) and the cheapest
-    available proxy for wall-clock cost, since a bigger aggregate means a
-    bigger system for every xTB stage, MD included. A case whose aggregate
-    name doesn't match a known convention returns 0 and sorts after every
-    recognized case -- this is scheduling advice, not a correctness gate.
-    """
-    parts = str(case).split("/")
-    segment = parts[1] if len(parts) > 1 else parts[0]
-    match = re.match(r"^n(\d+)$", segment)
-    if match:
-        return int(match.group(1))
-    match = re.match(r"^mixed-(\d+)-(\d+)$", segment)
-    if match:
-        return int(match.group(1)) + int(match.group(2))
-    return 0
 
 
 def _rescue_pool_script(

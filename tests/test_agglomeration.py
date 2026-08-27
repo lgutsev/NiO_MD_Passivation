@@ -15,10 +15,12 @@ import pytest
 from nio_md_prep.agglomeration import (
     MoleculeInstance,
     _agglomerate_specs,
+    _aggregate_size_hint,
     _compact_molecule_centers,
     _head_bias_for_replica,
     _nearest_phosphonate_pairs,
     _potcar_elements,
+    _split_light_heavy,
     _write_xtb_batch,
     prepare_agglomeration,
 )
@@ -848,7 +850,7 @@ count = 2
     assert compact_pending.stdout.strip() == "0,2-3"
     case_list.write_text(original_case_list, encoding="utf-8")
     assert json.loads((output / "xtb_progress.json").read_text())["pending"] == 1
-    assert "array_index,case,status,charge,uhf,detail" in (
+    assert "array_index,case,status,charge,uhf,pool,detail" in (
         output / "xtb_progress.csv"
     ).read_text()
     submit_dry_run = subprocess.run(
@@ -1220,6 +1222,161 @@ def test_size_stratified_campaign_allocates_more_small_replicas(tmp_path, monkey
         assert len(list(work.glob("replica_*"))) == replicas
     assert "number 2" in (output / "packmol/n02/replica_000/packmol.inp").read_text()
     assert "number 8" in (output / "packmol/n08/replica_000/packmol.inp").read_text()
+
+
+def test_round_replicas_to_pads_smallest_aggregate_to_a_multiple_of_four(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setattr("nio_md_prep.agglomeration.shutil.which", lambda _: None)
+    config = tmp_path / "pad.toml"
+    config.write_text(
+        """[agglomeration]
+packmol_tolerance_angstrom = 3.0
+vacuum_angstrom = 8.0
+minimum_distance_angstrom = 2.5
+compact_to_distance_angstrom = 3.0
+center_scales = [1.00]
+round_replicas_to = 4
+
+[[agglomerates]]
+name = "n02"
+replicas = 3
+base_seed = 2405202
+radius_angstrom = 11.5
+molecules = [{ slug = "me-4pacz", count = 2 }]
+
+[[agglomerates]]
+name = "n03"
+replicas = 3
+base_seed = 2405303
+radius_angstrom = 13.0
+molecules = [{ slug = "me-4pacz", count = 3 }]
+
+[[agglomerates]]
+name = "n08"
+replicas = 1
+base_seed = 2405808
+radius_angstrom = 18.5
+molecules = [{ slug = "me-4pacz", count = 8 }]
+""",
+        encoding="utf-8",
+    )
+    output = tmp_path / "campaign"
+    manifest_path = prepare_agglomeration(config, output, structures_only=True)
+    manifest = json.loads(manifest_path.read_text())
+    # 3 + 3 + 1 = 7 configured replicas; the smallest family (n02, cheapest to
+    # pad) gains one to reach 8 -- a multiple of 4 -- instead of leaving an
+    # odd-sized carousel/pool job.
+    assert {family["name"]: family["replicas"] for family in manifest["agglomerates"]} == {
+        "n02": 4,
+        "n03": 3,
+        "n08": 1,
+    }
+    assert len(manifest["replicas"]) == 8
+    assert "Padded agglomerate 'n02' from 3 to 4 replicas" in capsys.readouterr().out
+
+
+def test_round_replicas_to_is_a_noop_when_already_a_multiple_of_four(tmp_path, monkeypatch):
+    monkeypatch.setattr("nio_md_prep.agglomeration.shutil.which", lambda _: None)
+    output = tmp_path / "campaign"
+    manifest_path = prepare_agglomeration(
+        ROOT / "examples/agglomeration/me-4pacz.toml",
+        output,
+        structures_only=True,
+    )
+    manifest = json.loads(manifest_path.read_text())
+    # me-4pacz.toml sets round_replicas_to = 4 and already totals 12 replicas
+    # (3+3+3+2+1... no: 3+3+3+2+1=12), so padding must not change anything.
+    assert {family["name"]: family["replicas"] for family in manifest["agglomerates"]} == {
+        "n02": 3, "n03": 3, "n04": 3, "n06": 2, "n08": 1,
+    }
+
+
+def test_aggregate_size_hint_parses_pure_and_mixed_case_names():
+    assert _aggregate_size_hint("xtb/n08/r000_s00_1p000") == 8
+    assert _aggregate_size_hint("xtb/n02/r000_s00_1p000") == 2
+    assert _aggregate_size_hint("xtb/mixed-2-2/r000_s00_1p000") == 4
+    assert _aggregate_size_hint("xtb/unrecognized-name/r000") == 0
+
+
+def test_split_light_heavy_uses_median_of_distinct_sizes():
+    cases = [
+        {"path": f"xtb/n{size:02d}/r{index:03d}"}
+        for size, count in [(2, 3), (3, 3), (4, 3), (6, 2), (8, 1)]
+        for index in range(count)
+    ]
+    light, heavy, threshold = _split_light_heavy(cases, None)
+    assert threshold == 4
+    assert {_aggregate_size_hint(c["path"]) for c in heavy} == {6, 8}
+    assert {_aggregate_size_hint(c["path"]) for c in light} == {2, 3, 4}
+    assert len(light) + len(heavy) == len(cases)
+
+
+def test_split_light_heavy_no_split_with_one_recognized_size():
+    cases = [{"path": f"xtb/n02/r{i:03d}"} for i in range(3)]
+    light, heavy, threshold = _split_light_heavy(cases, None)
+    assert heavy == []
+    assert light == cases
+    assert threshold is None
+
+
+def test_write_xtb_batch_splits_carousel_by_aggregate_size(tmp_path):
+    output = tmp_path / "campaign"
+    output.mkdir()
+    cases = [
+        {"path": f"xtb/n{size:02d}/r{index:03d}_s00_1p000", "charge": "0", "uhf": "0"}
+        for size, count in [(2, 3), (3, 3), (4, 3), (6, 2), (8, 1)]
+        for index in range(count)
+    ]
+    result = _write_xtb_batch(output, cases, {})
+
+    assert result["split_carousel"] is True
+    assert result["heavy_size_threshold"] == 4
+    assert result["heavy_walltime"] == "72:00:00"
+    assert (output / "run_xtb_pool_light.sbatch").is_file()
+    assert (output / "run_xtb_pool_heavy.sbatch").is_file()
+    assert not (output / "run_xtb_pool.sbatch").exists()
+    subprocess.run(["bash", "-n", str(output / "run_xtb_pool_light.sbatch")], check=True)
+    subprocess.run(["bash", "-n", str(output / "run_xtb_pool_heavy.sbatch")], check=True)
+    subprocess.run(["bash", "-n", str(output / "launch_xtb.sh")], check=True)
+
+    heavy_text = (output / "run_xtb_pool_heavy.sbatch").read_text(encoding="utf-8")
+    assert "#SBATCH -t 72:00:00" in heavy_text
+    light_text = (output / "run_xtb_pool_light.sbatch").read_text(encoding="utf-8")
+    assert "#SBATCH -t 48:00:00" in light_text
+
+    rows = (output / "xtb_cases.tsv").read_text(encoding="utf-8").splitlines()
+    assert len(rows) == 12
+    pools = {row.split("\t")[0]: row.split("\t")[3] for row in rows}
+    assert pools["xtb/n08/r000_s00_1p000"] == "heavy"
+    assert pools["xtb/n06/r000_s00_1p000"] == "heavy"
+    assert pools["xtb/n02/r000_s00_1p000"] == "light"
+
+    for case in cases:
+        (output / case["path"]).mkdir(parents=True)
+    audit_result = subprocess.run(
+        [sys.executable, str(output / "audit_xtb_runs.py")],
+        cwd=output, check=True, capture_output=True, text=True,
+    )
+    assert "12 pending" in audit_result.stdout
+    light_indices = subprocess.run(
+        [sys.executable, str(output / "audit_xtb_runs.py"), "--pending-indices", "--pool", "light"],
+        cwd=output, check=True, capture_output=True, text=True,
+    )
+    heavy_indices = subprocess.run(
+        [sys.executable, str(output / "audit_xtb_runs.py"), "--pending-indices", "--pool", "heavy"],
+        cwd=output, check=True, capture_output=True, text=True,
+    )
+    assert light_indices.stdout.strip() == "0-8"
+    assert heavy_indices.stdout.strip() == "9-11"
+
+    dry_run = subprocess.run(
+        [str(output / "launch_xtb.sh"), "--dry-run"],
+        check=True, capture_output=True, text=True,
+    )
+    assert "9 light, 3 heavy" in dry_run.stdout
+    assert "run_xtb_pool_light.sbatch" in dry_run.stdout
+    assert "run_xtb_pool_heavy.sbatch" in dry_run.stdout
 
 
 def test_agglomeration_requires_complete_vasp_reference_by_default(tmp_path):
