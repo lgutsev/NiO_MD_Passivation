@@ -2,32 +2,35 @@
 
 Reproducible molecular-dynamics workflows for phosphonate self-assembled layers on corrugated NiO surfaces.
 
-This repository began as a practical companion to the LAMMPS calculations reported in [Advanced Energy Materials, 2025, 2405367](https://onlinelibrary.wiley.com/doi/10.1002/aenm.202405367) and has also been used in [Energy & Environmental Science, 2026, D6EE00231E](https://pubs.rsc.org/ee/article-abstract/19/6/2069/1232999/Multiphosphorylated-molecules-for-buried-interface?redirectedFrom=fulltext).
+This repository provides a configuration-driven framework for constructing, running, validating, and analyzing classical molecular-dynamics models of phosphonate passivation on NiO. It supports pure SAMs, mixed CoSAMs, matched sequential-deposition systems, and gap-seeded accessibility controls designed to separate molecular access from spontaneous gap-finding. The same code base also includes phosphonate-agglomeration workflows for xTB sampling and VASP training-data preparation for future MLIP development.
 
-It has since grown into a configuration-driven workflow for building, running, validating, and analyzing pure SAM, CoSAM, and sequential-deposition models. The same code base also contains phosphonate-agglomeration tooling for generating xTB/VASP training data for future MLIP work.
+The project originated as a reproducibility framework for the LAMMPS calculations reported in [Advanced Energy Materials, 2025, 2405367](https://onlinelibrary.wiley.com/doi/10.1002/aenm.202405367) and has also been used in [Energy & Environmental Science, 2026, D6EE00231E](https://pubs.rsc.org/ee/article-abstract/19/6/2069/1232999/Multiphosphorylated-molecules-for-buried-interface?redirectedFrom=fulltext).
 
 The root README is intentionally an overview. Detailed methods, production commands, analysis definitions, controls, and training-data workflows live in [`docs/`](docs/README.md).
 
 ## What the repository provides
 
-- reproducible assembly of corrugated NiO + phosphonate systems from reviewed LigParGen inputs;
-- pure Me-4PACz, mixed CoSAM, high-dose controls, and true two-stage sequential deposition;
+- reproducible construction of corrugated NiO + phosphonate systems from reviewed LigParGen inputs;
+- pure Me-4PACz, mixed CoSAM, high-dose loading controls, and true two-stage sequential deposition;
 - staged LAMMPS protocols with moving-wall deposition, independent 300/400 K branches, wall retraction, and relaxed holds;
-- coordinate-based coverage and void-topology analysis;
-- anchor-resolved interfacial structure analysis with force-field-aware reporting policies;
-- experimental LEGO/LEGO2 accessibility controls that deliberately seed secondary molecules into persistent gaps;
+- coordinate-based projected coverage and periodic void-topology analysis;
+- anchor-resolved interfacial structure analysis with force-field-aware interpretation policies;
+- **Gap-seeded I**, a coverage-guided stripe-accessibility control that places secondary molecules over a persistent low-coverage channel before laterally free dynamics;
+- **Gap-seeded II**, a localized 2D-void control that places secondary molecules inside the largest persistent periodic gap before laterally free dynamics;
 - campaign inventory, validation, safe input regeneration, and run archiving;
 - reproducible phosphonate agglomeration generation with xTB sampling and VASP training-set preparation, including mixed agglomerates.
 
 ## Scientific scope
 
-The classical workflow asks three related questions while keeping molecular inventories explicit:
+The classical workflow separates three primary assembly questions while keeping molecular inventories explicit:
 
 1. **Pure SAM:** what film does Me-4PACz form by itself?
-2. **CoSAM:** what happens when Me-4PACz and a secondary ligand compete during the same deposition?
+2. **CoSAM:** what happens when Me-4PACz and a secondary ligand are deposited together and compete during assembly?
 3. **Sequential deposition:** what changes when the secondary ligand is introduced only after an Me-4PACz layer has already formed?
 
-A high-dose pure Me-4PACz system is retained as a loading control. The CoSAM and corresponding sequential system use the same molecular inventory, so their comparison isolates assembly history rather than total loading.
+A high-dose pure Me-4PACz system is retained as a loading control. The CoSAM and corresponding sequential system contain the same molecular inventory, so their comparison isolates assembly history rather than total loading.
+
+Two additional geometric controls probe whether incomplete sequential coverage can arise from limited access to persistent gaps. **Gap-seeded I** biases only the initial lateral placement toward a broad low-coverage channel, whereas **Gap-seeded II** targets the largest localized periodic 2D void. In both cases, subsequent dynamics are laterally unconstrained. These calculations therefore test accessibility under controlled initial conditions; they are not models of unbiased self-assembly kinetics.
 
 The classical model deliberately preserves the physical picture and force-field treatment of the original work. It is useful for packing, coverage, morphology, and comparative structural observables, but it should not be interpreted as a reactive or electronic-structure model. See [`docs/project-design.md`](docs/project-design.md) and [`docs/interfacial-analysis.md`](docs/interfacial-analysis.md) for the modeling assumptions and interpretation limits.
 
@@ -46,8 +49,10 @@ flowchart TD
     E --> H["Sequential layer-2 build"]
     H --> I["Sequential deposition"]
     I --> G
-    J["Phosphonate references"] --> K["Agglomeration + xTB sampling"]
-    K --> L["VASP training data"]
+    G --> J["Gap-seeded accessibility controls"]
+    J --> G
+    K["Phosphonate references"] --> L["Agglomeration + xTB sampling"]
+    L --> M["VASP training data"]
 ```
 
 The original workflow sketch is retained for scientific provenance:
@@ -93,8 +98,8 @@ Start with the [documentation index](docs/README.md).
 | Validation, inventory, archiving, maintenance | [`docs/operations.md`](docs/operations.md) |
 | Coordinate-based SAM coverage | [`docs/coverage-analysis.md`](docs/coverage-analysis.md) |
 | Anchor-resolved interfacial analysis | [`docs/interfacial-analysis.md`](docs/interfacial-analysis.md) |
-| Coverage-guided LEGO control | [`docs/lego-deposition.md`](docs/lego-deposition.md) |
-| Localized 2D-void LEGO2 control | [`docs/lego2-deposition.md`](docs/lego2-deposition.md) |
+| Gap-seeded I: coverage-guided stripe accessibility | [`docs/lego-deposition.md`](docs/lego-deposition.md) |
+| Gap-seeded II: localized periodic 2D-void accessibility | [`docs/lego2-deposition.md`](docs/lego2-deposition.md) |
 | Agglomeration/xTB/VASP training-data workflow | [`docs/agglomeration-training.md`](docs/agglomeration-training.md) |
 
 ## Repository map
@@ -114,7 +119,7 @@ Start with the [documentation index](docs/README.md).
 
 The historical spreadsheet/notebook workflow remains in the repository as provenance, but new production systems should be generated through `nio-md-prep`. Generated prepared trees are intentionally not versioned; manifests, hashes, validators, inventories, and archive helpers are provided so that production calculations can still be audited and reproduced.
 
-The repository is provided as-is so that the published calculations can be reproduced and the surface, passivants, loading, or protocol can be adapted to new tasks.
+The repository is provided as-is so that the published calculations can be reproduced and the surface, passivants, loading, or deposition protocol can be adapted to new tasks.
 
 ## Contact
 
