@@ -109,12 +109,14 @@ sbatch scripts/run_sequential_hold_400K_array.sbatch
 
 No builder submits a simulation job and no deposition job submits a hold job. Each stage stops after its own work so its output can be inspected before the next scientific step.
 
-## Experimental seeded-accessibility controls
+## Gap-seeded accessibility controls
 
-The optional LEGO controls deliberately place secondary material into an identified gap. They test geometric accessibility and should not be interpreted as evidence that the secondary species would spontaneously find that gap in an unbiased simulation.
+Two optional controls deliberately place secondary material into persistent low-coverage regions identified from the completed Me-4PACz film. They test whether incomplete gap filling is limited by lateral access/search and should not be interpreted as evidence that the secondary species would spontaneously find those regions in an unbiased trajectory.
 
-- [`lego-deposition.md`](lego-deposition.md): 1D coverage-guided channel seeding.
-- [`lego2-deposition.md`](lego2-deposition.md): periodic 2D void-component seeding.
+- [`lego-deposition.md`](lego-deposition.md): **Gap-seeded I**, which targets the widest persistent low-coverage stripe obtained from the `x` occupancy profile.
+- [`lego2-deposition.md`](lego2-deposition.md): **Gap-seeded II**, which targets the largest persistent localized periodic 2D void.
+
+Both controls bias only the initial placement; the subsequent dynamics are laterally unconstrained. Internal script and directory names retain `lego`/`lego2` for backward compatibility.
 
 Default builders:
 
