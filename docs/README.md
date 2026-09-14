@@ -1,24 +1,26 @@
 # Documentation
 
-The root [`README.md`](../README.md) is intentionally a short project overview. This directory contains the working scientific and operational documentation.
+The root [`README.md`](../README.md) provides the project overview. This directory contains the scientific, analysis, and operational documentation needed to reproduce and extend the workflows.
 
 ## Start here
 
-- [`project-design.md`](project-design.md) — scientific picture, supplied systems, composition logic, and classical force field.
-- [`classical-md-workflow.md`](classical-md-workflow.md) — installation, primary/CoSAM construction, sequential deposition, temperature branches, wall retraction, and controls.
+- [`project-design.md`](project-design.md) — scientific model, supplied systems, composition logic, and classical force field.
+- [`classical-md-workflow.md`](classical-md-workflow.md) — installation, primary/CoSAM construction, sequential deposition, temperature branches, wall retraction, and production controls.
 - [`operations.md`](operations.md) — validation, safe input refresh, campaign inventory, archiving, adding passivants, and provenance.
 
 ## Analysis
 
-- [`coverage-analysis.md`](coverage-analysis.md) — coordinate-based projected coverage, uncertainty, void topology, and consolidated workbooks.
-- [`interfacial-analysis.md`](interfacial-analysis.md) — Ni-site ownership, anchoring, orientations, RDFs, kinetics policy, dipole proxy limits, and structure-property summary generation.
+- [`coverage-analysis.md`](coverage-analysis.md) — coordinate-based projected coverage, uncertainty, periodic void topology, and consolidated workbooks.
+- [`interfacial-analysis.md`](interfacial-analysis.md) — Ni-site ownership, anchoring, orientations, RDFs, kinetics policy, dipole-proxy limits, and structure-property summaries.
 
-## Geometric-control experiments
+## Gap-seeded accessibility controls
 
-- [`lego-deposition.md`](lego-deposition.md) — coverage-guided 1D gap seeding.
-- [`lego2-deposition.md`](lego2-deposition.md) — localized periodic 2D-void seeding.
+- [`lego-deposition.md`](lego-deposition.md) — **Gap-seeded I:** coverage-guided placement into the widest persistent low-coverage stripe, followed by laterally unconstrained dynamics.
+- [`lego2-deposition.md`](lego2-deposition.md) — **Gap-seeded II:** placement into the largest persistent periodic 2D void, followed by laterally unconstrained dynamics.
 
-These are seeded accessibility controls, not replacements for the unbiased sequential-deposition calculation.
+These are deliberately biased initial-condition controls. They test whether secondary molecules can occupy persistent gaps when the search/access problem is reduced; they are not replacements for the unbiased sequential-deposition calculation and should not be interpreted as spontaneous self-assembly kinetics.
+
+The implementation retains historical internal identifiers such as `lego`, `lego2`, `prepared-lego`, and `prepared-lego2` so existing scripts and production data remain compatible. Publication-facing and scientific documentation uses the names **Gap-seeded I** and **Gap-seeded II**.
 
 ## MLIP training-data construction
 
@@ -33,6 +35,13 @@ These are seeded accessibility controls, not replacements for the unbiased seque
 3. [`coverage-analysis.md`](coverage-analysis.md)
 4. [`interfacial-analysis.md`](interfacial-analysis.md)
 5. [`operations.md`](operations.md)
+
+### Reproduce the gap-seeded controls
+
+1. [`coverage-analysis.md`](coverage-analysis.md)
+2. [`lego-deposition.md`](lego-deposition.md) for Gap-seeded I
+3. [`lego2-deposition.md`](lego2-deposition.md) for Gap-seeded II
+4. [`interfacial-analysis.md`](interfacial-analysis.md) for matched structural comparison
 
 ### Extend the study with another passivant
 
