@@ -1,0 +1,27 @@
+# The analytic test potential. Diagnostic infrastructure, not science: it
+# exists so the whole pipeline can be exercised on a machine with no torch, no
+# LAMMPS and no OpenMM.
+#
+#   nio-md-prep mlip smoke-md examples/mlip/mock-smoke.toml \
+#       --structure <file> --output <dir>
+
+[potential]
+kind = "mock"
+elements = ["Ni", "O"]
+epsilon_eV = 0.05
+sigma_angstrom = 2.2
+cutoff_angstrom = 6.0
+
+[engine]
+kind = "ase"
+
+[simulation]
+task = "md"
+ensemble = "nvt"
+temperature_K = 300
+timestep_fs = 0.5
+steps = 50
+seed = 12345
+trajectory_interval = 10
+log_interval = 10
+region = "all"

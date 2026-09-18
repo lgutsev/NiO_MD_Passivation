@@ -1,0 +1,28 @@
+# The same MACE model through OpenMM-ML.
+#
+# OpenMM-ML's MACE implementation defaults to the INTERACTION energy, with the
+# atomic self-energies removed. This configuration asks explicitly for the
+# total energy, so that a single point here is directly comparable with the
+# ASE route above without a post-hoc shift.
+#
+# Constant pressure is deliberately absent: OpenMM reports no stress tensor
+# through this route, so `ensemble = "npt"` is rejected during capability
+# negotiation rather than run with no virial behind it.
+
+[potential]
+kind = "mace"
+model = "/path/to/nio_phosphonate.model"
+elements = ["Ni", "O", "P", "C", "H"]
+device = "cuda"
+precision = "float64"
+energy_convention = "total"
+
+[engine]
+kind = "openmm"
+platform = "CUDA"
+precision = "float64"
+
+[simulation]
+task = "singlepoint"
+energy_convention = "total"
+region = "all"

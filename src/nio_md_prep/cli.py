@@ -274,13 +274,20 @@ def main(argv=None)->int:
     i=sub.add_parser("summarize-interface")
     i.add_argument("prepared_root",type=Path)
     i.add_argument("--output",type=Path,required=True)
+    # The MLIP subsystem owns its own subcommands; importing it here (rather
+    # than at module scope) keeps torch/OpenMM/LAMMPS off the classical path.
+    from .mlip.cli import add_parser as add_mlip_parser
+    add_mlip_parser(sub)
     i=sub.add_parser("summarize-publication")
     i.add_argument("prepared_root",type=Path)
     i.add_argument("--output",type=Path,required=True)
     i.add_argument("--experimental",type=Path,help="CSV of experimental device Voc/Jsc/FF/PCE results to correlate against MD metrics")
     a=p.parse_args(argv)
     try:
-        if a.command=="init-molecule":
+        if a.command=="mlip":
+            from .mlip.cli import run as run_mlip
+            return run_mlip(a)
+        elif a.command=="init-molecule":
             slug=a.name.lower().replace("_","-").replace(" ","-"); folder=molecule_dir(slug); folder.mkdir(parents=True,exist_ok=True)
             manifest=folder/"molecule.toml"
             if not manifest.exists(): manifest.write_text(TEMPLATE.format(name=a.name,slug=slug),encoding="utf-8")

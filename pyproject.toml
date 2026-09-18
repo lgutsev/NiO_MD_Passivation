@@ -21,6 +21,30 @@ analysis = [
 test = [
     "pytest>=7",
 ]
+# The MLIP subsystem is entirely optional. Plain `pip install nio-md-prep`
+# must not pull in PyTorch, CUDA, OpenMM or LAMMPS, so every backend lives
+# behind an extra and every import of one is lazy. `mlip` is the smallest
+# useful set: ASE as the interchange structure layer, plus numpy.
+mlip = [
+    "ase>=3.23",
+    "numpy>=1.24",
+]
+# A trained MACE model, evaluated through MACE's own ASE calculator. Install
+# the torch build that matches the target machine's CUDA separately; this
+# extra deliberately does not pin one.
+mace = [
+    "nio-md-prep[mlip]",
+    "mace-torch>=0.3.6",
+    "torch>=2.1",
+]
+# MACE through OpenMM, via OpenMM-ML. Both are conda-forge packages in
+# practice; listed here so the dependency is documented even where pip cannot
+# satisfy it.
+openmm = [
+    "nio-md-prep[mace]",
+    "openmm>=8.1",
+    "openmm-ml>=1.2",
+]
 
 [project.scripts]
 nio-md-prep = "nio_md_prep.cli:main"
@@ -31,3 +55,13 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+# Ordinary CI runs everything unmarked: configuration parsing, bridge
+# resolution, unit conversions, provenance, capability failures and the mock
+# potential. The marked tests need a backend, a GPU, or a trained model
+# supplied through NIO_MD_TEST_MACE_MODEL, and are skipped otherwise.
+markers = [
+    "mace: needs mace-torch and a model from $NIO_MD_TEST_MACE_MODEL",
+    "lammps: needs a LAMMPS build with the relevant pair-style package",
+    "openmm: needs openmm and openmm-ml",
+    "gpu: needs a CUDA device",
+]
