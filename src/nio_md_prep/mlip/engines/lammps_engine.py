@@ -792,7 +792,10 @@ def staged_model_names(potential: LammpsMlipPotentialSpec) -> dict[str, str]:
 
 
 def _rewrite_text(text: str, by_name: Mapping[str, str]) -> str:
-    tokens = text.split()
+    """Replace model-file arguments; a quoted argument (a path with spaces) is one token."""
+    import re
+
+    tokens = re.findall(r"\"[^\"]*\"|'[^']*'|\S+", text)
     out = []
     for token in tokens:
         bare = token.strip("\"'")
