@@ -276,8 +276,11 @@ def test_smoke_md_runs_a_short_trajectory_and_reports_drift(tmp_path, structure_
     # unit conversion by orders of magnitude.
     assert abs(diagnostics["energy_drift_eV_per_atom_per_ps"]) < 0.05
     assert diagnostics["max_abs_energy_excursion_eV_per_atom"] < 1e-3
-    # 16 free atoms; the Stationary COM removal is not subtracted (ASE convention).
-    assert trajectory.temperature_ndof == 48
+    # 16 free atoms with the centre of mass held by FixCom: 3 * 16 - 3.
+    assert trajectory.temperature_ndof == 45
+    resolved = trajectory.integrator_resolved
+    assert resolved["integrator"] == "VelocityVerlet" and resolved["seed"] == 12345
+    assert resolved["seed_source"] == "simulation.seed"
     assert trajectory.final_pbc == (True, True, True)
     assert len(trajectory.final_positions_angstrom) == 16
     manifest = read_manifest(output)
