@@ -189,7 +189,7 @@ def parse_job_mapping(
         raise ConfigError("configuration is missing the [engine] section")
 
     potential = parse_potential(payload["potential"], base_dir=base_dir)
-    engine = parse_engine(payload["engine"])
+    engine = parse_engine(payload["engine"], base_dir=base_dir)
     simulation = parse_simulation(payload.get("simulation", {}))
     structure = (
         parse_structure(payload["structure"], base_dir=base_dir)
@@ -243,11 +243,23 @@ def parse_potential(payload: Mapping, *, base_dir: Path | None = None) -> Potent
     return MockPotentialSpec(**kwargs)
 
 
-def parse_engine(payload: Mapping) -> EngineSpec:
+#: ``[engine.options]`` keys naming files, resolved like the potential's paths
+#: (the exported LAMMPS model of a MACE checkpoint, and its older spelling).
+_ENGINE_OPTION_PATHS = {"exported_model_path", "model_path"}
+
+
+def parse_engine(payload: Mapping, *, base_dir: Path | None = None) -> EngineSpec:
     _reject_unknown(payload, ENGINE_KEYS, "[engine]")
     if "kind" not in payload:
         raise ConfigError("[engine] is missing 'kind'")
-    return EngineSpec(**_map_keys(payload, ENGINE_KEYS))
+    kwargs = _map_keys(payload, ENGINE_KEYS)
+    options = kwargs.get("options")
+    if isinstance(options, Mapping):
+        kwargs["options"] = {
+            key: (str(_resolve(value, base_dir)) if key in _ENGINE_OPTION_PATHS and value else value)
+            for key, value in options.items()
+        }
+    return EngineSpec(**kwargs)
 
 
 def parse_simulation(payload: Mapping) -> SimulationSpec:
