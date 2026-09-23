@@ -53,7 +53,7 @@ class LammpsNativeBridge(Bridge):
             )
         return self.runtime.availability()
 
-    def engine_parameters(self) -> dict:
+    def engine_parameters(self, simulation: SimulationSpec | None = None) -> dict:
         return {
             "implementation": self.implementation,
             "native_units": self.potential.unit_system_name,

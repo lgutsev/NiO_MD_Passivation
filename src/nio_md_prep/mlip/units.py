@@ -42,6 +42,19 @@ NM_IN_ANGSTROM = 10.0
 #: 1 eV/Angstrom^3 expressed in GPa and in bar (the LAMMPS metal pressure unit).
 EV_PER_ANGSTROM3_IN_GPA = ELEMENTARY_CHARGE_C * 1e30 / 1e9
 EV_PER_ANGSTROM3_IN_BAR = ELEMENTARY_CHARGE_C * 1e30 / 1e5
+#: 1 standard atmosphere in bar: 101325 Pa exactly, 1 bar = 1e5 Pa exactly.
+ATM_IN_BAR = 1.01325
+
+#: LAMMPS ``units`` style -> (pressure unit name, that unit in bar). LAMMPS
+#: reports *pressure* (thermo ``press``/``pxx``..., ``compute pressure``) and
+#: reads barostat targets in this unit, not in energy/length^3: ``metal`` uses
+#: bar, ``real`` uses atmospheres (https://docs.lammps.org/units.html). The
+#: two differ by 1.3%, which is exactly the size of error that survives a
+#: smoke test.
+LAMMPS_PRESSURE_UNITS: dict[str, tuple[str, float]] = {
+    "metal": ("bar", 1.0),
+    "real": ("atm", ATM_IN_BAR),
+}
 
 QUANTITIES = ("energy", "length", "force", "stress")
 
@@ -52,6 +65,13 @@ class UnitSystem:
 
     ``energy_in_eV`` and ``length_in_angstrom`` are the multiplicative factors
     that take a value *in this system* to the canonical system.
+
+    ``pressure`` names the unit an engine *reports* stress-like quantities in
+    when that is a pressure unit rather than energy/length^3 -- LAMMPS reports
+    bar (``metal``) or atm (``real``). For such a system ``factor("stress")``
+    raises instead of returning the energy-density factor, because applying
+    kcal/mol/Angstrom^3 to a number that is really in atm is wrong by a factor
+    of about 1.5e4. Use :func:`lammps_pressure_tensor_to_stress` there.
     """
 
     name: str
@@ -59,21 +79,27 @@ class UnitSystem:
     length: str
     energy_in_eV: float
     length_in_angstrom: float
+    pressure: str | None = None
 
     @property
     def force(self) -> str:
         return f"{self.energy}/{self.length}"
 
     @property
-    def stress(self) -> str:
+    def energy_density(self) -> str:
         return f"{self.energy}/{self.length}^3"
+
+    @property
+    def stress(self) -> str:
+        return self.pressure or self.energy_density
 
     @property
     def force_in_eV_per_angstrom(self) -> float:
         return self.energy_in_eV / self.length_in_angstrom
 
     @property
-    def stress_in_eV_per_angstrom3(self) -> float:
+    def energy_density_in_eV_per_angstrom3(self) -> float:
+        """This system's energy/length^3 in eV/Angstrom^3 -- *not* its pressure unit."""
         return self.energy_in_eV / self.length_in_angstrom**3
 
     def factor(self, quantity: str) -> float:
@@ -85,7 +111,14 @@ class UnitSystem:
         if quantity == "force":
             return self.force_in_eV_per_angstrom
         if quantity == "stress":
-            return self.stress_in_eV_per_angstrom3
+            if self.pressure is not None:
+                raise UnitError(
+                    f"{self.name} reports stress as a pressure in {self.pressure}, not in "
+                    f"{self.energy_density}; convert it with "
+                    "lammps_pressure_tensor_to_stress (which also flips the sign) instead "
+                    "of a plain unit factor"
+                )
+            return self.energy_density_in_eV_per_angstrom3
         raise UnitError(
             f"unknown quantity {quantity!r}; expected one of {', '.join(QUANTITIES)}"
         )
@@ -103,8 +136,10 @@ class UnitSystem:
 #: these units, whatever the engine used internally.
 CANONICAL = UnitSystem("canonical", "eV", "Angstrom", 1.0, 1.0)
 ASE = UnitSystem("ase", "eV", "Angstrom", 1.0, 1.0)
-LAMMPS_METAL = UnitSystem("lammps_metal", "eV", "Angstrom", 1.0, 1.0)
-LAMMPS_REAL = UnitSystem("lammps_real", "kcal/mol", "Angstrom", KCAL_PER_MOL_IN_EV, 1.0)
+LAMMPS_METAL = UnitSystem("lammps_metal", "eV", "Angstrom", 1.0, 1.0, pressure="bar")
+LAMMPS_REAL = UnitSystem(
+    "lammps_real", "kcal/mol", "Angstrom", KCAL_PER_MOL_IN_EV, 1.0, pressure="atm"
+)
 OPENMM = UnitSystem("openmm", "kJ/mol", "nm", KJ_PER_MOL_IN_EV, NM_IN_ANGSTROM)
 
 UNIT_SYSTEMS: dict[str, UnitSystem] = {
@@ -140,6 +175,65 @@ def lammps_unit_system(units: str) -> UnitSystem:
             f"LAMMPS units {units!r} have no canonical (eV/Angstrom) mapping in this "
             f"subsystem; supported: {', '.join(sorted(LAMMPS_UNIT_SYSTEMS))}"
         ) from None
+
+
+def lammps_pressure_unit(units: str) -> tuple[str, float]:
+    """``(unit name, unit in bar)`` for a LAMMPS ``units`` style."""
+    try:
+        return LAMMPS_PRESSURE_UNITS[units]
+    except KeyError:
+        raise UnitError(
+            f"LAMMPS units {units!r} have no pressure mapping in this subsystem; "
+            f"supported: {', '.join(sorted(LAMMPS_PRESSURE_UNITS))}"
+        ) from None
+
+
+def pressure_to_lammps(pressure_bar: float, units: str) -> float:
+    """A pressure in bar, restated in the LAMMPS ``units`` style's pressure unit.
+
+    What a barostat target (``fix npt ... iso P P Pdamp``) must be written in:
+    bar for ``metal``, atm for ``real`` (1 atm = 1.01325 bar exactly).
+    """
+    return float(pressure_bar) / lammps_pressure_unit(units)[1]
+
+
+def pressure_from_lammps(pressure: float, units: str) -> float:
+    """A LAMMPS pressure (bar for ``metal``, atm for ``real``) in bar."""
+    return float(pressure) * lammps_pressure_unit(units)[1]
+
+
+def lammps_pressure_tensor_to_stress(pressure_tensor, units: str) -> tuple[float, ...]:
+    """A LAMMPS pressure tensor as canonical ASE stress, Voigt order.
+
+    ``pressure_tensor`` is the 3x3 tensor in the ``units`` style's pressure
+    unit, already in the frame the stress is wanted in (for a triclinic box,
+    rotate it back to the source basis first, e.g. with ASE ``Prism``
+    ``tensor2_to_ase``). Returns ``(xx, yy, zz, yz, xz, xy)`` in eV/Angstrom^3
+    with ASE's sign convention, stress = -pressure: a compressed cell has
+    positive pressure and negative stress. The tensor must be symmetric to
+    1e-8 relative; an asymmetric one means the components were misassigned.
+
+    Note the orderings differ: thermo keywords are named (``pxx``..``pyz``),
+    ``compute pressure`` returns ``(xx, yy, zz, xy, xz, yz)``, ASE Voigt is
+    ``(xx, yy, zz, yz, xz, xy)``. Building the 3x3 tensor first avoids mixing
+    them up.
+    """
+    try:
+        rows = [[float(v) for v in row] for row in pressure_tensor]
+    except TypeError:
+        rows = []
+    if len(rows) != 3 or any(len(row) != 3 for row in rows):
+        raise UnitError(f"a pressure tensor must be 3x3; got {pressure_tensor!r}")
+    scale = max(1.0, max(abs(v) for row in rows for v in row))
+    for i, j in ((1, 2), (0, 2), (0, 1)):
+        if abs(rows[i][j] - rows[j][i]) > 1e-8 * scale:
+            raise UnitError(
+                f"pressure tensor is not symmetric: P[{i}][{j}] = {rows[i][j]!r} but "
+                f"P[{j}][{i}] = {rows[j][i]!r}"
+            )
+    to_eV_per_A3 = lammps_pressure_unit(units)[1] / EV_PER_ANGSTROM3_IN_BAR
+    voigt = (rows[0][0], rows[1][1], rows[2][2], rows[1][2], rows[0][2], rows[0][1])
+    return tuple(-value * to_eV_per_A3 for value in voigt)
 
 
 def convert(value, quantity: str, source, target=CANONICAL):
@@ -259,8 +353,14 @@ __all__ = [
     "NM_IN_ANGSTROM",
     "EV_PER_ANGSTROM3_IN_GPA",
     "EV_PER_ANGSTROM3_IN_BAR",
+    "ATM_IN_BAR",
+    "LAMMPS_PRESSURE_UNITS",
     "unit_system",
     "lammps_unit_system",
+    "lammps_pressure_unit",
+    "pressure_to_lammps",
+    "pressure_from_lammps",
+    "lammps_pressure_tensor_to_stress",
     "convert",
     "to_canonical",
     "from_canonical",

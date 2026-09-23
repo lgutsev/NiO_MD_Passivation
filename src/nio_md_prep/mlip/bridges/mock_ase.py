@@ -51,7 +51,7 @@ class MockAseBridge(Bridge):
             self._calculator = self.adapter.calculator()
         return self._calculator
 
-    def engine_parameters(self) -> dict:
+    def engine_parameters(self, simulation: SimulationSpec | None = None) -> dict:
         return {
             "implementation": self.implementation,
             "calculator": "nio_md_prep.mlip._mock_calculator.MockLennardJones",

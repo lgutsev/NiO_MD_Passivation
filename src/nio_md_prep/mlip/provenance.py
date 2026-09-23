@@ -16,7 +16,14 @@ for producing them.
 
 Hashing and version probing are done without importing any MLIP backend:
 :func:`package_versions` reads distribution metadata, and
-:func:`device_report` only touches torch if torch is already importable.
+:func:`device_report` reads torch's CUDA state only when torch is already
+imported in this process or the caller explicitly asks for the probe.
+
+A manifest carries a ``status`` -- ``prepared`` (assembled and
+hash-verified, nothing started), ``running`` (the engine has been invoked),
+``completed`` or ``failed`` -- and an ``error`` record for a failure, and is
+always replaced atomically (:func:`write_manifest`), so a crash mid-write can
+never leave a truncated file behind.
 """
 from __future__ import annotations
 
@@ -37,6 +44,10 @@ from .errors import ModelIntegrityError, ProvenanceError
 MANIFEST_NAME = "mlip_manifest.json"
 MANIFEST_VERSION = 1
 
+#: The lifecycle of a job directory, in order. ``failed`` can follow either
+#: ``prepared`` or ``running``.
+STATUSES = ("prepared", "running", "completed", "failed")
+
 #: Distributions worth recording whenever they are installed. Absent ones are
 #: reported as ``null`` rather than omitted, so a manifest shows what was
 #: *not* present as clearly as what was.
@@ -47,7 +58,9 @@ TRACKED_DISTRIBUTIONS = (
     "torch",
     "mace-torch",
     "openmm",
-    "openmm-ml",
+    # The OpenMM-ML distribution is published as "openmmml" (setup.py
+    # name='openmmml'); "openmm-ml" is not a distribution and always read None.
+    "openmmml",
     "openmm-torch",
     "nnpops",
     "lammps",
@@ -72,9 +85,16 @@ def hash_model_files(paths: Iterable[Path]) -> dict[str, str]:
 
 
 def verify_hashes(declared: Mapping[str, str], actual: Mapping[str, str]) -> None:
-    """Refuse to run when a model file is not the one the configuration names."""
+    """Refuse to run when a model file is not the one the configuration names.
+
+    Paths are matched on :func:`~nio_md_prep.mlip.specs.path_key` (absolute,
+    normalised), so ``nio.pb`` and ``/config/dir/nio.pb`` are the same file.
+    """
+    from .specs import path_key
+
+    observed_by_key = {path_key(p): sha for p, sha in actual.items()}
     for path, expected in declared.items():
-        observed = actual.get(str(path))
+        observed = observed_by_key.get(path_key(path))
         if observed is None:
             raise ProvenanceError(
                 f"configuration declares a sha256 for {path}, but that file was not "
@@ -123,12 +143,16 @@ def package_versions(names: Iterable[str] = TRACKED_DISTRIBUTIONS) -> dict[str, 
     return versions
 
 
-def device_report(requested_device: str | None = None) -> dict:
-    """Describe the compute device, touching torch only if it is already there.
+def device_report(requested_device: str | None = None, *, probe_torch: bool = False) -> dict:
+    """Describe the compute device without importing torch behind the caller's back.
 
-    ``find_spec`` avoids importing torch on a machine that does not have it,
-    which keeps ``mlip inspect`` fast and keeps a plain ``nio-md-prep``
-    install free of a CUDA dependency.
+    torch's CUDA state is read only when torch is *already imported* in this
+    process (a MACE route has loaded it, so reading it costs nothing), or
+    when ``probe_torch=True`` explicitly asks for the import (``mlip inspect
+    --probe-torch``; a GPU MACE job's manifest). Otherwise an installed torch
+    is reported by version from distribution metadata with ``probed: False``,
+    and an absent one as ``None``. Importing torch takes seconds and
+    initialises CUDA, which a classical or ``validate`` path must never do.
     """
     report: dict = {
         "requested": requested_device,
@@ -139,14 +163,28 @@ def device_report(requested_device: str | None = None) -> dict:
         "cpu_count": os.cpu_count(),
         "torch": None,
     }
-    if find_spec("torch") is None:
-        return report
-    try:
-        import torch
-    except Exception as exc:  # pragma: no cover - a broken torch install
-        report["torch"] = {"error": f"{type(exc).__name__}: {exc}"}
-        return report
+    torch = sys.modules.get("torch")
+    if torch is None:
+        if find_spec("torch") is None:
+            return report
+        if not probe_torch:
+            try:
+                version = metadata.version("torch")
+            except metadata.PackageNotFoundError:  # pragma: no cover - odd install
+                version = None
+            report["torch"] = {
+                "version": version,
+                "probed": False,
+                "note": "torch is installed but was not imported, so CUDA was not probed",
+            }
+            return report
+        try:
+            import torch
+        except Exception as exc:  # pragma: no cover - a broken torch install
+            report["torch"] = {"error": f"{type(exc).__name__}: {exc}"}
+            return report
     info: dict = {
+        "probed": True,
         "version": getattr(torch, "__version__", None),
         "cuda_available": bool(torch.cuda.is_available()),
         "cuda_version": getattr(getattr(torch, "version", None), "cuda", None),
@@ -183,6 +221,7 @@ def build_manifest(
     results: Mapping | None = None,
     extra: Mapping | None = None,
     verify: bool = True,
+    probe_torch: bool = False,
 ) -> dict:
     """Assemble the manifest for one MLIP job.
 
@@ -250,9 +289,13 @@ def build_manifest(
         "element_mapping": _element_mapping(potential),
         "environment": {
             "packages": package_versions(),
-            "device": device_report(getattr(potential, "device", None)),
+            # Refreshed by jobs after the run, when a MACE route has imported
+            # torch and its CUDA state can be read without a new import.
+            "device": device_report(getattr(potential, "device", None), probe_torch=probe_torch),
         },
         "engine_parameters": dict(engine_parameters or {}),
+        "status": "prepared",
+        "error": None,
     }
     if structure is not None:
         manifest["structure"] = dict(structure)
@@ -268,14 +311,36 @@ def build_manifest(
 
 
 def _integrator_report(simulation) -> dict:
-    """Thermostat/barostat settings, pulled out where a reader will look."""
+    """Thermostat/barostat settings as *requested*, pulled out where a reader will look.
+
+    The damping times are shown after default resolution, since that is what
+    every engine applies. What actually integrated (class or fix, resolved
+    parameters, drawn seed) is the engine's report, under
+    ``results.trajectory.integrator_resolved``.
+    """
+    md = simulation.task == "md"
+    thermostatted = md and simulation.ensemble in ("nvt", "npt")
     return {
         "task": simulation.task,
         "ensemble": simulation.ensemble,
         "thermostat": simulation.thermostat,
         "barostat": simulation.barostat,
+        "barostat_coupling": simulation.barostat_coupling,
         "thermostat_damping_fs": simulation.thermostat_damping_fs,
         "barostat_damping_fs": simulation.barostat_damping_fs,
+        "resolved_thermostat_damping_fs": (
+            simulation.resolved_thermostat_damping_fs if thermostatted else None
+        ),
+        "resolved_barostat_damping_fs": (
+            simulation.resolved_barostat_damping_fs
+            if md and simulation.ensemble == "npt"
+            else None
+        ),
+        "vacuum_gap_threshold_angstrom": (
+            simulation.resolved_vacuum_gap_threshold_angstrom
+            if md and simulation.ensemble == "npt"
+            else None
+        ),
         "timestep_fs": simulation.timestep_fs,
         "steps": simulation.steps,
         "temperature_K": simulation.temperature_K,
@@ -295,15 +360,65 @@ def _element_mapping(potential) -> dict:
 
 
 def write_manifest(directory: Path, manifest: Mapping) -> Path:
-    """Write ``mlip_manifest.json`` into a job directory and return its path."""
+    """Atomically write ``mlip_manifest.json`` into a job directory; return its path.
+
+    The JSON is written to a temporary file in the same directory, flushed to
+    disk, and moved over the manifest with :func:`os.replace`, which is atomic
+    on POSIX and Windows. A reader therefore sees either the previous complete
+    manifest or the new one, never a partial file. A ``status`` outside
+    :data:`STATUSES` is refused.
+    """
+    status = manifest.get("status")
+    if status is not None and status not in STATUSES:
+        raise ProvenanceError(
+            f"manifest status must be one of {', '.join(STATUSES)}; got {status!r}"
+        )
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / MANIFEST_NAME
-    path.write_text(
-        json.dumps(manifest, indent=2, sort_keys=False, default=str) + "\n",
-        encoding="utf-8",
-    )
+    text = json.dumps(manifest, indent=2, sort_keys=False, default=_json_default) + "\n"
+    temporary = directory / f".{MANIFEST_NAME}.{os.getpid()}.tmp"
+    try:
+        with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
     return path
+
+
+def mark_manifest(
+    directory: Path, manifest: dict, status: str, *, error: BaseException | None = None
+) -> Path:
+    """Set ``status`` (and, for a failure, the ``error`` record) and rewrite the manifest.
+
+    ``error`` is recorded as ``{"type", "message"}`` plus ``finished_utc``;
+    ``completed`` and ``failed`` also stamp ``finished_utc``.
+    """
+    if status not in STATUSES:
+        raise ProvenanceError(f"unknown manifest status {status!r}")
+    manifest["status"] = status
+    if status in ("completed", "failed"):
+        manifest["finished_utc"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    if error is not None:
+        manifest["error"] = {"type": type(error).__name__, "message": str(error)}
+    return write_manifest(directory, manifest)
+
+
+def _json_default(value):
+    """Serialise the few non-JSON types a manifest legitimately carries."""
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, (set, frozenset)):
+        return sorted(value, key=str)
+    if hasattr(value, "tolist"):  # numpy arrays and scalars
+        return value.tolist()
+    if hasattr(value, "as_dict"):
+        return value.as_dict()
+    return str(value)
 
 
 def read_manifest(directory: Path) -> dict:
@@ -318,6 +433,7 @@ def read_manifest(directory: Path) -> dict:
 __all__ = [
     "MANIFEST_NAME",
     "MANIFEST_VERSION",
+    "STATUSES",
     "TRACKED_DISTRIBUTIONS",
     "sha256_file",
     "hash_model_files",
@@ -327,5 +443,6 @@ __all__ = [
     "device_report",
     "build_manifest",
     "write_manifest",
+    "mark_manifest",
     "read_manifest",
 ]

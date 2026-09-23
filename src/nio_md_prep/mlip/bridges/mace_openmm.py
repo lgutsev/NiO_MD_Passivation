@@ -101,7 +101,7 @@ class MaceOpenMMBridge(Bridge):
     def atomic_reference_energies(self):
         return self.adapter.atomic_reference_energies()
 
-    def engine_parameters(self) -> dict:
+    def engine_parameters(self, simulation: SimulationSpec | None = None) -> dict:
         convention = self.native_convention()
         return {
             "implementation": self.implementation,

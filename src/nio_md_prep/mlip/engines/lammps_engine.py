@@ -61,6 +61,10 @@ class LammpsEngine(EngineRuntime):
             stress=True,
             per_atom_energy=True,
             periodic=True,
+            # Not yet honoured by the rendered deck (one boundary style for all
+            # axes; no frozen-atom groups), so such jobs are refused at validate.
+            partial_periodic=False,
+            fixed_atoms=False,
             gpu=True,
             elements=None,
             precisions=None,
@@ -164,10 +168,9 @@ def _md_block(
     thermo_interval: int | None,
 ) -> list[str]:
     timestep = simulation.timestep_fs * TIMESTEP_PER_FS[potential.units]
-    damping = (simulation.thermostat_damping_fs or 100.0) * DAMPING_PER_FS[potential.units]
-    barostat_damping = (
-        simulation.barostat_damping_fs or 1000.0
-    ) * DAMPING_PER_FS[potential.units]
+    # Defaults resolve through the one shared constant (specs.DEFAULT_*_DAMPING_FS).
+    damping = simulation.resolved_thermostat_damping_fs * DAMPING_PER_FS[potential.units]
+    barostat_damping = simulation.resolved_barostat_damping_fs * DAMPING_PER_FS[potential.units]
     interval = thermo_interval or max(1, simulation.log_interval)
     lines = [f"timestep {timestep:.10g}"]
     if simulation.temperature_K:

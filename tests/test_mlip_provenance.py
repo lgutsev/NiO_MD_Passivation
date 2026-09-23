@@ -35,6 +35,8 @@ REQUIRED_TOP_LEVEL = (
     "element_mapping",
     "environment",
     "engine_parameters",
+    "status",
+    "error",
 )
 
 
@@ -96,6 +98,10 @@ def test_manifest_records_everything_a_rerun_needs(tmp_path):
     assert manifest["energy_convention"]["potential_native"] == "total"
     assert "packages" in manifest["environment"]
     assert "device" in manifest["environment"]
+    # Assembled and verified, nothing started yet.
+    assert manifest["status"] == "prepared" and manifest["error"] is None
+    # The damping time every engine applies, after default resolution.
+    assert manifest["simulation"]["integrator"]["resolved_thermostat_damping_fs"] == 100.0
 
 
 def test_manifest_preserves_lammps_commands_verbatim(tmp_path):
@@ -179,17 +185,90 @@ def test_sha256_matches_hashlib(tmp_path):
     assert provenance.sha256_file(path) == hashlib.sha256(b"x" * 5000).hexdigest()
 
 
-def test_device_report_does_not_import_torch_when_absent():
-    import sys
+def test_device_report_does_not_import_torch_behind_the_callers_back(backend_import_guard):
+    from importlib.util import find_spec
 
     report = provenance.device_report("cuda")
     assert report["requested"] == "cuda"
     assert "platform" in report and "cpu_count" in report
-    if "torch" not in sys.modules:
+    if find_spec("torch") is None:
         assert report["torch"] is None
+    else:
+        # Installed but not imported: reported by version, CUDA not probed.
+        assert report["torch"]["probed"] is False and report["torch"]["version"]
+    backend_import_guard()
 
 
 def test_package_versions_report_absent_packages_as_null():
-    versions = provenance.package_versions(("nio-md-prep", "definitely-not-installed"))
-    assert versions["nio-md-prep"]
+    # pytest is certainly installed where this runs; nio-md-prep may not be.
+    versions = provenance.package_versions(("pytest", "definitely-not-installed"))
+    assert versions["pytest"]
     assert versions["definitely-not-installed"] is None
+
+
+def test_openmm_ml_is_tracked_under_its_distribution_name():
+    assert "openmmml" in provenance.TRACKED_DISTRIBUTIONS
+    assert "openmm-ml" not in provenance.TRACKED_DISTRIBUTIONS
+
+
+def test_hash_paths_match_after_normalisation(tmp_path, monkeypatch):
+    """A relative declaration and an absolute hashed path name the same file."""
+    model = make_model(tmp_path, "nio.pb")
+    digest = provenance.sha256_file(model)
+    monkeypatch.chdir(tmp_path)
+    provenance.verify_hashes({"nio.pb": digest}, {str(model): digest})
+    provenance.verify_hashes({str(model): digest}, {"./nio.pb": digest})
+    with pytest.raises(ModelIntegrityError):
+        provenance.verify_hashes({"nio.pb": "0" * 64}, {str(model): digest})
+
+
+def test_manifest_status_moves_through_the_lifecycle(tmp_path):
+    job = mace_job(tmp_path)
+    manifest = provenance.build_manifest(job=job, registration=resolve_bridge("mace", "ase"))
+    run = tmp_path / "run"
+    provenance.write_manifest(run, manifest)
+    assert provenance.read_manifest(run)["status"] == "prepared"
+    provenance.mark_manifest(run, manifest, "running")
+    assert provenance.read_manifest(run)["status"] == "running"
+    provenance.mark_manifest(run, manifest, "failed", error=RuntimeError("out of memory"))
+    record = provenance.read_manifest(run)
+    assert record["status"] == "failed"
+    assert record["error"] == {"type": "RuntimeError", "message": "out of memory"}
+    assert record["finished_utc"]
+    with pytest.raises(Exception, match="status"):
+        provenance.mark_manifest(run, manifest, "exploded")
+
+
+def test_manifest_writes_are_atomic_and_leave_no_temporary_file(tmp_path, monkeypatch):
+    """A failed write must leave the previous manifest intact, not a truncated file."""
+    import os
+
+    job = mace_job(tmp_path)
+    manifest = provenance.build_manifest(job=job, registration=resolve_bridge("mace", "ase"))
+    run = tmp_path / "run"
+    path = provenance.write_manifest(run, manifest)
+    before = path.read_text(encoding="utf-8")
+
+    def refuse(src, dst):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "replace", refuse)
+    manifest["status"] = "running"
+    with pytest.raises(OSError, match="disk full"):
+        provenance.write_manifest(run, manifest)
+    assert path.read_text(encoding="utf-8") == before
+    assert sorted(p.name for p in run.iterdir()) == [provenance.MANIFEST_NAME]
+
+
+def test_manifest_serialises_paths_and_arrays_as_data(tmp_path):
+    np = pytest.importorskip("numpy")
+    job = mace_job(tmp_path)
+    manifest = provenance.build_manifest(
+        job=job,
+        registration=resolve_bridge("mace", "ase"),
+        extra={"extra": {"path": tmp_path / "x", "array": np.array([1.5, 2.5]),
+                         "scalar": np.float64(3.0)}},
+    )
+    path = provenance.write_manifest(tmp_path / "run", manifest)
+    extra = json.loads(path.read_text(encoding="utf-8"))["extra"]
+    assert extra == {"path": str(tmp_path / "x"), "array": [1.5, 2.5], "scalar": 3.0}

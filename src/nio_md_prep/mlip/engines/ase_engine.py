@@ -17,7 +17,7 @@ from ..capabilities import CapabilitySet
 from ..environment import Availability, probe
 from ..errors import ConfigError, MissingDependencyError
 from ..results import PotentialResult
-from ..specs import SimulationSpec
+from ..specs import DEFAULT_BAROSTAT_DAMPING_FS, DEFAULT_THERMOSTAT_DAMPING_FS, SimulationSpec
 from ..units import ASE
 from .base import EngineRuntime
 
@@ -26,7 +26,6 @@ from .base import EngineRuntime
 #: the import failure is turned into a clear message rather than a traceback.
 NVT_INTEGRATORS = ("langevin", "nose-hoover", "berendsen")
 DEFAULT_THERMOSTAT = "langevin"
-DEFAULT_THERMOSTAT_DAMPING_FS = 100.0
 
 
 class AseEngine(EngineRuntime):
@@ -46,6 +45,10 @@ class AseEngine(EngineRuntime):
             stress=True,
             per_atom_energy=True,
             periodic=True,
+            # ASE keeps atoms.pbc per axis and applies FixAtoms to momenta in
+            # its integrators and to the degrees of freedom in get_temperature.
+            partial_periodic=True,
+            fixed_atoms=True,
             gpu=True,
             elements=None,
             precisions=None,
@@ -165,14 +168,17 @@ def run_md(
     trajectory = Trajectory(str(trajectory_path), "w", atoms)
     dynamics.attach(trajectory.write, interval=max(1, simulation.trajectory_interval))
 
-    history: list[tuple[float, float, float]] = []
+    # (MD step, potential, kinetic, temperature), one row per step: ASE calls
+    # observers at step 0 and the explicit calls below would repeat a step.
+    history: list[tuple[int, float, float, float]] = []
 
     def record():
+        step = int(dynamics.nsteps)
+        if history and history[-1][0] == step:
+            return
         potential = atoms.get_potential_energy()
         kinetic = atoms.get_kinetic_energy()
-        history.append(
-            (potential, kinetic, atoms.get_temperature())
-        )
+        history.append((step, potential, kinetic, atoms.get_temperature()))
 
     dynamics.attach(record, interval=max(1, simulation.log_interval))
 
@@ -183,27 +189,60 @@ def run_md(
     trajectory.close()
     wall_time = time.perf_counter() - started
 
-    n_atoms = len(atoms)
-    total = [potential + kinetic for potential, kinetic, _ in history]
-    drift = (total[-1] - total[0]) / n_atoms if len(total) > 1 else 0.0
-    temperatures = [t for _, _, t in history]
+    from ..diagnostics import temperature_ndof
+    from ..structures import constraint_summary
+
+    temperatures = [t for _, _, _, t in history]
     log_path.write_text(
-        "# step_sample potential_eV kinetic_eV total_eV temperature_K\n"
+        "# step time_fs potential_eV kinetic_eV total_eV temperature_K\n"
         + "".join(
-            f"{index} {potential:.8f} {kinetic:.8f} {potential + kinetic:.8f} {temp:.4f}\n"
-            for index, (potential, kinetic, temp) in enumerate(history)
+            f"{step} {step * simulation.timestep_fs:.6f} {potential:.10f} {kinetic:.10f} "
+            f"{potential + kinetic:.10f} {temp:.6f}\n"
+            for step, potential, kinetic, temp in history
         ),
         encoding="utf-8",
     )
+    steps_completed = int(dynamics.nsteps)
+    interval = max(1, simulation.trajectory_interval)
+    frames_written = _count_frames(trajectory_path)
+    expected_frames = steps_completed // interval + 1
+    if frames_written != expected_frames:
+        from ..errors import ResultError
+
+        raise ResultError(
+            f"{trajectory_path} holds {frames_written} frames; {steps_completed} steps "
+            f"written every {interval} steps (including step 0) should give "
+            f"{expected_frames}"
+        )
+    constraints = constraint_summary(atoms)
     return {
         "atoms": atoms,
-        "frames": _count_frames(trajectory_path),
+        "steps_completed": steps_completed,
+        "frames_written": frames_written,
         "trajectory_path": str(trajectory_path),
         "log_path": str(log_path),
+        "final_positions": atoms.get_positions().tolist(),
+        "final_cell": atoms.get_cell().tolist(),
+        "final_pbc": [bool(v) for v in atoms.pbc],
+        "energy_series": {
+            "time_fs": [step * simulation.timestep_fs for step, _, _, _ in history],
+            "total_energy_eV": [potential + kinetic for _, potential, kinetic, _ in history],
+        },
         "temperature_start_K": temperatures[0] if temperatures else None,
         "temperature_end_K": temperatures[-1] if temperatures else None,
         "max_temperature_K": max(temperatures) if temperatures else None,
-        "total_energy_drift_eV_per_atom": drift,
+        # ASE's get_temperature: 3N minus the DOF FixAtoms removes; the
+        # Stationary COM removal is not subtracted.
+        "temperature_ndof": temperature_ndof(len(atoms), n_fixed=constraints["n_fixed"]),
+        "constraints": (
+            {
+                "fixed_atoms": constraints["fixed_atoms"],
+                "n_fixed": constraints["n_fixed"],
+                "method": "ASE FixAtoms: momenta of frozen atoms zeroed by the integrator",
+            }
+            if constraints["n_fixed"]
+            else None
+        ),
         "wall_time_s": wall_time,
         "integrator": type(dynamics).__name__,
     }
@@ -289,7 +328,7 @@ def _make_npt(atoms, simulation: SimulationSpec, timestep: float, damping_fs: fl
             "pressure diagnostic through the LAMMPS engine instead."
         )
     pressure_eV_per_A3 = simulation.pressure_bar / EV_PER_ANGSTROM3_IN_BAR
-    barostat_fs = simulation.barostat_damping_fs or 1000.0
+    barostat_fs = simulation.barostat_damping_fs or DEFAULT_BAROSTAT_DAMPING_FS
     bulk_modulus = DEFAULT_BULK_MODULUS_GPA
     return NPT(
         atoms,
@@ -302,13 +341,18 @@ def _make_npt(atoms, simulation: SimulationSpec, timestep: float, damping_fs: fl
 
 
 def _count_frames(path: Path) -> int:
-    try:
-        from ase.io.trajectory import Trajectory
+    """Frames in an ASE trajectory, read back from disk. Unreadable is an error."""
+    from ase.io.trajectory import Trajectory
 
+    from ..errors import ResultError
+
+    if not Path(path).exists():
+        raise ResultError(f"the trajectory {path} was not written")
+    try:
         with Trajectory(str(path), "r") as handle:
             return len(handle)
-    except Exception:  # pragma: no cover - an unreadable trajectory is not fatal here
-        return 0
+    except Exception as exc:
+        raise ResultError(f"the trajectory {path} cannot be read: {exc}") from exc
 
 
 def _rng(seed: int | None):

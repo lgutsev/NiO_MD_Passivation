@@ -85,7 +85,7 @@ class LammpsAseBridge(Bridge):
             )
         return Availability(True, (), "ASE driving an in-process LAMMPS")
 
-    def engine_parameters(self) -> dict:
+    def engine_parameters(self, simulation: SimulationSpec | None = None) -> dict:
         return {
             "implementation": self.implementation,
             "calculator": "ase.calculators.lammpslib.LAMMPSlib",

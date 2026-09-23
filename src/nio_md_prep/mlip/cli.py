@@ -10,9 +10,10 @@ the way production trajectories are produced.
 ``compare`` drives the cross-engine single-point equivalence check that is
 this subsystem's scientific acceptance test.
 
-Everything here is a thin shell over :mod:`nio_md_prep.mlip.jobs`; the module
-is imported lazily from the top-level CLI so ``nio-md-prep --help`` never
-touches this code path.
+Everything here is a thin shell over :mod:`nio_md_prep.mlip.jobs`. Building
+the top-level parser imports this module (to register the ``mlip`` group)
+and the configuration/spec layer, but never ASE, torch, MACE, OpenMM or
+LAMMPS; ``tests/test_mlip_isolation.py`` checks that in a fresh interpreter.
 """
 from __future__ import annotations
 
@@ -38,6 +39,11 @@ def add_parser(subparsers) -> None:
     )
     inspect.add_argument("config", type=Path, nargs="?")
     inspect.add_argument("--json", action="store_true", help="emit the full report as JSON")
+    inspect.add_argument(
+        "--probe-torch",
+        action="store_true",
+        help="import torch to report CUDA devices (slow; off by default)",
+    )
 
     validate = group.add_parser(
         "validate", help="check a configuration and its route without executing anything"
@@ -88,7 +94,7 @@ def run(args) -> int:
 
     if args.mlip_command == "inspect":
         job = parse_job(args.config) if args.config else None
-        report = jobs.inspect_environment(job)
+        report = jobs.inspect_environment(job, probe_torch=args.probe_torch)
         _emit(report, args.json, _format_inspect)
         return 0
 
@@ -171,7 +177,12 @@ def _format_inspect(report: dict) -> str:
     lines.append("")
     lines.append(f"Device: {device['platform']} ({device['cpu_count']} CPUs)")
     torch_info = device.get("torch")
-    if torch_info and "error" not in torch_info:
+    if torch_info and torch_info.get("probed") is False:
+        lines.append(
+            f"  torch {torch_info.get('version')} installed; CUDA not probed "
+            "(use --probe-torch)"
+        )
+    elif torch_info and "error" not in torch_info:
         lines.append(
             f"  torch {torch_info['version']}, CUDA available: "
             f"{torch_info['cuda_available']} ({torch_info['device_count']} device(s))"
@@ -256,9 +267,11 @@ def _format_validate(report: dict) -> str:
     )
     if report["structure"]:
         structure = report["structure"]
+        pbc = "".join("T" if p else "F" for p in structure["pbc"])
         lines.append(
             f"  structure: {structure['n_atoms']} atoms, elements "
-            f"{', '.join(structure['elements'])}, periodic={structure['periodic']}, "
+            f"{', '.join(structure['elements'])}, pbc={pbc}, "
+            f"fixed atoms={structure['constraints']['n_fixed']}, "
             f"sha256={structure['sha256'][:16]}..."
         )
     parameters = report["engine_parameters"]
@@ -287,11 +300,15 @@ def _format_singlepoint(report: dict) -> str:
 
 def _format_smoke(report: dict) -> str:
     trajectory = report["results"]["trajectory"]
-    drift = trajectory["total_energy_drift_eV_per_atom"]
+    diagnostics = trajectory.get("diagnostics") or {}
+    completed = trajectory.get("steps_completed")
     lines = [
         f"Smoke MD: {trajectory['steps']} steps of {trajectory['timestep_fs']} fs "
-        f"({trajectory['ensemble']})",
-        f"  frames written: {trajectory['frames']} -> {trajectory['trajectory_path']}",
+        f"({trajectory['ensemble']}); engine reports "
+        f"{completed if completed is not None else 'no'} steps completed",
+        f"  frames written: "
+        f"{trajectory['frames_written'] if trajectory['frames_written'] is not None else 'unverified'}"
+        f" -> {trajectory['trajectory_path']}",
     ]
     if trajectory["temperature_start_K"] is not None:
         lines.append(
@@ -299,8 +316,25 @@ def _format_smoke(report: dict) -> str:
             f"{trajectory['temperature_end_K']:.1f} K "
             f"(peak {trajectory['max_temperature_K']:.1f} K)"
         )
-    if drift is not None:
-        lines.append(f"  total-energy drift: {drift:.3e} eV/atom")
+    if "energy_drift_eV_per_atom_per_ps" in diagnostics:
+        lines.append(
+            f"  NVE energy drift: {diagnostics['energy_drift_eV_per_atom_per_ps']:.3e} "
+            f"eV/atom/ps (max excursion "
+            f"{diagnostics['max_abs_energy_excursion_eV_per_atom']:.3e} eV/atom)"
+        )
+    elif "total_energy_change_eV_per_atom" in diagnostics:
+        lines.append(
+            f"  total-energy change: {diagnostics['total_energy_change_eV_per_atom']:.3e} "
+            f"eV/atom ({diagnostics['label']})"
+        )
+        conserved = diagnostics.get("conserved_quantity_drift")
+        if conserved:
+            lines.append(
+                f"  {diagnostics['conserved_quantity']} drift: "
+                f"{conserved['energy_drift_eV_per_atom_per_ps']:.3e} eV/atom/ps"
+            )
+    elif diagnostics.get("available") is False:
+        lines.append(f"  energy diagnostics: none ({diagnostics.get('reason')})")
     lines.append(f"  manifest: {report['manifest_path']}")
     return "\n".join(lines)
 

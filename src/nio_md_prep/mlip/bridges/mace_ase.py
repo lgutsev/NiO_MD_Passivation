@@ -64,7 +64,7 @@ class MaceAseBridge(Bridge):
         )
         return self._calculator
 
-    def engine_parameters(self) -> dict:
+    def engine_parameters(self, simulation: SimulationSpec | None = None) -> dict:
         return {
             "implementation": self.implementation,
             "calculator": "mace.calculators.MACECalculator",

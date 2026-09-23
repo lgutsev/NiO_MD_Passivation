@@ -83,6 +83,7 @@ _MACE_KEYS = {
     "implementation": "implementation",
     "model_format": "model_format",
     "compile_mode": "compile_mode",
+    "head": "head",
     "energy_convention": "energy_convention",
     "atomic_reference_energies": "atomic_reference_energies",
     "notes": "notes",
@@ -133,17 +134,30 @@ ENGINE_KEYS = {
     "precision": "precision",
     "threads": "threads",
     "executable": "executable",
+    "runtime": "runtime",
+    "mpi_launcher": "mpi_launcher",
+    "lammps_args": "lammps_args",
+    "platform_precision": "platform_precision",
+    "timeout_s": "timeout_s",
     "options": "options",
 }
 
 SIMULATION_KEYS = {name: name for name in SimulationSpec.__dataclass_fields__}
 
-STRUCTURE_KEYS = {"path": "path", "format": "format", "index": "index", "label": "label"}
+STRUCTURE_KEYS = {
+    "path": "path",
+    "format": "format",
+    "index": "index",
+    "label": "label",
+    "pbc": "pbc",
+}
 
 #: Path-valued keys, resolved relative to the configuration file's directory
 #: so a config can be moved with its model without becoming machine-specific.
 _PATH_FIELDS = {"model_path", "path"}
 _PATH_LIST_FIELDS = {"model_paths"}
+#: Tables keyed by a path, resolved the same way.
+_PATH_KEYED_FIELDS = {"model_hashes"}
 
 
 def load_config(path: Path) -> dict:
@@ -269,17 +283,38 @@ def _map_keys(payload: Mapping, keys: Mapping, *, base_dir: Path | None = None) 
             value = _resolve(value, base_dir)
         elif field in _PATH_LIST_FIELDS:
             value = tuple(_resolve(item, base_dir) for item in value)
+        elif field in _PATH_KEYED_FIELDS:
+            # Keys name files, so they resolve exactly like model_files does;
+            # otherwise a correct hash for "nio.pb" could never match the
+            # hashed file "/abs/config/dir/nio.pb".
+            if not isinstance(value, Mapping):
+                raise ConfigError(f"{field} must be a table of file -> sha256")
+            value = {str(_resolve(k, base_dir)): v for k, v in value.items()}
         elif field in ("implementation", "declared_elements", "pair_coeff",
                        "required_packages", "extra_commands"):
             value = tuple(value) if not isinstance(value, str) else (value,)
         elif field == "type_map":
-            value = {int(k): str(v) for k, v in dict(value).items()}
+            value = _type_map(value)
         if field in kwargs and kwargs[field] != value:
             raise ConfigError(
                 f"conflicting aliases for {field!r} in the same section; use one spelling"
             )
         kwargs[field] = value
     return kwargs
+
+
+def _type_map(value) -> dict[int, str]:
+    if not isinstance(value, Mapping):
+        raise ConfigError("potential.type_map must be a table of LAMMPS type -> element")
+    mapping: dict[int, str] = {}
+    for key, symbol in value.items():
+        try:
+            mapping[int(key)] = str(symbol)
+        except (TypeError, ValueError):
+            raise ConfigError(
+                f"potential.type_map keys must be LAMMPS type numbers; got {key!r}"
+            ) from None
+    return mapping
 
 
 def _resolve(value, base_dir: Path | None) -> Path:

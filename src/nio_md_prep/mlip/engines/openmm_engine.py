@@ -26,7 +26,7 @@ from pathlib import Path
 from ..capabilities import CapabilitySet
 from ..environment import Availability, probe
 from ..errors import ConfigError, MissingDependencyError
-from ..specs import SimulationSpec
+from ..specs import DEFAULT_THERMOSTAT_DAMPING_FS, SimulationSpec
 from ..units import INTERACTION, OPENMM, TOTAL, to_canonical
 from .base import EngineRuntime
 
@@ -37,7 +37,10 @@ ENERGY_TYPE = {
 }
 
 GPU_PLATFORMS = ("CUDA", "OpenCL", "HIP")
-DEFAULT_FRICTION_PER_PS = 1.0
+#: Langevin friction when no damping time is given: 1/tau with the shared
+#: default tau (specs.DEFAULT_THERMOSTAT_DAMPING_FS), so OpenMM and ASE apply
+#: the same thermostat to the same configuration.
+DEFAULT_FRICTION_PER_PS = 1000.0 / DEFAULT_THERMOSTAT_DAMPING_FS
 
 
 class OpenMMEngine(EngineRuntime):
@@ -59,6 +62,10 @@ class OpenMMEngine(EngineRuntime):
             stress=False,
             per_atom_energy=False,
             periodic=True,
+            # OpenMM-ML's MACE periodicity is all-or-nothing, and frozen atoms
+            # are not applied by this route yet: both are refused at validate.
+            partial_periodic=False,
+            fixed_atoms=False,
             gpu=platform is None or platform in GPU_PLATFORMS,
             elements=None,
             precisions=None,
@@ -82,7 +89,7 @@ def require_openmm():
     except ImportError as exc:
         raise MissingDependencyError(
             "the OpenMM engine",
-            ("openmm", "openmm-ml"),
+            ("openmm", "openmmml"),
             hint="Install the OpenMM extra: pip install 'nio-md-prep[openmm]'",
         ) from exc
 
