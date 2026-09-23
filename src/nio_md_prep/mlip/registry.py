@@ -304,8 +304,8 @@ register(
         "accepts both pretrained (mace-off / mace-mp) and locally trained models",
         "defaults to the INTERACTION energy (atomic self-energies removed); this "
         "subsystem harmonises the convention before any comparison",
-        "OpenMM reports no stress tensor here, so constant-pressure jobs are "
-        "rejected by capability negotiation rather than run without a virial",
+        "no stress tensor is reported here and constant-pressure jobs are refused "
+        "by policy until an OpenMM NPT path has been validated",
     ),
 )
 
