@@ -309,7 +309,7 @@ def test_nve_refuses_a_thermostat():
 
 
 def test_step_numbers_and_frames_come_from_the_run(tmp_path, rattled_nio_structure):
-    """23 steps, frames every 5 and log every 5: steps 0,5,10,15,20 -- each once."""
+    """23 steps, frames every 5 and log every 5: steps 0,5,10,15,20 and the final 23 -- once each."""
     payload = ase_engine.run_md(
         rattled_nio_structure, mock_calculator(),
         SimulationSpec(task="md", ensemble="nve", temperature_K=300.0, timestep_fs=1.0,
@@ -319,8 +319,8 @@ def test_step_numbers_and_frames_come_from_the_run(tmp_path, rattled_nio_structu
     assert payload["steps_completed"] == 23
     assert payload["frames_written"] == 23 // 5 + 1 == 5
     steps = np.loadtxt(payload["log_path"])[:, 0].astype(int).tolist()
-    assert steps == [0, 5, 10, 15, 20]
-    assert payload["energy_series"]["time_fs"] == [0.0, 5.0, 10.0, 15.0, 20.0]
+    assert steps == [0, 5, 10, 15, 20, 23]
+    assert payload["energy_series"]["time_fs"] == [0.0, 5.0, 10.0, 15.0, 20.0, 23.0]
     # The end temperature is the final state's, not the last logged row's.
     final = payload["atoms"]
     assert payload["temperature_end_K"] == pytest.approx(
@@ -543,3 +543,88 @@ def test_the_manifest_records_the_planned_integrator(tmp_path, rattled_nio_struc
     parameters = jobs.validate_job(job)["engine_parameters"]
     assert parameters["integrator"]["class"] == "ase.md.bussi.Bussi"
     assert parameters["integrator"]["thermostat_damping_fs"] == 100.0
+
+
+# --- the execution plan -------------------------------------------------------------
+
+PLAN_KEYS = {
+    "potential_kind", "engine", "bridge", "implementation", "model_checkpoint",
+    "exported_model", "elements", "energy_convention", "units", "device", "precision",
+    "dynamics", "lammps", "openmm", "availability", "unmet_capabilities", "model_hashes",
+}
+DYNAMICS_KEYS = {
+    "ensemble", "integrator", "thermostat", "barostat", "barostat_coupling", "timestep_fs",
+    "timestep_native", "thermostat_damping_fs", "thermostat_damping_native",
+    "barostat_damping_fs", "barostat_damping_native",
+}
+
+
+def test_the_mock_execution_plan_is_what_the_run_constructs(tmp_path, pinned_nio):
+    """The plan's native numbers are the ones ASE's integrator reports it was built with."""
+    from ase import units
+
+    structure = write_structure(tmp_path, pinned_nio)
+    job = mock_job(structure, ensemble="nvt", temperature_K=300.0, thermostat="langevin",
+                   thermostat_damping_fs=40.0, timestep_fs=2.0, steps=4)
+    bridge = jobs.build_bridge(job.potential, job.engine)
+    plan = bridge.execution_plan(job.simulation, pinned_nio)
+    assert PLAN_KEYS <= set(plan) and DYNAMICS_KEYS <= set(plan["dynamics"])
+    assert plan["potential_kind"] == "mock" and plan["engine"] == "ase"
+    assert plan["model_checkpoint"] is None and plan["exported_model"] is None
+    assert plan["lammps"] is None and plan["openmm"] is None
+    assert plan["units"] == {**plan["units"], "native": "ase", "pressure_unit": "eV/Angstrom^3"}
+    assert plan["device"]["effective"] == "cpu" and plan["device"]["guaranteed"] is True
+    assert plan["precision"]["effective"] == "float64" and plan["precision"]["guaranteed"] is True
+    assert plan["availability"]["available"] and plan["unmet_capabilities"] == []
+    dynamics = plan["dynamics"]
+    assert dynamics["integrator"] == "ase.md.langevin.Langevin"
+    assert dynamics["timestep_native"] == pytest.approx(2.0 * units.fs, rel=1e-15)
+    assert dynamics["thermostat_damping_native"] == pytest.approx(40.0 * units.fs, rel=1e-15)
+    assert dynamics["barostat"] is None and dynamics["barostat_damping_native"] is None
+    assert dynamics["temperature_ndof"] == 3 * (len(pinned_nio) - 4)
+
+    trajectory = jobs.run_smoke_md(job, output_dir=tmp_path / "md")["trajectory"]
+    todict = trajectory.integrator_resolved["ase_todict"]
+    assert todict["timestep"] == pytest.approx(dynamics["timestep_native"], rel=1e-15)
+    assert todict["friction"] == pytest.approx(dynamics["friction_native"], rel=1e-15)
+    assert trajectory.integrator_resolved["class"] == dynamics["integrator"]
+    assert trajectory.temperature_ndof == dynamics["temperature_ndof"]
+
+
+def test_the_mock_npt_plan_gives_the_barostat_in_native_units(tmp_path):
+    from ase import units
+
+    atoms = hcp_mg()
+    job = mock_job(write_structure(tmp_path, atoms), elements=("Mg",), sigma=2.86,
+                   ensemble="npt", temperature_K=300.0, pressure_bar=1000.0,
+                   barostat="berendsen", barostat_damping_fs=500.0)
+    plan = jobs.build_bridge(job.potential, job.engine).execution_plan(job.simulation, atoms)
+    dynamics = plan["dynamics"]
+    assert dynamics["integrator"] == "ase.md.nptberendsen.NPTBerendsen"
+    assert dynamics["thermostat"] == "berendsen" and dynamics["barostat"] == "berendsen"
+    assert dynamics["barostat_damping_native"] == pytest.approx(500.0 * units.fs, rel=1e-15)
+    # 1000 bar in ASE's native eV/Angstrom^3 -- never atm -- exactly as passed to ASE.
+    from nio_md_prep.mlip.units import EV_PER_ANGSTROM3_IN_BAR
+
+    assert dynamics["pressure_native"] == 1000.0 / EV_PER_ANGSTROM3_IN_BAR
+    assert dynamics["constructor_kwargs_native"]["pressure_au"] == dynamics["pressure_native"]
+    # ase.units defaults to CODATA 2014 (e = 1.6021766208e-19 C, vs the exact SI 2019
+    # value used here): 8e-9 relative, far inside any statistical NPT tolerance.
+    assert dynamics["pressure_native"] == pytest.approx(1000.0 * units.bar, rel=1e-7)
+    assert dynamics["pressure_native_unit"] == "eV/Angstrom^3"
+
+
+def test_a_refused_md_request_is_listed_in_the_plan_not_raised(tmp_path):
+    atoms = hcp_mg()
+    job = mock_job(write_structure(tmp_path, atoms), elements=("Mg",), sigma=2.86,
+                   ensemble="npt", temperature_K=300.0, pressure_bar=1.0,
+                   barostat="parrinello-rahman")
+    with pytest.raises(ConfigError, match="MelchionnaNPT"):
+        jobs.validate_job(job)
+    plan = jobs.build_bridge(job.potential, job.engine).execution_plan(job.simulation, atoms)
+    assert any("MelchionnaNPT" in item for item in plan["unmet_capabilities"])
+    assert plan["unmet_capabilities"]
+    dynamics = plan["dynamics"]
+    assert DYNAMICS_KEYS <= set(dynamics)
+    assert dynamics["integrator"] is None and dynamics["timestep_native"] is None
+    assert dynamics["barostat"] == "parrinello-rahman" and "MelchionnaNPT" in dynamics["refused"]

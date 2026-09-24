@@ -507,7 +507,6 @@ def run_md(
     from ase.constraints import FixCom
     from ase.io.trajectory import Trajectory
 
-    from ..diagnostics import temperature_ndof
     from ..specs import resolve_seed
     from ..structures import fixed_atom_indices
 
@@ -525,30 +524,15 @@ def run_md(
     rng_velocities = np.random.default_rng(velocity_stream)
     rng_dynamics = np.random.default_rng(dynamics_stream)
 
-    use_fixcom = not fixed and plan.constraint_aware
+    policy = centre_of_mass_policy(plan, len(atoms), len(fixed))
+    use_fixcom = policy["fixcom"]
     if use_fixcom:
         atoms.set_constraint(input_constraints + [FixCom()])
     velocities = _initialise_velocities(
-        atoms, simulation.temperature_K, rng_velocities, stationary=not fixed and not use_fixcom
+        atoms, simulation.temperature_K, rng_velocities, stationary=policy["stationary"]
     )
-    if fixed:
-        com_removal = "none: frozen atoms pin the system, the centre of mass is not free"
-    elif use_fixcom:
-        com_removal = (
-            "ase.constraints.FixCom during the run (centre-of-mass position and momentum "
-            "held; not written to trajectory frames)"
-        )
-    else:
-        com_removal = (
-            f"Stationary at initialisation only; {plan.integrator} "
-            + (
-                "removes the centre-of-mass momentum itself (fixcm=True)"
-                if plan.integrator == "NPTBerendsen"
-                else "conserves the zero centre-of-mass momentum"
-            )
-            + " and counts 3N degrees of freedom"
-        )
-    ndof = temperature_ndof(len(atoms), n_fixed=len(fixed), com_removed=use_fixcom)
+    com_removal = policy["description"]
+    ndof = policy["temperature_ndof"]
     ase_ndof = int(atoms.get_number_of_degrees_of_freedom())
     if ase_ndof != ndof:
         raise ResultError(
@@ -580,6 +564,8 @@ def run_md(
     # One row per logged MD step, taken only by this observer: ASE calls it
     # once at nsteps == 0 and then after every step whose number is a
     # multiple of the interval, so step numbers are unique by construction.
+    # The final step is sampled once more after the run when it is not a
+    # multiple, so the energy diagnostics always span the whole run.
     history: list[tuple[int, float, float, float, float | None]] = []
 
     def sample():
@@ -605,6 +591,8 @@ def run_md(
         trajectory.close()
     wall_time = time.perf_counter() - started
     steps_completed = int(dynamics.nsteps)
+    if not history or history[-1][0] != steps_completed:
+        sample()
     final_temperature = float(atoms.get_temperature())
     atoms.set_constraint(input_constraints)
 
@@ -708,21 +696,24 @@ def _initialise_velocities(atoms, temperature_K, rng, *, stationary: bool) -> st
     return f"{how} at {temperature_K:g} K, constraints applied"
 
 
-def _make_dynamics(
-    atoms,
-    simulation: SimulationSpec,
-    plan: IntegratorPlan,
-    timestep: float,
-    rng,
-    *,
-    options: Mapping | None = None,
-):
-    """Build the planned ASE integrator; return it and its resolved parameters."""
-    from importlib import import_module
+def integrator_settings(
+    simulation: SimulationSpec, plan: IntegratorPlan, *, options: Mapping | None = None
+) -> tuple[dict, dict]:
+    """What the planned integrator is constructed with, and the record of it.
 
+    Returns ``(kwargs, resolved)``: ``kwargs`` are the keyword arguments
+    passed to the ASE class after ``(atoms, timestep)``, in ASE's native
+    units (time in ``ase.units.fs`` multiples, pressure and compressibility in
+    eV/Angstrom^3 and its inverse); ``resolved`` records the same values in
+    fs / bar / GPa for a manifest. The integrator's random generator, when
+    it takes one, is added by :func:`_make_dynamics`. Pure apart from the
+    lazy ``ase.units`` import, so :func:`execution_plan` shows exactly the
+    numbers :func:`run_md` will pass.
+    """
     from ase import units as ase_units
 
-    cls = getattr(import_module(plan.module), plan.integrator)
+    from ..units import EV_PER_ANGSTROM3_IN_BAR
+
     resolved: dict = {
         **plan.as_dict(),
         "class": f"{plan.module}.{plan.integrator}",
@@ -730,7 +721,7 @@ def _make_dynamics(
         "temperature_K": simulation.temperature_K,
     }
     if plan.ensemble == "nve":
-        return cls(atoms, timestep), resolved
+        return {}, resolved
 
     damping_fs = simulation.resolved_thermostat_damping_fs
     tau = damping_fs * ase_units.fs
@@ -739,28 +730,16 @@ def _make_dynamics(
     if plan.integrator == "Langevin":
         # ASE's Langevin friction is a rate: 1/tau, in inverse ASE time.
         resolved.update(friction_per_fs=1.0 / damping_fs, fixcm=False)
-        return (
-            cls(
-                atoms,
-                timestep,
-                temperature_K=temperature,
-                friction=1.0 / tau,
-                fixcm=False,
-                rng=rng,
-            ),
-            resolved,
-        )
+        return dict(temperature_K=temperature, friction=1.0 / tau, fixcm=False), resolved
     if plan.integrator == "NVTBerendsen":
         resolved.update(taut_fs=damping_fs, fixcm=False)
-        return cls(atoms, timestep, temperature_K=temperature, taut=tau, fixcm=False), resolved
+        return dict(temperature_K=temperature, taut=tau, fixcm=False), resolved
     if plan.integrator == "NoseHooverChainNVT":
         resolved.update(tdamp_fs=damping_fs, **NHC_CHAIN)
-        return cls(atoms, timestep, temperature_K=temperature, tdamp=tau, **NHC_CHAIN), resolved
+        return dict(temperature_K=temperature, tdamp=tau, **NHC_CHAIN), resolved
     if plan.integrator == "Bussi":
         resolved.update(taut_fs=damping_fs)
-        return cls(atoms, timestep, temperature_K=temperature, taut=tau, rng=rng), resolved
-
-    from ..units import EV_PER_ANGSTROM3_IN_BAR
+        return dict(temperature_K=temperature, taut=tau), resolved
 
     pressure_au = simulation.pressure_bar / EV_PER_ANGSTROM3_IN_BAR
     barostat_fs = simulation.resolved_barostat_damping_fs
@@ -781,7 +760,7 @@ def _make_dynamics(
         if plan.integrator == "MaskedMTKNPT":
             kwargs["mask"] = (True, True, True)
             resolved["mask"] = [True, True, True]
-        return cls(atoms, timestep, **kwargs), resolved
+        return kwargs, resolved
 
     # Berendsen barostat: needs a compressibility, i.e. a bulk-modulus guess.
     bulk_modulus = bulk_modulus_GPa(options)
@@ -809,7 +788,65 @@ def _make_dynamics(
     if plan.integrator == "Inhomogeneous_NPTBerendsen":
         kwargs["mask"] = (1, 1, 1)
         resolved["mask"] = [1, 1, 1]
+    return kwargs, resolved
+
+
+#: Integrators whose constructor takes the run's random generator.
+STOCHASTIC_INTEGRATORS = frozenset({"Langevin", "Bussi"})
+
+
+def _make_dynamics(
+    atoms,
+    simulation: SimulationSpec,
+    plan: IntegratorPlan,
+    timestep: float,
+    rng,
+    *,
+    options: Mapping | None = None,
+):
+    """Build the planned ASE integrator; return it and its resolved parameters."""
+    from importlib import import_module
+
+    cls = getattr(import_module(plan.module), plan.integrator)
+    kwargs, resolved = integrator_settings(simulation, plan, options=options)
+    if plan.integrator in STOCHASTIC_INTEGRATORS:
+        kwargs["rng"] = rng
     return cls(atoms, timestep, **kwargs), resolved
+
+
+def centre_of_mass_policy(plan: IntegratorPlan, n_atoms: int, n_fixed: int) -> dict:
+    """How the centre of mass is treated for ``plan``, and the resulting DOF.
+
+    ``fixcom``: an ``ase.constraints.FixCom`` is attached for the run (no
+    frozen atoms, constraint-aware integrator); ``stationary``: the
+    centre-of-mass momentum is removed once at initialisation.
+    """
+    from ..diagnostics import temperature_ndof
+
+    fixcom = not n_fixed and plan.constraint_aware
+    if n_fixed:
+        description = "none: frozen atoms pin the system, the centre of mass is not free"
+    elif fixcom:
+        description = (
+            "ase.constraints.FixCom during the run (centre-of-mass position and momentum "
+            "held; not written to trajectory frames)"
+        )
+    else:
+        description = (
+            f"Stationary at initialisation only; {plan.integrator} "
+            + (
+                "removes the centre-of-mass momentum itself (fixcm=True)"
+                if plan.integrator == "NPTBerendsen"
+                else "conserves the zero centre-of-mass momentum"
+            )
+            + " and counts 3N degrees of freedom"
+        )
+    return {
+        "fixcom": fixcom,
+        "stationary": not n_fixed and not fixcom,
+        "temperature_ndof": temperature_ndof(n_atoms, n_fixed=n_fixed, com_removed=fixcom),
+        "description": description,
+    }
 
 
 def _conserved_energy(dynamics, atoms):
@@ -887,26 +924,201 @@ def integrator_parameters(
 ) -> dict | None:
     """What :func:`run_md` will build for ``simulation``, for a manifest.
 
-    Refusals are reported, not raised: ``engine_parameters`` must describe a
-    job even when validation would refuse it.
+    The same :func:`integrator_settings` record the run returns (minus what
+    only the run knows: the seed actually used and ``todict()``). Refusals
+    are reported, not raised: ``engine_parameters`` must describe a job even
+    when validation would refuse it.
     """
     if simulation.task != "md":
         return None
     try:
         plan = resolve_integrator(simulation)
+        _, report = integrator_settings(simulation, plan, options=options)
     except ConfigError as exc:
         return {"refused": str(exc)}
-    report = {**plan.as_dict(), "class": f"{plan.module}.{plan.integrator}"}
-    if plan.ensemble != "nve":
-        report["thermostat_damping_fs"] = simulation.resolved_thermostat_damping_fs
-    if plan.ensemble == "npt":
-        report["barostat_damping_fs"] = simulation.resolved_barostat_damping_fs
-        if plan.barostat == "berendsen":
-            try:
-                report["bulk_modulus_GPa"] = bulk_modulus_GPa(options)
-            except ConfigError as exc:
-                report["refused"] = str(exc)
+    except ImportError:  # no ASE here: describe the plan without unit values
+        plan = resolve_integrator(simulation)
+        report = {**plan.as_dict(), "class": f"{plan.module}.{plan.integrator}"}
     return report
+
+
+#: The native time unit of every ASE integrator argument.
+ASE_TIME_UNIT = "ASE time unit (Angstrom*sqrt(amu/eV), 1 fs = ase.units.fs = 0.0982269 of it)"
+ASE_PRESSURE_UNIT = "eV/Angstrom^3"
+
+
+def dynamics_plan(
+    simulation: SimulationSpec, atoms=None, *, options: Mapping | None = None
+) -> dict | None:
+    """The ``dynamics`` block of a bridge's execution plan, or ``None`` (no MD).
+
+    Every time is given in fs and in the ASE-native value the integrator is
+    constructed with (``timestep_native``, ``thermostat_damping_native``,
+    ``barostat_damping_native``; ``friction_native`` for Langevin). With a
+    structure, the centre-of-mass treatment and the temperature degrees of
+    freedom are resolved too. Raises :class:`ConfigError` for a refused
+    request, exactly as :func:`check_simulation` would.
+    """
+    if simulation.task != "md":
+        return None
+    from ase import units as ase_units
+
+    plan = check_simulation(simulation, atoms, options=options)
+    kwargs, resolved = integrator_settings(simulation, plan, options=options)
+    fs = ase_units.fs
+    dynamics: dict = {
+        "ensemble": plan.ensemble,
+        "integrator": f"{plan.module}.{plan.integrator}",
+        "thermostat": plan.thermostat,
+        "barostat": plan.barostat,
+        "barostat_coupling": plan.barostat_coupling,
+        "timestep_fs": float(simulation.timestep_fs),
+        "timestep_native": float(simulation.timestep_fs) * fs,
+        "thermostat_damping_fs": None,
+        "thermostat_damping_native": None,
+        "barostat_damping_fs": None,
+        "barostat_damping_native": None,
+        "native_time_unit": ASE_TIME_UNIT,
+        "defaults_applied": list(plan.defaults),
+        "notes": list(plan.notes),
+        "temperature_K": simulation.temperature_K,
+        "seed": simulation.seed,
+        "seed_source": (
+            "simulation.seed"
+            if simulation.seed is not None
+            else "drawn at run time (secrets) and recorded in integrator_resolved"
+        ),
+        "rng": (
+            "numpy SeedSequence(seed).spawn(2): stream 0 draws the initial velocities, "
+            "stream 1 the integrator's noise"
+        ),
+        "constructor_kwargs_native": _jsonable(kwargs),
+        "resolved": resolved,
+    }
+    if plan.ensemble != "nve":
+        damping = simulation.resolved_thermostat_damping_fs
+        dynamics.update(thermostat_damping_fs=damping, thermostat_damping_native=damping * fs)
+        if plan.integrator == "Langevin":
+            dynamics["friction_native"] = 1.0 / (damping * fs)
+    if plan.ensemble == "npt":
+        damping = simulation.resolved_barostat_damping_fs
+        dynamics.update(
+            barostat_damping_fs=damping,
+            barostat_damping_native=damping * fs,
+            pressure_bar=float(simulation.pressure_bar),
+            pressure_native=resolved["pressure_eV_per_A3"],
+            pressure_native_unit=ASE_PRESSURE_UNIT,
+        )
+    if atoms is not None:
+        from ..structures import fixed_atom_indices
+
+        policy = centre_of_mass_policy(plan, len(atoms), len(fixed_atom_indices(atoms)))
+        dynamics.update(
+            centre_of_mass=policy["description"],
+            temperature_ndof=policy["temperature_ndof"],
+        )
+    return dynamics
+
+
+def refused_dynamics(simulation: SimulationSpec, reason: str) -> dict:
+    """The ``dynamics`` block for an MD request no ASE integrator will run.
+
+    Same keys as :func:`dynamics_plan`: the request as written, no
+    integrator and no native values (nothing would be constructed), and the
+    reason, which is also in the plan's ``unmet_capabilities``.
+    """
+    return {
+        "ensemble": simulation.ensemble,
+        "integrator": None,
+        "thermostat": simulation.thermostat,
+        "barostat": simulation.barostat,
+        "barostat_coupling": simulation.barostat_coupling,
+        "timestep_fs": simulation.timestep_fs,
+        "timestep_native": None,
+        "thermostat_damping_fs": simulation.thermostat_damping_fs,
+        "thermostat_damping_native": None,
+        "barostat_damping_fs": simulation.barostat_damping_fs,
+        "barostat_damping_native": None,
+        "native_time_unit": ASE_TIME_UNIT,
+        "refused": reason,
+    }
+
+
+def base_execution_plan(bridge, simulation: SimulationSpec, atoms=None) -> dict:
+    """The route-independent part of an ASE bridge's ``execution_plan``.
+
+    Runs every check ``validate`` runs -- element coverage, capability
+    negotiation, the bridge's ``check_simulation`` -- but collects the
+    refusals into ``unmet_capabilities`` instead of raising, so the plan can
+    be shown for a job that would be refused. Nothing is executed and no
+    calculator is built. The bridge fills in ``model_checkpoint``,
+    ``energy_convention``, ``device``, ``precision`` and ``model_hashes``.
+    """
+    from ..capabilities import check_elements
+    from ..errors import MlipError
+
+    unmet: list[str] = []
+    capabilities = bridge.capabilities()
+    if atoms is not None:
+        try:
+            check_elements(
+                capabilities, atoms.get_chemical_symbols(), label=bridge.potential.label
+            )
+        except MlipError as exc:
+            unmet.append(str(exc))
+    try:
+        unmet += bridge.requirements(simulation, atoms).unmet(capabilities)
+    except MlipError as exc:
+        unmet.append(str(exc))
+    try:
+        bridge.check_simulation(simulation, atoms)
+    except MlipError as exc:
+        unmet.append(str(exc))
+    dynamics = None
+    if simulation.task == "md":
+        try:
+            dynamics = dynamics_plan(simulation, atoms, options=bridge.engine.options)
+        except MlipError as exc:
+            dynamics = refused_dynamics(simulation, str(exc))
+    availability = bridge.availability()
+    elements = (
+        sorted(capabilities.elements)
+        if capabilities.elements is not None
+        else sorted(bridge.potential.elements)
+    )
+    return {
+        "potential_kind": bridge.potential_kind,
+        "engine": bridge.engine_kind,
+        "bridge": f"{type(bridge).__module__}.{type(bridge).__qualname__}",
+        "implementation": bridge.implementation,
+        "model_checkpoint": None,
+        "exported_model": None,
+        "elements": elements,
+        "energy_convention": None,
+        "units": {
+            "native": ASE.name,
+            "pressure_unit": ASE_PRESSURE_UNIT,
+            "energy": "eV",
+            "length": "Angstrom",
+            "force": "eV/Angstrom",
+            "time": ASE_TIME_UNIT,
+            "conversion": "none: ASE's native units are the canonical ones",
+        },
+        "device": None,
+        "precision": None,
+        "dynamics": dynamics,
+        "lammps": None,
+        "openmm": None,
+        "availability": {
+            "available": bool(availability),
+            "missing": list(availability.missing),
+            "detail": availability.detail,
+        },
+        "unmet_capabilities": unmet,
+        "model_hashes": {"declared": dict(bridge.potential.declared_hashes()), "observed": {}},
+        "task": simulation.task,
+        "forces": "raw calculator forces: get_forces(apply_constraint=False)",
+    }
 
 
 def restate(
@@ -969,6 +1181,11 @@ __all__ = [
     "resolve_integrator",
     "check_simulation",
     "integrator_parameters",
+    "integrator_settings",
+    "base_execution_plan",
+    "dynamics_plan",
+    "refused_dynamics",
+    "centre_of_mass_policy",
     "singlepoint",
     "optimize",
     "run_md",

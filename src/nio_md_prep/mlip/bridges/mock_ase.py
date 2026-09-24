@@ -85,6 +85,45 @@ class MockAseBridge(Bridge):
             )
         return parameters
 
+    def execution_plan(self, simulation: SimulationSpec, atoms=None) -> dict:
+        """What would run, resolved without building the calculator."""
+        plan = ase_engine.base_execution_plan(self, simulation, atoms)
+        target = self._reported_convention(simulation)
+        native = self.potential.energy_convention
+        plan.update(
+            energy_convention=target,
+            energy_convention_native=native,
+            energy_conversion=(
+                None
+                if target == native
+                else f"{target} = {native} {'-' if target == 'interaction' else '+'} sum of "
+                "the declared potential.atomic_reference_energies"
+            ),
+            calculator={
+                "class": "nio_md_prep.mlip._mock_calculator.MockLennardJones",
+                "kwargs": {
+                    "epsilon_eV": self.potential.epsilon_eV,
+                    "sigma_angstrom": self.potential.sigma_angstrom,
+                    "cutoff_angstrom": self.potential.cutoff_angstrom,
+                    "supported_elements": list(self.potential.elements),
+                },
+            },
+            device={
+                "requested": None,
+                "effective": "cpu",
+                "guaranteed": True,
+                "note": "the analytic calculator is numpy on the CPU; there is no device knob",
+            },
+            precision={
+                "requested": self.engine.precision,
+                "effective": "float64",
+                "guaranteed": True,
+                "note": "numpy float64 throughout",
+            },
+            warning=MOCK_WARNING,
+        )
+        return plan
+
     def _reported_convention(self, simulation: SimulationSpec | None) -> str:
         if simulation is not None and simulation.energy_convention:
             return simulation.energy_convention
