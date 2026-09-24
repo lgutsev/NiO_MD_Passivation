@@ -30,6 +30,14 @@ reads them. OpenMM-ML cannot select a head of a multi-head model, and has no
 No stress tensor is reported through this route, so ``stress`` is false and a
 constant-pressure job is rejected during capability negotiation (and, by
 policy, in :meth:`MaceOpenMMBridge.check_simulation`).
+
+Precision is the subtle one. OpenMM-ML 1.6/1.7 cast the *inputs* to the
+requested dtype but never the model's parameters, so ``potential.precision``
+is only achievable when the model file is stored in that dtype (1.8 converts
+the model). Validation reads the stored dtype statically from the pickled
+model -- no torch import -- and refuses a known mismatch; execution checks it
+again against the loaded model. :meth:`MaceOpenMMBridge.execution_plan`
+reports ``guaranteed = False`` whenever it cannot establish the outcome.
 """
 from __future__ import annotations
 
@@ -38,7 +46,7 @@ from pathlib import Path
 
 from ..capabilities import CapabilitySet
 from ..environment import Availability
-from ..errors import CapabilityError, ConfigError, EnergyConventionError
+from ..errors import CapabilityError, ConfigError, EnergyConventionError, MlipError, ResultError
 from ..potentials.mace import MaceAdapter
 from ..results import PotentialResult, TrajectoryResult
 from ..specs import SimulationSpec
@@ -53,6 +61,19 @@ OPENMM_ML_DEFAULT_CONVENTION = INTERACTION
 #: Declared and model E0s closer than this (eV) are the same reference.
 E0_CONFLICT_TOLERANCE_EV = 1e-8
 
+#: MACE model classes whose output has no ``interaction_energy`` key (the
+#: plain ``mace.modules.models.MACE``; ScaleShiftMACE adds it). Refused at
+#: validate for the interaction convention when the stored class is known.
+NO_INTERACTION_ENERGY_CLASSES = frozenset({"MACE"})
+
+#: torch storage class -> dtype name, for the static model read.
+_STORAGE_DTYPES = {
+    "FloatStorage": "float32",
+    "DoubleStorage": "float64",
+    "HalfStorage": "float16",
+    "BFloat16Storage": "bfloat16",
+}
+
 
 class MaceOpenMMBridge(Bridge):
     potential_kind = "mace"
@@ -65,6 +86,7 @@ class MaceOpenMMBridge(Bridge):
         self.runtime = OpenMMEngine(engine)
         self._systems: dict[tuple, tuple] = {}
         self._metadata: dict[str, dict] = {}
+        self._peeks: dict[tuple, dict] = {}
 
     # -- conventions ------------------------------------------------------
 
@@ -123,6 +145,49 @@ class MaceOpenMMBridge(Bridge):
             self._metadata[digest] = {"sha256": digest, **_read_model(self.potential.model_path)}
         return self._metadata[digest]
 
+    def stored_model(self) -> dict:
+        """Class and stored float dtype of the model file, read without torch.
+
+        Cached per file identity (path, size, mtime). ``{}`` when the file
+        does not exist.
+        """
+        path = self.potential.model_path
+        try:
+            stat = path.stat()
+        except OSError:
+            return {}
+        key = (str(path), stat.st_size, stat.st_mtime_ns)
+        if key not in self._peeks:
+            self._peeks[key] = _peek_model(path)
+        return self._peeks[key]
+
+    def precision_plan(self, *, loaded: bool = False) -> dict:
+        """:func:`openmm_engine.precision_plan` for this model and the installed OpenMM-ML.
+
+        ``loaded=True`` uses the dtype of the model as torch loads it
+        (execution time); otherwise the statically read stored dtype.
+        """
+        if loaded:
+            dtype = self.model_metadata().get("dtype")
+            source = "the model's parameters, loaded with torch"
+        else:
+            stored = self.stored_model()
+            dtype = stored.get("dtype")
+            source = stored.get("source")
+        return openmm_engine.precision_plan(
+            self.potential.precision,
+            openmmml=openmm_engine.openmmml_version(),
+            model_dtype=dtype,
+            model_dtype_source=source,
+        )
+
+    def device_plan(self) -> dict:
+        return openmm_engine.device_plan(
+            self.potential.device,
+            platform=self.engine.platform,
+            openmmml=openmm_engine.openmmml_version(),
+        )
+
     def atomic_reference_energies(self):
         """The model's own E0s: what OpenMM-ML's interaction energy subtracts.
 
@@ -163,7 +228,17 @@ class MaceOpenMMBridge(Bridge):
                 "(only ScaleShiftMACE does), so OpenMM-ML cannot report the interaction "
                 "convention for it; request energy_convention = 'total'"
             )
-        return metadata
+        precision = self.precision_plan(loaded=True)
+        if not precision["guaranteed"]:
+            raise CapabilityError(
+                precision.get("refusal")
+                or f"potential.precision = {self.potential.precision!r} cannot be "
+                f"guaranteed on this route: {precision['note']}"
+            )
+        device = self.device_plan()
+        if not device["guaranteed"]:  # pragma: no cover - require_openmm refuses first
+            raise CapabilityError(f"potential.device cannot be guaranteed: {device['note']}")
+        return {**metadata, "precision_plan": precision, "device_plan": device}
 
     # -- gating -----------------------------------------------------------
 
@@ -183,10 +258,34 @@ class MaceOpenMMBridge(Bridge):
         openmm_engine.check_md_request(simulation)
         if atoms is not None:
             openmm_engine.check_structure(atoms, md=simulation.task == "md")
+        # Statically read (no torch): refuses a precision this OpenMM-ML
+        # release is known not to deliver for this model file.
+        refusal = self.precision_plan().get("refusal")
+        if refusal:
+            raise CapabilityError(refusal)
+        stored_class = self.stored_model().get("model_class")
+        if (
+            self.requested_convention(simulation) == INTERACTION
+            and stored_class in NO_INTERACTION_ENERGY_CLASSES
+        ):
+            raise CapabilityError(
+                f"{stored_class} does not output an interaction energy (only "
+                "ScaleShiftMACE does), so OpenMM-ML cannot report the interaction "
+                "convention for it; request energy_convention = 'total'"
+            )
 
     def engine_parameters(self, simulation: SimulationSpec | None = None) -> dict:
-        """What this job will request, recorded without loading the model."""
+        """What this job will request, recorded without loading the model.
+
+        ``model_precision`` and ``device`` are the static plans (with their
+        ``guaranteed`` flags); what actually ran is in the results'
+        ``execution_settings``.
+        """
         convention = self.requested_convention(simulation)
+        try:
+            properties = openmm_engine.check_request(self.engine, device=self.potential.device)
+        except ConfigError as exc:
+            properties = {"refused": str(exc)}
         parameters = {
             "implementation": self.implementation,
             "potential": "openmmml.MLPotential('mace')",
@@ -207,9 +306,9 @@ class MaceOpenMMBridge(Bridge):
             "platform_precision": self.engine.platform_precision,
             "threads": self.engine.threads,
             "precision": self.engine.precision,
-            "platform_properties_requested": openmm_engine.check_request(
-                self.engine, device=self.potential.device
-            ),
+            "platform_properties_requested": properties,
+            "model_precision": self.precision_plan(),
+            "device": self.device_plan(),
             "native_units": OPENMM.name,
             "native_energy_unit": OPENMM.energy,
             "native_length_unit": OPENMM.length,
@@ -220,16 +319,219 @@ class MaceOpenMMBridge(Bridge):
             ),
         }
         if simulation is not None and simulation.task == "md":
-            thermostat = openmm_engine.resolved_thermostat(simulation)
-            parameters["integrator"] = (
-                openmm_engine.SUPPORTED_THERMOSTATS.get(thermostat, thermostat)
-                if thermostat
-                else "VerletIntegrator"
-            )
-            parameters["thermostat"] = thermostat
-            if thermostat:
-                parameters["thermostat_damping_fs"] = simulation.resolved_thermostat_damping_fs
+            dynamics = openmm_engine.dynamics_plan(simulation)
+            parameters["integrator"] = dynamics["integrator"]
+            parameters["thermostat"] = dynamics["thermostat"]
+            parameters["dynamics"] = dynamics
+            if dynamics["thermostat"]:
+                parameters["thermostat_damping_fs"] = dynamics["thermostat_damping_fs"]
         return parameters
+
+    def execution_plan(self, simulation: SimulationSpec, atoms=None) -> dict:
+        """The complete plan for this job on this route, without executing anything.
+
+        Imports neither torch nor OpenMM: the model is hashed and its class
+        and stored dtype are read statically, the OpenMM-ML version comes from
+        package metadata. Refusals are listed in ``unmet_capabilities`` (this
+        method reports; :meth:`validate` refuses). Values OpenMM decides only
+        when a Context exists (an unnamed platform, its property defaults)
+        are ``None`` with a note, and ``guaranteed`` is true only where the
+        installed OpenMM-ML is known to apply the request.
+        """
+        from ..diagnostics import temperature_ndof
+        from ..provenance import sha256_file
+        from ..specs import path_key
+        from ..structures import fixed_atom_indices, periodic_axes
+
+        unmet: list[str] = []
+
+        def attempt(check, *args, **kwargs):
+            try:
+                return check(*args, **kwargs)
+            except MlipError as exc:
+                message = str(exc)
+                if message not in unmet:
+                    unmet.append(message)
+                return None
+
+        convention = self.requested_convention(simulation)
+        capabilities = self.capabilities()
+        model_path = Path(self.potential.model_path)
+        exists = model_path.exists()
+        digest = sha256_file(model_path) if exists else None
+        stored = self.stored_model() if exists else {}
+        md = simulation.task == "md"
+
+        if atoms is not None:
+            missing = capabilities.supports_elements(atoms.get_chemical_symbols())
+            if missing:
+                unmet.append(
+                    f"elements {', '.join(sorted(missing))} are not covered by "
+                    f"{self.potential.label}"
+                )
+        requirements = attempt(self.requirements, simulation, atoms)
+        if requirements is not None:
+            unmet.extend(p for p in requirements.unmet(capabilities) if p not in unmet)
+        attempt(self.check_simulation, simulation, atoms)
+
+        box = None
+        fixed: list[int] = []
+        charge = multiplicity = None
+        sources: tuple = (None, None)
+        if atoms is not None:
+            fixed = list(attempt(fixed_atom_indices, atoms) or ())
+            if all(periodic_axes(atoms)):
+                box = attempt(openmm_engine.reduced_box, atoms.get_cell())
+            charge, multiplicity, sources = _charge_and_spin(atoms)
+        remove_cm_motion = bool(md and not fixed)
+        properties = attempt(
+            openmm_engine.check_request, self.engine, device=self.potential.device
+        )
+
+        dynamics = openmm_engine.dynamics_plan(simulation)
+        if dynamics is not None:
+            seed_policy = (
+                "velocity and integrator seeds are two SeedSequence children of the "
+                "recorded seed"
+            )
+            if simulation.seed is None:
+                seed_policy += "; the seed is drawn at execution and recorded"
+            velocities = "zero"
+            if simulation.temperature_K:
+                velocities = "setVelocitiesToTemperature(T, velocity_seed)"
+                if remove_cm_motion:
+                    velocities += ", then the centre-of-mass velocity is removed"
+            dynamics = {
+                **dynamics,
+                "removeCMMotion": remove_cm_motion,
+                "temperature_ndof": (
+                    temperature_ndof(
+                        len(atoms), n_fixed=len(fixed), com_removed=remove_cm_motion
+                    )
+                    if atoms is not None
+                    else None
+                ),
+                "velocities": velocities,
+                "seed": simulation.seed,
+                "seed_policy": seed_policy,
+                "trajectory": {
+                    "format": "DCD",
+                    "interval_steps": simulation.trajectory_interval,
+                    "expected_frames": simulation.steps // simulation.trajectory_interval + 1,
+                    "includes_step_0": True,
+                },
+            }
+
+        platform = self.engine.platform
+        if exists:
+            precision = self.precision_plan()
+        else:
+            precision = openmm_engine.precision_plan(
+                self.potential.precision,
+                openmmml=openmm_engine.openmmml_version(),
+                model_dtype=None,
+                model_dtype_source="the model file does not exist",
+            )
+        precision["platform_precision"] = openmm_engine.platform_precision_plan(
+            platform, self.engine.platform_precision
+        )
+        declared = self.potential.declared_hashes()
+        observed = {str(model_path): digest} if digest else {}
+        observed_by_key = {path_key(p): sha for p, sha in observed.items()}
+        if platform is None:
+            platform_note = (
+                "OpenMM picks the fastest available platform when the Context is "
+                "created; the choice is read back and recorded"
+            )
+        else:
+            platform_note = (
+                "named platform; whether it is installed is checked when OpenMM is "
+                "imported at execution (an unavailable one is refused with the list of "
+                "available platforms)"
+            )
+        return {
+            "potential_kind": self.potential_kind,
+            "engine": self.engine_kind,
+            "bridge": type(self).__name__,
+            "implementation": self.implementation,
+            "label": self.label,
+            "model_checkpoint": {
+                "path": str(model_path),
+                "exists": exists,
+                "sha256": digest,
+                "model_class": stored.get("model_class"),
+                "stored_dtype": stored.get("dtype"),
+                "stored_dtype_source": stored.get("source"),
+            },
+            "exported_model": None,
+            "exported_model_note": (
+                "none: OpenMM-ML loads the MACE checkpoint itself (torch.load in "
+                "MACEPotentialImpl.addForces); there is no export step"
+            ),
+            "elements": sorted(self.potential.elements),
+            "structure_elements": (
+                sorted(set(atoms.get_chemical_symbols())) if atoms is not None else None
+            ),
+            "energy_convention": convention,
+            "energy_convention_detail": {
+                "requested": convention,
+                "returnEnergyType": ENERGY_TYPE[convention],
+                "openmmml_default": ENERGY_TYPE[OPENMM_ML_DEFAULT_CONVENTION],
+                "atomic_reference_energies_source": "the model's own E0s (read at execution)",
+            },
+            "units": {
+                "native": OPENMM.name,
+                "energy": OPENMM.energy,
+                "length": OPENMM.length,
+                "time": "ps",
+                "pressure_unit": None,
+                "pressure_note": "no pressure or stress is produced on this route (NPT refused)",
+                "energy_scale_kJ_per_mol_per_eV": (
+                    openmm_engine.OPENMMML_ENERGY_SCALE_KJ_PER_MOL_PER_EV
+                ),
+                "length_scale_A_per_nm": openmm_engine.OPENMMML_LENGTH_SCALE_A_PER_NM,
+            },
+            "device": self.device_plan(),
+            "precision": precision,
+            "dynamics": dynamics,
+            "lammps": None,
+            "openmm": {
+                "platform": {"requested": platform, "effective": platform, "note": platform_note},
+                "properties": properties,
+                "create_system_kwargs": {
+                    "returnEnergyType": ENERGY_TYPE[convention],
+                    "precision": openmm_engine.MODEL_PRECISION[self.potential.precision],
+                    "device": self.potential.device,
+                    "charge": charge,
+                    "multiplicity": multiplicity,
+                    "charge_source": sources[0],
+                    "multiplicity_source": sources[1],
+                    "removeCMMotion": remove_cm_motion,
+                },
+                "masses": "ASE masses (atoms.get_masses()); FixAtoms atoms zero",
+                "zero_mass_atoms": fixed,
+                "box": box.as_dict() if box is not None else None,
+                "versions": {
+                    "openmm": openmm_engine.distribution_version("openmm"),
+                    "openmmml": openmm_engine.openmmml_version(),
+                    "source": "package metadata (nothing imported)",
+                },
+            },
+            "availability": self.availability().as_dict(),
+            "unmet_capabilities": unmet,
+            "model_hashes": {
+                "declared": dict(declared),
+                "observed": observed,
+                "match": (
+                    all(
+                        observed_by_key.get(path_key(p), "").lower() == sha.lower()
+                        for p, sha in declared.items()
+                    )
+                    if declared
+                    else None
+                ),
+            },
+        }
 
     # -- execution --------------------------------------------------------
 
@@ -299,10 +601,13 @@ class MaceOpenMMBridge(Bridge):
             **payload["native"],
             "returnEnergyType": ENERGY_TYPE[convention],
             "system": record,
+            "execution_settings": _execution_settings(record, payload["native"]["platform"], metadata),
             "model_sha256": metadata["sha256"],
             "model_class": metadata.get("model_class"),
             "model_native_dtype": metadata.get("dtype"),
-            "model_evaluation_dtype": self.potential.precision,
+            "model_evaluation_dtype": metadata["precision_plan"]["effective"],
+            "model_precision": metadata["precision_plan"],
+            "device": metadata["device_plan"],
             "atomic_reference_energies_eV": dict(model_e0s) if model_e0s else None,
             "atomic_reference_energies_source": "model",
         }
@@ -314,11 +619,19 @@ class MaceOpenMMBridge(Bridge):
         )
 
     def run_md(self, atoms, simulation: SimulationSpec, *, workdir: Path) -> TrajectoryResult:
+        """A smoke trajectory whose endpoints and dynamics share one execution setup.
+
+        The endpoint single points and the dynamics use the same platform,
+        platform properties, model device and dtype (``execution_settings``,
+        read back from each Context); a difference is a
+        :class:`~nio_md_prep.mlip.errors.ResultError`, not a footnote.
+        """
         from ..structures import fixed_atom_indices
 
         self.validate(simulation, atoms)
         endpoint = self.as_singlepoint(simulation)
         initial = self.singlepoint(atoms, endpoint)
+        metadata = self._check_model(self.requested_convention(endpoint))
         fixed = fixed_atom_indices(atoms)
         system, record, box = self.system(atoms, simulation, md=True)
         payload = openmm_engine.run_md(
@@ -332,11 +645,44 @@ class MaceOpenMMBridge(Bridge):
             fixed_atoms=fixed,
             remove_cm_motion=record["createSystem"]["removeCMMotion"],
         )
-        payload["integrator_resolved"]["system"] = record
+        resolved = payload["integrator_resolved"]
+        resolved["system"] = record
+        resolved["execution_settings"] = _execution_settings(
+            record, resolved["platform"], metadata
+        )
         final = self.singlepoint(payload["atoms"], endpoint)
+        for label, point in (("initial", initial), ("final", final)):
+            if point.extras["execution_settings"] != resolved["execution_settings"]:
+                raise ResultError(
+                    f"the {label} single point ran with different execution settings than "
+                    f"the dynamics: {point.extras['execution_settings']} vs "
+                    f"{resolved['execution_settings']}"
+                )
         trajectory = self._trajectory(payload, simulation, initial, final)
         trajectory.extras["trajectory_frame"] = payload.get("trajectory_frame")
+        trajectory.extras["final_velocities"] = payload.get("final_velocities")
+        trajectory.extras["execution_settings_identical_for_endpoints_and_dynamics"] = True
         return trajectory
+
+
+def _execution_settings(record: dict, platform: dict, metadata: dict) -> dict:
+    """Everything that decides how the model and OpenMM evaluate, as it actually ran.
+
+    ``createSystem`` arguments as passed (without ``removeCMMotion``, which
+    differs by design between single points and MD), the platform name and
+    every property value read back from the Context, and the model's
+    device/dtype as the installed OpenMM-ML applies them.
+    """
+    create = {k: v for k, v in record["createSystem"].items() if k != "removeCMMotion"}
+    return {
+        "createSystem": create,
+        "platform": platform["name"],
+        "platform_properties": dict(platform["properties"]),
+        "model_device": metadata["device_plan"]["effective"],
+        "model_dtype": metadata["precision_plan"]["effective"],
+        "openmmml": record["versions"].get("openmmml"),
+        "openmm": record["versions"].get("openmm"),
+    }
 
 
 def _charge_and_spin(atoms) -> tuple[float, float, tuple[str, str]]:
@@ -352,6 +698,63 @@ def _charge_and_spin(atoms) -> tuple[float, float, tuple[str, str]]:
             "atoms.info['spin']" if "spin" in info else "default 1",
         ),
     )
+
+
+def _peek_model(path: Path) -> dict:
+    """The model class and stored float dtype of a ``torch.save``d model, without torch.
+
+    ``torch.save`` writes a zip archive whose ``data.pkl`` names every tensor
+    storage class (``torch FloatStorage`` ...) and the model's class as pickle
+    globals; :mod:`pickletools` lists them without executing anything. A
+    model whose floating-point storages are not all one dtype, or a file
+    that is not in that format, reports ``dtype = None`` (unknown), never a
+    guess.
+    """
+    import pickletools
+    import zipfile
+
+    record: dict = {
+        "model_class": None,
+        "dtype": None,
+        "storage_dtypes": [],
+        "source": "static read of the pickled model (zip data.pkl globals; torch not imported)",
+    }
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names = [n for n in archive.namelist() if n == "data.pkl" or n.endswith("/data.pkl")]
+            if not names:
+                record["error"] = "no data.pkl in the archive"
+                return record
+            data = archive.read(names[0])
+        strings: list[str] = []
+        dtypes: set[str] = set()
+        for opcode, argument, _ in pickletools.genops(data):
+            if opcode.name in ("SHORT_BINUNICODE", "BINUNICODE", "UNICODE", "BINUNICODE8"):
+                strings.append(argument)
+                continue
+            if opcode.name == "GLOBAL":
+                module, _, name = str(argument).partition(" ")
+            elif opcode.name == "STACK_GLOBAL" and len(strings) >= 2:
+                module, name = strings[-2], strings[-1]
+            else:
+                continue
+            if module == "torch" and name in _STORAGE_DTYPES:
+                dtypes.add(_STORAGE_DTYPES[name])
+            elif (
+                record["model_class"] is None
+                and module.startswith("mace.modules")
+                and name.endswith("MACE")
+            ):
+                record["model_class"] = name
+    except (OSError, zipfile.BadZipFile, ValueError, EOFError) as exc:
+        record["error"] = f"{type(exc).__name__}: {exc}"
+        return record
+    record["storage_dtypes"] = sorted(dtypes)
+    if len(dtypes) == 1:
+        record["dtype"] = next(iter(dtypes))
+    elif dtypes:
+        record["error"] = f"floating-point storages of several dtypes: {sorted(dtypes)}"
+    return record
 
 
 def _read_model(path: Path) -> dict:

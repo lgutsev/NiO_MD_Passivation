@@ -83,9 +83,28 @@ OPENMMML_LENGTH_SCALE_A_PER_NM = 10.0
 #: the ``device`` keyword. Only the newer semantics are supported.
 MIN_OPENMMML_VERSION = (1, 6)
 
+#: First OpenMM-ML release whose MACE route converts the *model* to the
+#: requested dtype. In 1.6/1.7 ``MACEPotentialImpl.addForces`` casts only the
+#: inputs (``node_attrs``, positions, shifts, cell, charge) and prints "The
+#: model will be converted" without calling ``model.to(dtype)``
+#: (openmmml 1.7 ``models/macepotential.py`` lines 187-198); a model stored in
+#: another dtype then fails at the first evaluation with a TorchScript dtype
+#: error (measured here: float32 model + 'double', float64 model + 'single').
+#: 1.8 added ``model = model.to(dtype)`` (``macepotential.py`` line 213).
+OPENMMML_CONVERTS_MODEL_DTYPE = (1, 8)
+
 #: ``potential.precision`` -> OpenMM-ML ``createSystem(precision=...)``: the
 #: dtype the MACE model is evaluated in (without it, the model's own dtype).
 MODEL_PRECISION = {"float32": "single", "float64": "double"}
+
+#: GPU platforms whose ``DeviceIndex`` numbers the same devices as torch's
+#: ``cuda:N`` ordinals (CUDA; HIP, whose torch build also spells devices
+#: ``cuda:N``). OpenCL numbers the devices of its own OpenCL platform, which
+#: need not be the CUDA order, so a torch ordinal is never mapped onto it.
+DEVICE_INDEX_PLATFORMS = ("CUDA", "HIP")
+
+#: OpenMM's documented default ``Precision`` on the GPU platforms.
+OPENMM_DEFAULT_PLATFORM_PRECISION = "single"
 
 #: Requested thermostat -> the OpenMM integrator that implements it. ``None``
 #: resolves to :data:`DEFAULT_THERMOSTAT`. Everything else is refused.
@@ -108,6 +127,32 @@ BOX_TIE_TOLERANCE = 1e-12
 #: Molar gas constant in kJ/(mol K) (exact since the 2019 SI redefinition).
 MOLAR_GAS_CONSTANT_KJ_PER_MOL_K = 1.380649e-23 * 6.02214076e23 / 1000.0
 
+#: What the Nose-Hoover "conserved energy" series is, including its known
+#: limitation. OpenMM 8.5.2's NoseHooverIntegrator reports a kinetic energy
+#: that is not synchronised with the positions: with PE + KE +
+#: computeHeatBathEnergy() the excursion is first order in dt (measured on
+#: MACE-NiO: 1.04e-4 / 5.2e-5 / 2.6e-5 eV/atom over 20 fs at dt = 1 / 0.5 /
+#: 0.25 fs; on LJ argon in the weak-coupling limit it equals exactly the error
+#: of a half-step-velocity kinetic energy), where the VerletIntegrator's
+#: averaged kinetic energy conserves to second order.
+NOSE_HOOVER_CONSERVED_QUANTITY = (
+    "potential + kinetic + NoseHooverIntegrator.computeHeatBathEnergy(); OpenMM's "
+    "kinetic energy for this integrator is not synchronised with the positions, so "
+    "the quantity carries an O(dt) error (its excursion halves when dt halves)"
+)
+
+#: When the final velocities returned by OpenMM are defined, per integrator.
+FINAL_VELOCITY_TIMING = {
+    "VerletIntegrator": "OpenMM leapfrog: velocities lag the final positions by dt/2",
+    "LangevinMiddleIntegrator": (
+        "OpenMM LangevinMiddle (leapfrog form): velocities lag the final positions by dt/2"
+    ),
+    "NoseHooverIntegrator": (
+        "OpenMM NoseHooverIntegrator state velocities; measured to be offset from the "
+        "positions like half-step velocities (see the conserved-quantity note)"
+    ),
+}
+
 NPT_POLICY = (
     "constant-pressure dynamics are refused on the OpenMM route by policy: no "
     "stress tensor is reported through OpenMM-ML here, and an OpenMM NPT path "
@@ -125,13 +170,19 @@ class OpenMMEngine(EngineRuntime):
         """What OpenMM can carry through OpenMM-ML -- notably not a stress tensor.
 
         ``stress=False`` and ``per_atom_energy=False`` are the honest answers
-        for this route; ``stress=False`` is also what makes an NPT request
-        fail during negotiation (see :data:`NPT_POLICY` for why NPT is refused
-        on this route). Frozen atoms are honoured (zero particle mass);
-        partially periodic cells are not, because OpenMM-ML's MACE
-        periodicity is all-or-nothing.
+        for this route (OpenMM-ML's MACE ``PythonForce`` returns one energy
+        and the forces, nothing else); ``stress=False`` is also what makes an
+        NPT request fail during negotiation (see :data:`NPT_POLICY` for why
+        NPT is refused on this route). Frozen atoms are honoured (zero
+        particle mass); partially periodic cells are not, because OpenMM-ML's
+        MACE periodicity is all-or-nothing.
+
+        ``gpu`` is true because the model evaluation -- the only expensive
+        part -- runs on the torch device OpenMM-ML is given
+        (``createSystem(device=...)``), whatever the OpenMM platform. Whether
+        a *job* uses a GPU is the route's decision: the MACE bridge
+        intersects this with ``potential.device``.
         """
-        platform = self.spec.platform
         return CapabilitySet(
             energy=True,
             forces=True,
@@ -140,7 +191,7 @@ class OpenMMEngine(EngineRuntime):
             periodic=True,
             partial_periodic=False,
             fixed_atoms=True,
-            gpu=platform is None or platform in OPENMM_GPU_PLATFORMS,
+            gpu=True,
             elements=None,
             precisions=None,
             engines=frozenset({"openmm"}),
@@ -151,6 +202,8 @@ class OpenMMEngine(EngineRuntime):
                 "no per-atom energy decomposition is exposed by this route",
                 "OpenMM-ML's MACE periodicity is all-or-nothing: slabs/wires are refused",
                 "FixAtoms atoms are frozen by zero particle mass",
+                "the model runs on the torch device given to createSystem; the OpenMM "
+                "platform only integrates",
             ),
         )
 
@@ -336,9 +389,12 @@ def platform_properties(
       platform has only ``Threads``/``DeterministicForces``, Reference none;
       OpenMM raises "Illegal property name" otherwise).
     - ``threads`` -> ``Threads``: the CPU platform only.
-    - ``device = "cuda:N"`` -> ``DeviceIndex = "N"`` on a GPU platform, so the
-      OpenMM context and the MACE model use the same GPU. A bare ``"cuda"``
-      leaves ``DeviceIndex`` to OpenMM (the value it picks is recorded).
+    - ``device = "cuda:N"`` -> ``DeviceIndex = "N"`` on CUDA or HIP
+      (:data:`DEVICE_INDEX_PLATFORMS`), so the OpenMM context and the MACE
+      model use the same GPU; a bare ``"cuda"`` is torch's current device,
+      ordinal 0, and maps to ``"0"``. OpenCL numbers its devices
+      differently, so nothing is mapped there (the device OpenMM picks is
+      read back and recorded).
 
     With ``platform=None`` OpenMM chooses the platform, so no property can be
     passed and any of these requests is refused.
@@ -376,9 +432,8 @@ def platform_properties(
                 "use engine.platform = 'CPU'."
             )
         properties["Threads"] = str(int(threads))
-    ordinal = device_ordinal(device)
-    if ordinal is not None and platform in OPENMM_GPU_PLATFORMS:
-        properties["DeviceIndex"] = str(ordinal)
+    if device and device.startswith("cuda") and platform in DEVICE_INDEX_PLATFORMS:
+        properties["DeviceIndex"] = str(device_ordinal(device) or 0)
     return properties
 
 
@@ -392,11 +447,267 @@ def check_request(engine_spec, *, device: str | None) -> dict[str, str]:
     )
 
 
+def distribution_version(name: str) -> str | None:
+    """An installed distribution's version, from its metadata (nothing is imported)."""
+    from importlib import metadata
+
+    try:
+        return metadata.version(name)
+    except metadata.PackageNotFoundError:
+        return None
+
+
+def version_tuple(version: str) -> tuple[int, ...]:
+    """``"1.7"`` -> ``(1, 7)``; ``"1.8.0rc1"`` -> ``(1, 8, 0)``."""
+    parts = []
+    for piece in version.split(".")[:3]:
+        digits = ""
+        for ch in piece:
+            if not ch.isdigit():
+                break
+            digits += ch
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts)
+
+
+def precision_plan(
+    requested: str,
+    *,
+    openmmml: str | None,
+    model_dtype: str | None,
+    model_dtype_source: str | None = None,
+) -> dict:
+    """What ``potential.precision`` will really be on this OpenMM-ML release.
+
+    ``effective`` is set only when the installed OpenMM-ML is known to
+    evaluate the model in ``requested`` (see
+    :data:`OPENMMML_CONVERTS_MODEL_DTYPE`): always from 1.8, and on 1.6/1.7
+    only when the model is stored in that dtype. ``refusal`` is set when the
+    combination is known not to work, and callers raise it.
+    """
+    if requested not in MODEL_PRECISION:
+        raise ConfigError(f"precision {requested!r} has no OpenMM-ML equivalent")
+    plan = {
+        "requested": requested,
+        "effective": None,
+        "guaranteed": False,
+        "passed_as": {"createSystem": {"precision": MODEL_PRECISION[requested]}},
+        "model_native_dtype": model_dtype,
+        "model_native_dtype_source": model_dtype_source,
+        "openmmml": openmmml,
+        "note": "",
+    }
+    if openmmml is None:
+        plan["note"] = (
+            "OpenMM-ML is not installed here, so what its MACE route does with "
+            "precision= cannot be established"
+        )
+        return plan
+    version = version_tuple(openmmml)
+    if version < MIN_OPENMMML_VERSION:
+        plan["note"] = f"OpenMM-ML {openmmml} predates 1.6 and is refused by this engine"
+    elif version >= OPENMMML_CONVERTS_MODEL_DTYPE:
+        plan.update(
+            effective=requested,
+            guaranteed=True,
+            note=(
+                f"OpenMM-ML {openmmml} converts the model (model.to(dtype)) and casts "
+                f"every input to {requested}"
+            ),
+        )
+    elif model_dtype is None:
+        plan["note"] = (
+            f"OpenMM-ML {openmmml} casts the inputs to the requested dtype but not the "
+            f"model's parameters, so {requested} is effective only if the model is "
+            f"stored in {requested}; its dtype could not be read without loading it "
+            "(checked again when the model is loaded)"
+        )
+    elif model_dtype == requested:
+        plan.update(
+            effective=requested,
+            guaranteed=True,
+            note=(
+                f"OpenMM-ML {openmmml} casts the inputs but not the model's parameters; "
+                f"the model is stored in {model_dtype}, so both are {requested}"
+            ),
+        )
+    else:
+        plan["refusal"] = plan["note"] = (
+            f"potential.precision = {requested!r}, but the model is stored in "
+            f"{model_dtype} and OpenMM-ML {openmmml} does not convert it: its MACE route "
+            "casts only the inputs (no model.to(dtype) before openmmml 1.8), so the "
+            "first evaluation fails with a dtype mismatch. Set potential.precision = "
+            f"{model_dtype!r}, convert the model file, or upgrade to openmmml >= 1.8 "
+            "(which needs openmm >= 8.6.1)."
+        )
+    return plan
+
+
+def device_plan(device: str, *, platform: str | None, openmmml: str | None) -> dict:
+    """Where the model and the OpenMM context will run, and how sure that is."""
+    properties = platform_properties(platform, device=device) if platform else {}
+    plan = {
+        "requested": device,
+        "effective": None,
+        "guaranteed": False,
+        "passed_as": {"createSystem": {"device": device}},
+        "openmm_platform_device": (
+            {"DeviceIndex": properties["DeviceIndex"]} if "DeviceIndex" in properties else None
+        ),
+        "note": "",
+    }
+    notes = []
+    if openmmml is None:
+        notes.append(
+            "OpenMM-ML is not installed here, so its device handling cannot be established"
+        )
+    elif version_tuple(openmmml) < MIN_OPENMMML_VERSION:
+        notes.append(f"OpenMM-ML {openmmml} predates 1.6 and is refused by this engine")
+    else:
+        plan.update(effective=device, guaranteed=True)
+        notes.append(
+            f"OpenMM-ML {openmmml} loads and evaluates the model on torch.device({device!r}) "
+            "(MLPotentialImpl._getTorchDevice uses the device= argument verbatim)"
+        )
+        if device.startswith(("cuda", "mps")):
+            notes.append("torch's view of the device is checked before the model is loaded")
+    if platform is None:
+        notes.append(
+            "OpenMM chooses its platform (and that platform's device) when the Context is "
+            "created; both are read back and recorded"
+        )
+    elif platform in ("Reference", "CPU"):
+        notes.append(f"OpenMM integrates on the host CPU ({platform} platform)")
+    elif "DeviceIndex" in properties:
+        notes.append(
+            f"DeviceIndex={properties['DeviceIndex']}: OpenMM's {platform} context uses "
+            "the same GPU as the model"
+        )
+    else:
+        notes.append(
+            f"OpenMM picks its own {platform} device (DeviceIndex is not set"
+            + (": OpenCL device numbers are not CUDA ordinals" if platform == "OpenCL" else "")
+            + "); the device it used is read back and recorded"
+        )
+    if device == "cpu" and platform in OPENMM_GPU_PLATFORMS:
+        notes.append(
+            f"the model evaluates on the CPU while OpenMM integrates on {platform}; "
+            "positions and forces cross between host and device every step"
+        )
+    plan["note"] = "; ".join(notes)
+    return plan
+
+
+def platform_precision_plan(platform: str | None, platform_precision: str | None) -> dict:
+    """The OpenMM platform's own arithmetic (not the model's dtype)."""
+    plan = {
+        "requested": platform_precision,
+        "effective": None,
+        "guaranteed": False,
+        "passed_as": (
+            {"platform_property": {"Precision": platform_precision}}
+            if platform_precision
+            else None
+        ),
+        "note": "",
+    }
+    if platform is None:
+        plan["note"] = (
+            "OpenMM chooses the platform; its Precision property, if it has one, keeps "
+            "OpenMM's default and is read back at execution"
+        )
+    elif platform in OPENMM_GPU_PLATFORMS:
+        if platform_precision:
+            plan.update(
+                effective=platform_precision,
+                guaranteed=True,
+                note=(
+                    f"passed as the {platform} platform's Precision property (OpenMM "
+                    "raises if the device cannot provide it) and read back at execution"
+                ),
+            )
+        else:
+            plan.update(
+                effective=OPENMM_DEFAULT_PLATFORM_PRECISION,
+                note=(
+                    f"engine.platform_precision is not set; OpenMM's documented default "
+                    f"on {platform} is '{OPENMM_DEFAULT_PLATFORM_PRECISION}', read back "
+                    "at execution"
+                ),
+            )
+    elif platform == "Reference":
+        plan.update(
+            effective="double",
+            guaranteed=True,
+            note="the Reference platform computes in double precision (no Precision property)",
+        )
+    else:
+        plan["note"] = (
+            "the CPU platform has no Precision property; its internal arithmetic is fixed "
+            "by OpenMM and not configurable"
+        )
+    return plan
+
+
 def resolved_thermostat(simulation: SimulationSpec) -> str | None:
     """The thermostat this engine will run for ``simulation`` (``None`` for NVE)."""
     if simulation.ensemble != "nvt":
         return None
     return simulation.thermostat or DEFAULT_THERMOSTAT
+
+
+#: The OpenMM integrator argument a damping time becomes, per thermostat.
+THERMOSTAT_RATE_PARAMETER = {
+    "langevin": "frictionCoeff",
+    "nose-hoover": "collisionFrequency",
+}
+
+
+def dynamics_plan(simulation: SimulationSpec) -> dict | None:
+    """The integrator this engine runs for ``simulation``, with every resolved value.
+
+    ``None`` for anything but MD. Pure: :func:`make_integrator` builds its
+    integrator from this plan, so what ``validate`` shows is what runs. An
+    NPT request or an unsupported thermostat yields ``integrator = None``
+    (``check_md_request`` refuses them).
+    """
+    if simulation.task != "md":
+        return None
+    thermostat = resolved_thermostat(simulation)
+    if simulation.ensemble == "npt":
+        integrator = None
+    elif thermostat is None:
+        integrator = "VerletIntegrator"
+    else:
+        integrator = SUPPORTED_THERMOSTATS.get(thermostat)
+    damping_fs = simulation.resolved_thermostat_damping_fs if thermostat else None
+    return {
+        "ensemble": simulation.ensemble,
+        "integrator": integrator,
+        "thermostat": thermostat,
+        "thermostat_requested": simulation.thermostat,
+        "thermostat_defaulted": thermostat is not None and simulation.thermostat is None,
+        "barostat": None,
+        "barostat_coupling": None,
+        "temperature_K": simulation.temperature_K,
+        "timestep_fs": simulation.timestep_fs,
+        "timestep_native": {"value": simulation.timestep_fs * 0.001, "unit": "ps"},
+        "thermostat_damping_fs": damping_fs,
+        "thermostat_damping_native": (
+            {
+                "value": 1000.0 / damping_fs,
+                "unit": "1/ps",
+                "parameter": THERMOSTAT_RATE_PARAMETER.get(thermostat),
+                "relation": "rate = 1 / damping time",
+            }
+            if damping_fs
+            else None
+        ),
+        "barostat_damping_fs": None,
+        "barostat_damping_native": None,
+    }
 
 
 def check_md_request(simulation: SimulationSpec) -> None:
@@ -408,8 +719,10 @@ def check_md_request(simulation: SimulationSpec) -> None:
     thermostat = resolved_thermostat(simulation)
     if thermostat is not None and thermostat not in SUPPORTED_THERMOSTATS:
         raise ConfigError(
-            f"thermostat {thermostat!r} is not implemented by the OpenMM engine; "
-            f"supported: {', '.join(f'{k} ({v})' for k, v in SUPPORTED_THERMOSTATS.items())}"
+            f"simulation.thermostat = {thermostat!r} is not implemented by the OpenMM "
+            "engine, and another thermostat is never substituted for it; supported: "
+            f"{', '.join(f'{k} ({v})' for k, v in SUPPORTED_THERMOSTATS.items())}. "
+            f"Use the ASE or LAMMPS engine for {thermostat!r}."
         )
 
 
@@ -490,8 +803,11 @@ def dcd_frame_count(path, n_atoms: int) -> int:
     data = path.read_bytes()
     if len(data) < _DCD_HEADER_BYTES or data[4:8] != b"CORD" or struct.unpack("<i", data[:4])[0] != 84:
         raise ResultError(f"the trajectory {path} is not a readable DCD file")
+    # Layout (openmm.app.DCDFile): '<i4c9if' (NSET at byte 8, the time step
+    # as a float at 44), then '<13i' starting at byte 48 with the unit-cell
+    # flag first, two 80-byte titles, and '<4i' with the atom count at 268.
     frames = struct.unpack("<i", data[8:12])[0]
-    box_flag = struct.unpack("<i", data[44:48])[0]
+    box_flag = struct.unpack("<i", data[48:52])[0]
     atoms_in_file = struct.unpack("<i", data[268:272])[0]
     if atoms_in_file != n_atoms:
         raise ResultError(
@@ -513,22 +829,7 @@ def dcd_frame_count(path, n_atoms: int) -> int:
 
 
 def openmmml_version() -> str | None:
-    from importlib import metadata
-
-    try:
-        return metadata.version("openmmml")
-    except metadata.PackageNotFoundError:
-        return None
-
-
-def _version_tuple(version: str) -> tuple[int, ...]:
-    parts = []
-    for piece in version.split(".")[:3]:
-        digits = "".join(ch for ch in piece if ch.isdigit())
-        if not digits:
-            break
-        parts.append(int(digits))
-    return tuple(parts)
+    return distribution_version("openmmml")
 
 
 def require_openmm() -> dict:
@@ -547,7 +848,7 @@ def require_openmm() -> dict:
         ) from exc
     version = openmmml_version()
     if version is not None:
-        supported = _version_tuple(version) >= MIN_OPENMMML_VERSION
+        supported = version_tuple(version) >= MIN_OPENMMML_VERSION
     else:
         # No distribution metadata (a source checkout): fall back to the
         # feature that defines the >=1.6 semantics.
@@ -592,16 +893,94 @@ def resolve_platform(engine_spec, *, device: str | None):
     return openmm.Platform.getPlatformByName(engine_spec.platform), properties
 
 
-def describe_platform(context, requested: dict[str, str]) -> dict:
-    """The platform a Context actually runs on, with every property's value."""
+def describe_platform(context, requested: dict[str, str], *, requested_platform=None) -> dict:
+    """The platform a Context actually runs on, read back with every property's value.
+
+    Every requested property must read back with the value that was passed
+    (compared case-insensitively, as OpenMM parses them); otherwise the run
+    is not what was asked for and a :class:`ResultError` is raised rather
+    than recording the request as effective.
+    """
     platform = context.getPlatform()
-    return {
-        "name": platform.getName(),
-        "properties": {
-            name: platform.getPropertyValue(context, name) for name in platform.getPropertyNames()
-        },
-        "requested_properties": dict(requested),
+    name = platform.getName()
+    values = {
+        prop: platform.getPropertyValue(context, prop) for prop in platform.getPropertyNames()
     }
+    if requested_platform is not None and name != requested_platform:
+        raise ResultError(  # pragma: no cover - OpenMM honours a named platform
+            f"OpenMM created the Context on {name!r}, not the requested {requested_platform!r}"
+        )
+    mismatched = {
+        prop: {"requested": value, "read_back": values.get(prop)}
+        for prop, value in requested.items()
+        if str(values.get(prop, "")).strip().lower() != str(value).strip().lower()
+    }
+    if mismatched:
+        raise ResultError(
+            f"OpenMM's {name} platform did not apply the requested properties: {mismatched}"
+        )
+    return {
+        "name": name,
+        "requested": requested_platform,
+        "properties": values,
+        "requested_properties": dict(requested),
+        "requested_properties_verified": True,
+        "source": "read back: Context.getPlatform(), Platform.getPropertyValue(context, name)",
+    }
+
+
+def describe_system(system) -> dict:
+    """What the OpenMM ``System`` really contains, read back from it."""
+    import openmm
+    from openmm import unit
+
+    count = system.getNumParticles()
+    masses = [system.getParticleMass(i).value_in_unit(unit.dalton) for i in range(count)]
+    forces = [system.getForce(i) for i in range(system.getNumForces())]
+    periodic = bool(system.usesPeriodicBoundaryConditions())
+    box = None
+    if periodic:
+        box = [
+            [float(x) for x in vector.value_in_unit(unit.nanometer)]
+            for vector in system.getDefaultPeriodicBoxVectors()
+        ]
+    return {
+        "particles": count,
+        "zero_mass_particles": [i for i, mass in enumerate(masses) if mass == 0.0],
+        "total_mass_dalton": float(sum(masses)),
+        "forces": [type(force).__name__ for force in forces],
+        "python_force": any(isinstance(force, openmm.PythonForce) for force in forces),
+        "cm_motion_remover": any(isinstance(force, openmm.CMMotionRemover) for force in forces),
+        "uses_periodic_boundary_conditions": periodic,
+        "default_box_nm": box,
+        "source": "read back from the openmm.System",
+    }
+
+
+def check_system(readback: dict, *, n_atoms: int, fixed: Sequence[int], periodic: bool,
+                 remove_cm_motion: bool) -> None:
+    """Refuse a System that is not the one requested (read back by :func:`describe_system`)."""
+    problems = []
+    if readback["particles"] != n_atoms:
+        problems.append(f"{readback['particles']} particles for {n_atoms} atoms")
+    if not readback["python_force"]:
+        problems.append("no PythonForce (OpenMM-ML's MACE force) in the System")
+    if readback["uses_periodic_boundary_conditions"] != periodic:
+        problems.append(
+            f"periodic boundary conditions {readback['uses_periodic_boundary_conditions']}, "
+            f"requested {periodic}"
+        )
+    if sorted(readback["zero_mass_particles"]) != sorted(fixed):
+        problems.append(
+            f"zero-mass particles {readback['zero_mass_particles']}, FixAtoms {list(fixed)}"
+        )
+    if readback["cm_motion_remover"] != remove_cm_motion:
+        problems.append(
+            f"CMMotionRemover present = {readback['cm_motion_remover']}, requested "
+            f"{remove_cm_motion}"
+        )
+    if problems:
+        raise ResultError("the OpenMM System does not match the request: " + "; ".join(problems))
 
 
 def check_torch_device(device: str) -> None:
@@ -721,12 +1100,21 @@ def build_system(
     masses = atoms.get_masses()
     for index, mass in enumerate(masses):
         system.setParticleMass(index, 0.0 if index in fixed else float(mass) * unit.dalton)
+    readback = describe_system(system)
+    check_system(
+        readback,
+        n_atoms=len(atoms),
+        fixed=fixed,
+        periodic=box is not None,
+        remove_cm_motion=bool(remove_cm_motion),
+    )
     record = {
         "createSystem": {"removeCMMotion": bool(remove_cm_motion), **arguments},
         "masses": "ASE masses (atoms.get_masses()); FixAtoms atoms zero",
         "zero_mass_atoms": fixed,
         "periodic": box is not None,
         "box": box.as_dict() if box is not None else None,
+        "readback": readback,
         "versions": versions,
     }
     return system, topology, record
@@ -756,7 +1144,9 @@ def make_context(
     if box is not None:
         context.setPeriodicBoxVectors(*[Vec3(*v) for v in box.vectors_nm])
     context.setPositions(positions_nm(atoms, box))
-    return context, integrator, describe_platform(context, properties)
+    return context, integrator, describe_platform(
+        context, properties, requested_platform=engine_spec.platform
+    )
 
 
 def singlepoint(atoms, system, engine_spec, *, box: ReducedBox | None = None, device=None) -> dict:
@@ -811,41 +1201,45 @@ def singlepoint(atoms, system, engine_spec, *, box: ReducedBox | None = None, de
 
 
 def make_integrator(simulation: SimulationSpec, seeds: dict[str, int]):
-    """``(integrator, resolved)`` for the requested ensemble and thermostat."""
+    """``(integrator, resolved)`` built from :func:`dynamics_plan`.
+
+    ``resolved`` is the plan plus the integrator's parameters read back from
+    the OpenMM object (step size, temperature, friction or collision
+    frequency), so the record is what OpenMM holds, not what was intended.
+    """
     require_openmm()
     import openmm
     from openmm import unit
 
     check_md_request(simulation)
-    timestep = simulation.timestep_fs * 0.001 * unit.picosecond
-    thermostat = resolved_thermostat(simulation)
-    resolved: dict = {
-        "ensemble": simulation.ensemble,
-        "thermostat_requested": simulation.thermostat,
-        "thermostat": thermostat,
-        "timestep_fs": simulation.timestep_fs,
-    }
-    if thermostat is None:
+    plan = dynamics_plan(simulation)
+    timestep = plan["timestep_native"]["value"] * unit.picosecond
+    resolved: dict = dict(plan)
+    if plan["integrator"] == "VerletIntegrator":
         integrator = openmm.VerletIntegrator(timestep)
     else:
-        damping_fs = simulation.resolved_thermostat_damping_fs
-        rate_per_ps = 1000.0 / damping_fs
+        rate = plan["thermostat_damping_native"]["value"] / unit.picosecond
         temperature = simulation.temperature_K * unit.kelvin
-        resolved.update(temperature_K=simulation.temperature_K, damping_fs=damping_fs)
-        if thermostat == "langevin":
-            integrator = openmm.LangevinMiddleIntegrator(
-                temperature, rate_per_ps / unit.picosecond, timestep
-            )
+        if plan["integrator"] == "LangevinMiddleIntegrator":
+            integrator = openmm.LangevinMiddleIntegrator(temperature, rate, timestep)
             integrator.setRandomNumberSeed(seeds["integrator_seed"])
             resolved.update(
-                friction_per_ps=rate_per_ps, integrator_seed=seeds["integrator_seed"]
+                integrator_seed=integrator.getRandomNumberSeed(),
+                friction_per_ps=integrator.getFriction().value_in_unit(unit.picosecond**-1),
+                temperature_K_readback=integrator.getTemperature().value_in_unit(unit.kelvin),
             )
         else:
-            integrator = openmm.NoseHooverIntegrator(
-                temperature, rate_per_ps / unit.picosecond, timestep
+            integrator = openmm.NoseHooverIntegrator(temperature, rate, timestep)
+            resolved.update(
+                collision_frequency_per_ps=integrator.getCollisionFrequency().value_in_unit(
+                    unit.picosecond**-1
+                ),
+                temperature_K_readback=integrator.getTemperature().value_in_unit(unit.kelvin),
             )
-            resolved.update(collision_frequency_per_ps=rate_per_ps)
+    resolved["timestep_ps_readback"] = integrator.getStepSize().value_in_unit(unit.picosecond)
     resolved["name"] = type(integrator).__name__
+    if resolved["name"] != plan["integrator"]:  # pragma: no cover - built from the plan
+        raise ResultError(f"built {resolved['name']}, planned {plan['integrator']}")
     return integrator, resolved
 
 
@@ -1016,7 +1410,9 @@ def run_md(
         velocities=velocities,
         removeCMMotion=bool(remove_cm_motion),
         temperature_ndof=ndof,
-        platform=describe_platform(context, properties),
+        platform=describe_platform(
+            context, properties, requested_platform=engine_spec.platform
+        ),
         versions=versions,
     )
     if resolved["name"] == "NoseHooverIntegrator":
@@ -1099,9 +1495,7 @@ def run_md(
     }
     if resolved["name"] == "NoseHooverIntegrator":
         energy_series["conserved_energy_eV"] = [row[6] for row in rows]
-        energy_series["conserved_quantity"] = (
-            "potential + kinetic + NoseHooverIntegrator.computeHeatBathEnergy()"
-        )
+        energy_series["conserved_quantity"] = NOSE_HOOVER_CONSERVED_QUANTITY
     return {
         "atoms": final_atoms,
         "steps_completed": steps_completed,
@@ -1134,6 +1528,7 @@ def run_md(
         "wall_time_s": wall_time,
         "integrator": resolved["name"],
         "integrator_resolved": resolved,
+        "final_velocities": FINAL_VELOCITY_TIMING[resolved["name"]],
     }
 
 
@@ -1143,6 +1538,8 @@ __all__ = [
     "OPENMMML_ENERGY_SCALE_KJ_PER_MOL_PER_EV",
     "OPENMMML_LENGTH_SCALE_A_PER_NM",
     "MIN_OPENMMML_VERSION",
+    "OPENMMML_CONVERTS_MODEL_DTYPE",
+    "DEVICE_INDEX_PLATFORMS",
     "MODEL_PRECISION",
     "SUPPORTED_THERMOSTATS",
     "DEFAULT_THERMOSTAT",
@@ -1154,6 +1551,12 @@ __all__ = [
     "device_ordinal",
     "platform_properties",
     "check_request",
+    "distribution_version",
+    "version_tuple",
+    "precision_plan",
+    "device_plan",
+    "platform_precision_plan",
+    "dynamics_plan",
     "check_md_request",
     "check_structure",
     "resolved_thermostat",
@@ -1166,6 +1569,8 @@ __all__ = [
     "available_platforms",
     "resolve_platform",
     "describe_platform",
+    "describe_system",
+    "check_system",
     "build_topology",
     "positions_nm",
     "build_system",
