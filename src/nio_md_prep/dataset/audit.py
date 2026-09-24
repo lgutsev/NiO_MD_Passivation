@@ -82,7 +82,10 @@ def _run_value(record: Mapping[str, Any], dimension: str) -> Any:
     if dimension in ("campaign", "family", "temperature_K"):
         return metadata.get(dimension)
     if dimension == "magnetic_class":
-        return ((record.get("assessment") or {}).get("magnetic") or {}).get("magnetic_class")
+        magnetic = ((record.get("assessment") or {}).get("magnetic") or {}).get("magnetic_class")
+        if magnetic is None and (record.get("magnetic_evidence") or {}).get("magnetic_class"):
+            return f"{record['magnetic_evidence']['magnetic_class']} (evidence only, no labels)"
+        return magnetic
     if dimension == "lineage_source":
         return (record.get("lineage") or {}).get("source")
     return record.get(dimension)

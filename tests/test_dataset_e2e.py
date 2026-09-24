@@ -61,6 +61,10 @@ BARE = "OH0/NiO_m110_Big_U46"
 AGGLO = "agglo/pa_campaign"
 CASES = {0: "r000_s00_1p000", 1: "r001_s00_1p000", 2: "r002_s00_1p000"}
 SYNTHETIC_TEXT = "SYNTHETIC TEST FIXTURE - not real VASP output\n"
+OUTPACK_CONTCAR = (  # SYNTHETIC Ni4O4 CONTCAR (VASP 5 layout)
+    "SYNTHETIC TEST FIXTURE Ni4O4\n1.0\n4.17 0 0\n0 4.17 0\n0 0 4.17\nNi O\n4 4\nDirect\n"
+    "0 0 0\n0.5 0.5 0\n0.5 0 0.5\n0 0.5 0.5\n0.5 0 0\n0 0.5 0\n0 0 0.5\n0.5 0.5 0.5\n"
+)
 
 
 def write_json(path: Path, data) -> None:
@@ -201,8 +205,10 @@ def build_tree(base: Path, *, order_seed: int | None = None) -> dict[str, Path]:
     # OutPackLite-like package: outputs without labels
     package = calcs / "XNiO_OutPackLite" / "bulk_md"
     package.mkdir(parents=True)
-    for name in ("OSZICAR", "XDATCAR", "INCAR", "CONTCAR"):
+    for name in ("OSZICAR", "XDATCAR"):
         (package / name).write_text(SYNTHETIC_TEXT, encoding="utf-8")
+    (package / "INCAR").write_text("# " + SYNTHETIC_TEXT + "ISPIN = 2\nLDAU = .TRUE.\n", encoding="utf-8")
+    (package / "CONTCAR").write_text(OUTPACK_CONTCAR, encoding="utf-8")
     # InterfaceForge manifests (relative_path join; POSCAR sha edge)
     camp = ifc / "if_campaign"
     write_json(camp / "OPT" / "opt_manifest.json", {"format": "interfaceforge-opt-manifest", "runs": [
@@ -632,6 +638,9 @@ def test_deliberate_inclusion_recovery_overrides_and_energy_only(world, tmp_path
     assert outcome(frames[precondition + "#00000"]) == ("excluded", "exact_duplicate")
     package = runs[rid("calcs", "XNiO_OutPackLite/bulk_md")]
     assert (package.outcome.status, package.outcome.reason) == ("missing_labels", "no_vasprun")
+    evidence = package.record["magnetic_evidence"]  # labels absent, magnetism still audited from INCAR
+    assert evidence["magnetic_class"] == "uncontrolled" and evidence["evidence_only"] is True
+    assert evidence["magnetic_species"] == ["Ni"] and evidence["source"] == "INCAR+CONTCAR"
     assert [outcome(frames[rid("calcs", "generic/md_truncated") + f"#{i:05d}"])[0] for i in range(4)] == \
         ["accepted"] * 3 + ["rejected"]
     unc = frames[rid("calcs", "generic/uncontrolled_nio") + "#00000"]
@@ -648,6 +657,7 @@ def test_deliberate_inclusion_recovery_overrides_and_energy_only(world, tmp_path
     assert manifest["options"]["include_parts"] == ["X*", "precondition"]
     report = au.audit_export(tmp_path / "out")
     assert report["ok"], [c for c in report["checks"] if not c["ok"]]
+    assert "uncontrolled (evidence only, no labels)" in report["summary"]["runs"]["magnetic_class"]
     with pytest.raises(DatasetError, match="magnetic-override-reason"):
         ex.ExportOptions(policy=Policy(accept_uncontrolled=True))
 
@@ -716,6 +726,30 @@ def test_spotcheck_script_agrees_with_ase_vasp_reader(world, tmp_path):
     summary = json.loads((tmp_path / "spot.json").read_text(encoding="utf-8"))
     assert summary["ok"] and summary["checked"] == 12
     assert summary["max_d_free_energy"] <= 1e-6 and summary["max_d_forces"] <= 1e-6
+
+
+def test_real_ase_vasp_files_export_and_spotcheck(tmp_path):
+    """REAL VASP files shipped with ASE (copied into tmp, never into git): PSTRESS run, DFPT run, OUTCAR only."""
+    shipped = Path(ase.__file__).parent / "test" / "testdata" / "vasp"
+    names = {"pstress": "vasprun_pstress.xml", "dfpt": "vasprun_dfpt.xml", "outcar_only": "OUTCAR_example_1"}
+    if not all((shipped / name).is_file() for name in names.values()):
+        pytest.skip("ASE test data not installed")
+    root = tmp_path / "ase_real"
+    for run, name in names.items():
+        (root / run).mkdir(parents=True)
+        shutil.copyfile(shipped / name, root / run / ("OUTCAR" if name.startswith("OUTCAR") else "vasprun.xml"))
+    options = ex.ExportOptions(lineage_policy="run", policy=Policy(include_stress=True, allow_pstress=True))
+    result = ex.export([f"ase={root}"], tmp_path / "out", options=options)
+    runs = {r.run_id: r for r in result.analysis.runs}
+    assert (runs["ase:dfpt"].outcome.status, runs["ase:dfpt"].outcome.reason) == ("rejected", "unsupported_calculation")
+    assert (runs["ase:outcar_only"].outcome.status, runs["ase:outcar_only"].outcome.reason) == \
+        ("missing_labels", "no_vasprun")
+    assert result.manifest["counts"]["frames_exported"] == 1 and au.audit_export(tmp_path / "out")["ok"]
+    spot = subprocess.run([sys.executable, str(REPO / "scripts" / "dataset_spotcheck.py"), str(tmp_path / "out"),
+                           "--json", str(tmp_path / "spot.json")], capture_output=True, text=True, timeout=300)
+    assert spot.returncode == 0, spot.stdout + spot.stderr
+    frame = json.loads((tmp_path / "spot.json").read_text(encoding="utf-8"))["frames"][0]
+    assert frame["pv_term"] > 0 and frame["d_free_energy"] <= 1e-6 and frame["d_forces_max"] <= 1e-6
 
 
 def test_import_and_help_do_not_pull_heavy_dependencies(tmp_path):

@@ -13,9 +13,10 @@ Usage::
     python scripts/dataset_spotcheck.py EXPORT_DIR [--n 20] [--seed 11]
         [--root ALIAS=PATH ...] [--energy-tol 1e-6] [--force-tol 1e-6] [--json OUT.json]
 
-ASE's reader returns the raw ``e_fr_energy`` of each ``<calculation>``; the exported label is
-F = e_fr_energy - PSTRESS*V, so the exported value plus the PV term recorded in ``frames.jsonl``
-(zero unless PSTRESS != 0; reported per frame) is compared with ASE's force-consistent energy.
+The exported label is F = e_fr_energy - PSTRESS*V. Current ASE (3.29 checked on ASE's own
+``vasprun_pstress.xml``) also removes the PV term; older ASE versions may return the raw
+``e_fr_energy``. With PSTRESS != 0 the comparison therefore accepts either convention and reports
+which one matched per frame (``ase_energy_convention``); with PSTRESS = 0 both are identical.
 
 ``--root`` points an alias at a relocated calculation root; by default the root paths recorded
 in ``dataset_manifest.json`` are used. The source step is located by counting the ``<calculation>``
@@ -144,10 +145,12 @@ def spotcheck(export_dir: Path, *, n: int = 20, seed: int = 11, roots: dict[str,
                 reference_forces = atoms.get_forces(apply_constraint=False)
                 ours_f = mine["energy"] if quantity == "free_energy" else mine["free_energy"]
                 pv_term = float((by_id[frame_id].get("energy") or {}).get("pv_term") or 0.0)
+                d_minus_pv, d_raw = abs(ours_f - reference_f), abs(ours_f + pv_term - reference_f)
+                convention = "F=e_fr-PV" if d_minus_pv <= d_raw else "raw e_fr"
                 entry = {
                     "frame_id": frame_id, "source": source.name, "calculation_index": k,
-                    "pv_term": pv_term,
-                    "d_free_energy": abs(ours_f + pv_term - reference_f),
+                    "pv_term": pv_term, "ase_energy_convention": convention if pv_term else "PSTRESS=0",
+                    "d_free_energy": min(d_minus_pv, d_raw),
                     "d_forces_max": None if mine["forces"] is None else _max_abs(mine["forces"], reference_forces),
                     "d_positions_max": _max_abs(mine["positions"], atoms.positions),
                     "species_equal": mine["species"] == atoms.get_chemical_symbols(),

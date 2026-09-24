@@ -469,6 +469,71 @@ def _process_run(run: _Run, *, policy: acc.Policy, overrides: st.Overrides, spil
     )
 
 
+def _first_number(text: str | None) -> float | None:
+    if text is None:
+        return None
+    token = str(text).replace(",", " ").split()
+    if not token:
+        return None
+    try:
+        return float(token[0].replace("d", "e").replace("D", "e"))
+    except ValueError:
+        return None
+
+
+def _labelless_magnetic_evidence(run: _Run, policy: acc.Policy) -> dict[str, Any] | None:
+    """Magnetic class of a run WITHOUT a label file, from INCAR (+ POSCAR/CONTCAR species) alone.
+
+    Evidence only: the run keeps its missing-labels outcome; the class shows what the run would
+    be if its labels were recovered (OutPackLite trees: ISPIN=2 without MAGMOM -> uncontrolled).
+    """
+    found = run.discovered
+    if found is None or found.evidence.get("INCAR") is None:
+        return None
+    try:
+        incar = vaspfiles.parse_incar(found.evidence["INCAR"])
+    except OSError:
+        return None
+    tags = {str(k).upper(): v for k, v in (incar.tags or {}).items()}
+    species: list[str] = []
+    species_source = None
+    for kind in ("POSCAR", "CONTCAR"):
+        path = found.evidence.get(kind)
+        if path is None:
+            continue
+        try:
+            poscar = vaspfiles.parse_poscar(path)
+        except (OSError, ValueError, DatasetError):
+            continue
+        if poscar.species and poscar.counts and len(poscar.species) == len(poscar.counts):
+            species = [symbol for symbol, count in zip(poscar.species, poscar.counts) for _ in range(int(count))]
+            species_source = kind
+            break
+    ispin_value = _first_number(tags.get("ISPIN"))
+    ispin = int(ispin_value) if ispin_value is not None else 1  # VASP default ISPIN=1
+    nupdown = _first_number(tags.get("NUPDOWN"))
+    noncollinear = str(tags.get("LNONCOLLINEAR", "")).strip().upper().lstrip(".").startswith("T") or None
+    magnetic = acc.classify_magnetism(
+        species=species, ispin=ispin, nupdown=nupdown, noncollinear=noncollinear, magmom_initial=None,
+        magmom_explicit="MAGMOM" in tags, dft_indices=[], totals={}, sites={}, policy=policy,
+        magmom_source="incar_file",
+    ).run
+    would_be = None
+    if magnetic.get("magnetic_species"):
+        if magnetic["magnetic_class"] == "uncontrolled" and not policy.accept_uncontrolled:
+            would_be = "magnetic_uncontrolled"
+        elif magnetic["magnetic_class"] == "unknown" and not policy.accept_unknown:
+            would_be = "magnetic_unknown"
+    return st.json_safe({
+        "evidence_only": True, "source": "INCAR" + (f"+{species_source}" if species_source else ""),
+        "magnetic_class": magnetic.get("magnetic_class"), "class_reason": magnetic.get("class_reason"),
+        "ispin": ispin, "ispin_source": "INCAR" if ispin_value is not None else "VASP default",
+        "magmom_explicit": "MAGMOM" in tags, "nupdown": nupdown,
+        "magnetic_species": magnetic.get("magnetic_species"), "n_atoms": len(species) or None,
+        "run_reason_if_labelled": would_be,
+    })
+
+
 def _size(path: Path) -> int | None:
     try:
         return path.stat().st_size
@@ -640,6 +705,9 @@ def analyze(roots: Sequence[Any], options: ExportOptions, *, output_dir: Path | 
                     "entry has include = false" if decision.reason == "inventory_excluded" else "run not listed"))
         elif found_run.label_file is None:
             run.classification = run.outcome = found_run.missing_label_outcome()
+            evidence = _labelless_magnetic_evidence(run, policy)
+            if evidence is not None:
+                run.record["magnetic_evidence"] = evidence
         else:
             run.record["parsed"] = True
             _process_run(run, policy=policy, overrides=overrides, spill=spill, cache=cache)
