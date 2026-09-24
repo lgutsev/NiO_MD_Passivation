@@ -1005,15 +1005,19 @@ _END = object()
 def label_sha256(energy: float, forces, stress=None) -> str:
     """Digest of the exported labels (float64 little-endian bytes).
 
-    ``E`` + energy, ``F`` + forces (N,3 C order), and ``S`` + stress (3x3)
-    only when stress is exported. Used for ``FrameRecord.label_sha256`` and by
-    the audit to compare ``frames.jsonl`` with the ASE-read file.
+    ``E`` + energy, ``F`` + forces (N,3 C order; the marker ``F-none`` for an
+    energy-only frame, ``forces=None``), and ``S`` + stress (3x3) only when
+    stress is exported. Used for ``FrameRecord.label_sha256`` and by the audit
+    to compare ``frames.jsonl`` with the ASE-read file.
     """
     np = _np()
     h = hashlib.sha256()
     h.update(b"E" + np.array([float(energy)], dtype="<f8").tobytes())
-    forces = np.ascontiguousarray(forces, dtype="<f8")
-    h.update(b"F" + str(forces.shape).encode() + forces.tobytes())
+    if forces is None:
+        h.update(b"F-none")
+    else:
+        forces = np.ascontiguousarray(forces, dtype="<f8")
+        h.update(b"F" + str(forces.shape).encode() + forces.tobytes())
     if stress is not None:
         stress = np.ascontiguousarray(stress, dtype="<f8")
         if stress.shape != (3, 3):

@@ -309,7 +309,8 @@ def make_split(
             not_accepted.append(frame_id)
         group_id = _group_of(record, frame_id)
         run_id = _get(record, "run_id") or _field(record, "run_id") or frame_id.split("#", 1)[0]
-        if not isinstance(group_id, str) or not group_id or _lineage_source(record) == "unresolved":
+        if not isinstance(group_id, str) or not group_id or _lineage_source(record) == "unresolved" \
+                or group_id.startswith("unresolved:"):
             unresolved.add(run_id)
         n_atoms = _get(record, "n_atoms")
         if n_atoms is not None and (isinstance(n_atoms, bool) or not isinstance(n_atoms, int) or n_atoms <= 0):
@@ -644,7 +645,7 @@ def records_from_extxyz(path: Path) -> list[dict[str, Any]]:
         metadata.setdefault("composition", composition)
         metadata.setdefault("elements", elements)
         record = {"frame_id": block.frame_id, "n_atoms": block.n_atoms, "metadata": metadata}
-        for key in (GROUP_KEY, "group_id", "run_id", *STRUCTURE_KEYS):
+        for key in (GROUP_KEY, "group_id", "run_id", "lineage_source", *STRUCTURE_KEYS):
             if info.get(key) is not None:
                 record[key] = info[key]
         records.append(record)
