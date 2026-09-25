@@ -23,7 +23,7 @@ from ..specs import SimulationSpec
 from ..units import ASE
 from ..engines import ase_engine
 from ..engines.ase_engine import AseEngine
-from .base import Bridge
+from .base import Bridge, complete_plan
 
 
 class MockAseBridge(Bridge):
@@ -122,7 +122,7 @@ class MockAseBridge(Bridge):
             },
             warning=MOCK_WARNING,
         )
-        return plan
+        return complete_plan(plan)
 
     def _reported_convention(self, simulation: SimulationSpec | None) -> str:
         if simulation is not None and simulation.energy_convention:

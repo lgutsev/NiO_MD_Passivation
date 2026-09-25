@@ -44,7 +44,7 @@ from ..specs import SimulationSpec
 from ..units import ASE, INTERACTION, TOTAL
 from ..engines import ase_engine
 from ..engines.ase_engine import AseEngine
-from .base import Bridge
+from .base import Bridge, complete_plan
 
 CALCULATOR = "mace.calculators.MACECalculator"
 
@@ -393,7 +393,7 @@ class MaceAseBridge(Bridge):
                 "observed": {str(self.potential.model_path): sha} if sha else {},
             },
         )
-        return plan
+        return complete_plan(plan)
 
     # -- execution --------------------------------------------------------
 

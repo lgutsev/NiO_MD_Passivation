@@ -23,7 +23,7 @@ from ..results import PotentialResult, TrajectoryResult
 from ..specs import SimulationSpec
 from ..engines import lammps_engine
 from ..engines.lammps_engine import LammpsEngine
-from .base import Bridge
+from .base import Bridge, complete_plan
 
 
 class LammpsNativeBridge(Bridge):
@@ -91,7 +91,6 @@ class LammpsNativeBridge(Bridge):
         plan = {
             "potential_kind": self.potential_kind,
             "engine": self.engine_kind,
-            "bridge": self.label,
             "implementation": self.implementation,
             "model_checkpoint": {
                 "path": str(first) if first is not None else None,
@@ -104,7 +103,8 @@ class LammpsNativeBridge(Bridge):
             "exported_model": None,
             "elements": list(self.potential.elements),
             "type_map": {str(k): v for k, v in sorted(self.potential.type_map.items())},
-            "energy_convention": self.potential.energy_convention,
+            "energy_convention": self.reported_energy_convention(simulation),
+            "energy_convention_native": self.potential.energy_convention,
             "units": lammps_engine.units_plan(self.potential.units),
             "device": {
                 "requested": None,
@@ -144,7 +144,7 @@ class LammpsNativeBridge(Bridge):
         }
         if launch_error is not None:
             plan["lammps"]["launch_refused"] = launch_error
-        return plan
+        return complete_plan(plan)
 
     def engine_parameters(self, simulation: SimulationSpec | None = None) -> dict:
         return {
@@ -188,11 +188,12 @@ class LammpsNativeBridge(Bridge):
         capabilities = self.validate(simulation, atoms)
         workdir = Path(self.engine.options.get("workdir", ".")) / "lammps_singlepoint"
         payload = self._run(atoms, self.as_singlepoint(simulation), workdir)
-        return self._result(
+        result = self._result(
             payload,
             energy_convention=capabilities.native_energy_convention,
             native_units=self.potential.unit_system_name,
         )
+        return self.in_requested_convention(result, simulation)
 
     def run_md(self, atoms, simulation: SimulationSpec, *, workdir: Path) -> TrajectoryResult:
         capabilities = self.validate(simulation, atoms)
@@ -204,6 +205,7 @@ class LammpsNativeBridge(Bridge):
             energy_convention=capabilities.native_energy_convention,
             native_units=self.potential.unit_system_name,
         )
+        final = self.in_requested_convention(final, simulation)
         return self._trajectory(payload, simulation, initial, final)
 
     def _run(self, atoms, simulation: SimulationSpec, workdir: Path) -> dict:

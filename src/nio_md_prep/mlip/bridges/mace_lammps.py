@@ -56,10 +56,10 @@ from ..errors import ConfigError, MlipError, ModelIntegrityError
 from ..potentials.mace import MaceAdapter
 from ..results import PotentialResult, TrajectoryResult
 from ..specs import LammpsMlipPotentialSpec, SimulationSpec
-from ..units import LAMMPS_METAL
+from ..units import LAMMPS_METAL, TOTAL
 from ..engines import lammps_engine
 from ..engines.lammps_engine import LammpsEngine
-from .base import Bridge
+from .base import Bridge, complete_plan
 
 #: Suffix MACE's exporter appends to the checkpoint's *full* path. mace-torch
 #: 0.3.16, ``mace/cli/create_lammps_model.py:107``:
@@ -99,6 +99,11 @@ MLIAP_ALLOW_CPU_NOTE = (
     "MACELammpsConfig) when the export is created and pickles them into the file, so they "
     "must be set when exporting; in the LAMMPS run environment they have no effect "
     "(measured, mace-torch 0.3.16) and are not set"
+)
+#: Why the route's energy is the total energy, stated in every capability set.
+TOTAL_ENERGY_NOTE = (
+    "the LAMMPS export reports MACE's total energy (node energies include the model's "
+    "E0s); this route applies no conversion, so the interaction convention is refused"
 )
 PER_ATOM_NOTE = (
     "per-atom (site) energies are not claimed for MACE on LAMMPS: pair_mliap and pair_mace "
@@ -333,7 +338,7 @@ class _MaceLammpsBridge(Bridge):
             model_paths=(exported,),
             model_hashes={str(exported): declared} if declared else {},
             framework="mace",
-            energy_convention=self.potential.energy_convention,
+            energy_convention=TOTAL,
             atomic_reference_energies=self.potential.atomic_reference_energies,
             newton="on",
         )
@@ -345,7 +350,14 @@ class _MaceLammpsBridge(Bridge):
         raise NotImplementedError
 
     def capabilities(self) -> CapabilitySet:
-        """Energy, forces and the global virial; no per-atom energies; GPU only if activated."""
+        """Energy, forces and the global virial; no per-atom energies; GPU only if activated.
+
+        The energy is MACE's *total* energy whatever ``potential.energy_convention``
+        says: both exports sum the model's node energies, which include the E0s
+        (``ScaleShiftMACE``: ``node_energy = node_e0 + node_inter_es``, mace-torch
+        0.3.16 ``modules/models.py:581``). No conversion is applied on this route,
+        so the interaction convention is not offered.
+        """
         try:
             gpu = self.gpu_active()
         except ConfigError:
@@ -353,18 +365,38 @@ class _MaceLammpsBridge(Bridge):
         engine_capabilities = replace(
             self.runtime.capabilities(), per_atom_energy=False, gpu=gpu
         )
-        return self.adapter.capabilities().intersect(
-            self._route_capabilities(
-                engine_capabilities,
-                energy_convention=self.potential.energy_convention,
-                native_units=LAMMPS_METAL.name,
-                notes=(
-                    "runs the exported LAMMPS model, not the checkpoint the ASE "
-                    "calculator loads; verify equivalence before production use",
-                    PER_ATOM_NOTE,
-                ),
-            )
+        route = self._route_capabilities(
+            engine_capabilities,
+            energy_convention=TOTAL,
+            native_units=LAMMPS_METAL.name,
+            notes=(
+                "runs the exported LAMMPS model, not the checkpoint the ASE "
+                "calculator loads; verify equivalence before production use",
+                PER_ATOM_NOTE,
+                TOTAL_ENERGY_NOTE,
+            ),
         )
+        return self.adapter.capabilities().intersect(
+            replace(route, convertible_energy_conventions=frozenset())
+        )
+
+    def requirements(self, simulation: SimulationSpec, atoms=None):
+        """The shared requirements plus the convention this route must report.
+
+        ``potential.energy_convention`` is a reporting request here (the export
+        always yields the total energy), so an ``interaction`` request is
+        negotiated -- and refused -- rather than silently relabelled.
+        """
+        requirements = super().requirements(simulation, atoms)
+        if requirements.energy_convention is None and self.potential.energy_convention != TOTAL:
+            reasons = dict(requirements.reasons)
+            reasons["energy_convention"] = "potential.energy_convention"
+            requirements = replace(
+                requirements,
+                energy_convention=self.potential.energy_convention,
+                reasons=reasons,
+            )
+        return requirements
 
     def availability(self) -> Availability:
         exported = self.exported_model_path()
@@ -494,7 +526,7 @@ class _MaceLammpsBridge(Bridge):
         report = {
             "implementation": self.implementation,
             "native_units": LAMMPS_METAL.name,
-            "energy_convention": self.potential.energy_convention,
+            "energy_convention": TOTAL,
             "lammps_units": self.units,
             "atom_style": spec.atom_style,
             "type_map": {str(k): v for k, v in sorted(spec.type_map.items())},
@@ -540,7 +572,6 @@ class _MaceLammpsBridge(Bridge):
         plan = {
             "potential_kind": self.potential_kind,
             "engine": self.engine_kind,
-            "bridge": self.label,
             "implementation": self.implementation,
             "model_checkpoint": {
                 "path": record["checkpoint"]["path"],
@@ -560,7 +591,8 @@ class _MaceLammpsBridge(Bridge):
             },
             "elements": list(self.potential.elements),
             "type_map": {str(k): v for k, v in sorted(spec.type_map.items())},
-            "energy_convention": self.potential.energy_convention,
+            "energy_convention": TOTAL,
+            "energy_convention_requested": self.potential.energy_convention,
             "units": lammps_engine.units_plan(self.units),
             "device": (
                 self.device_plan(launch)
@@ -591,7 +623,7 @@ class _MaceLammpsBridge(Bridge):
         }
         if launch_error is not None:
             plan["lammps"]["launch_refused"] = launch_error
-        return plan
+        return complete_plan(plan)
 
     # -- execution --------------------------------------------------------
 
@@ -866,8 +898,16 @@ class MaceLammpsPairStyleBridge(_MaceLammpsBridge):
         )
 
     def gpu_active(self) -> bool:
-        self.launch()
-        return _cuda_ordinal(self.potential.device) is not None
+        """Claimed only where the device is checked: a CUDA request on the executable route.
+
+        No launch switch puts pair_mace on a GPU -- it picks CUDA itself when
+        LibTorch sees one -- so the claim rests on the post-run check of the
+        device line pair_mace prints to stdout (:meth:`observed_device`, a CPU
+        fallback is an error). The python route cannot read that line, so it
+        does not claim a GPU.
+        """
+        launch = self.launch()
+        return _cuda_ordinal(self.potential.device) is not None and launch.route == "executable"
 
     def device_plan(self, launch) -> dict:
         cuda = _cuda_ordinal(self.potential.device) is not None

@@ -66,7 +66,9 @@ class CapabilitySet:
     ``elements`` and ``precisions`` use ``None`` to mean "unrestricted", which
     is the honest answer for an engine: LAMMPS does not care which elements a
     model covers. Intersecting an unrestricted set with a restricted one
-    yields the restricted one.
+    yields the restricted one. An *empty* ``precisions`` set means the route
+    can guarantee no precision at all (a LAMMPS pair style's precision is
+    fixed by its build), so any precision requirement is refused.
     """
 
     energy: bool = True
@@ -227,9 +229,13 @@ class RequirementSet:
         if self.precision is not None and capabilities.precisions is not None:
             if self.precision not in capabilities.precisions:
                 reason = self.reasons.get("precision")
+                offered = (
+                    f"offered: {', '.join(sorted(capabilities.precisions))}"
+                    if capabilities.precisions
+                    else "this route guarantees no precision"
+                )
                 problems.append(
-                    f"precision {self.precision!r} is not available "
-                    f"(offered: {', '.join(sorted(capabilities.precisions))})"
+                    f"precision {self.precision!r} is not available ({offered})"
                     + (f": {reason}" if reason else "")
                 )
         if self.engine is not None and capabilities.engines is not None:

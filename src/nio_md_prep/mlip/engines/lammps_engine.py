@@ -2172,25 +2172,21 @@ def model_file_plan(paths: Sequence[Path], declared: Mapping[str, str]) -> dict:
 
 
 def bridge_plan_basics(bridge, simulation: SimulationSpec | None, atoms=None) -> dict:
-    """Availability and unmet capabilities of ``bridge`` for this job (no run)."""
+    """Identity, availability and refusals of ``bridge`` for this job (no run).
+
+    The refusals are :meth:`Bridge.plan_refusals`: element coverage,
+    capability negotiation and the bridge's ``check_simulation``, collected
+    rather than raised, so the list is empty exactly when ``validate`` passes.
+    """
     availability = bridge.availability()
-    unmet: list[str] = []
-    if simulation is not None:
-        capabilities = bridge.capabilities()
-        try:
-            unmet = list(bridge.requirements(simulation, atoms).unmet(capabilities))
-        except ConfigError as exc:
-            unmet = [f"refused: {exc}"]
-        if atoms is not None and capabilities.elements is not None:
-            uncovered = sorted(set(atoms.get_chemical_symbols()) - set(capabilities.elements))
-            unmet += [f"element {symbol} is not covered by the potential" for symbol in uncovered]
     return {
+        **bridge.plan_identity(),
         "availability": {
             "available": bool(availability),
             "missing": list(availability.missing),
             "detail": availability.detail,
         },
-        "unmet_capabilities": unmet,
+        "unmet_capabilities": bridge.plan_refusals(simulation, atoms),
     }
 
 

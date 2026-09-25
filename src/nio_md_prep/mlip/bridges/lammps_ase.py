@@ -50,7 +50,7 @@ from ..specs import SimulationSpec
 from ..units import lammps_unit_system
 from ..engines import ase_engine, lammps_engine
 from ..engines.ase_engine import AseEngine
-from .base import Bridge
+from .base import Bridge, complete_plan
 
 LOG_FILE = "lammpslib.log"
 #: Job-directory name for single points when no MD workdir is given.
@@ -294,10 +294,9 @@ class LammpsAseBridge(Bridge):
                 )
             except ConfigError as exc:
                 boundary = f"refused: {exc}"
-        return {
+        return complete_plan({
             "potential_kind": self.potential_kind,
             "engine": self.engine_kind,
-            "bridge": self.label,
             "implementation": self.implementation,
             "model_checkpoint": {
                 "path": str(first) if first is not None else None,
@@ -310,7 +309,8 @@ class LammpsAseBridge(Bridge):
             "exported_model": None,
             "elements": list(self.potential.elements),
             "type_map": {str(k): v for k, v in sorted(self.potential.type_map.items())},
-            "energy_convention": self.potential.energy_convention,
+            "energy_convention": self.reported_energy_convention(simulation),
+            "energy_convention_native": self.potential.energy_convention,
             "units": {
                 **lammps_engine.units_plan(self.potential.units),
                 "native": "ase",
@@ -352,7 +352,7 @@ class LammpsAseBridge(Bridge):
             "openmm": None,
             "model_hashes": files,
             **lammps_engine.bridge_plan_basics(self, simulation, atoms),
-        }
+        })
 
     # -- execution --------------------------------------------------------
 
@@ -380,11 +380,12 @@ class LammpsAseBridge(Bridge):
             "staged_model_files": self._staged_records(workdir),
             "lammps_units": self.potential.units,
         }
-        return self._result(
+        result = self._result(
             payload,
             energy_convention=capabilities.native_energy_convention,
             native_units="ase",
         )
+        return self.in_requested_convention(result, simulation)
 
     def singlepoint(self, atoms, simulation: SimulationSpec) -> PotentialResult:
         return self._evaluate(atoms, simulation, None)

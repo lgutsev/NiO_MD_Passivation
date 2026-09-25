@@ -28,6 +28,141 @@ from ..errors import MissingDependencyError, NotImplementedYetError
 from ..results import PotentialResult, TrajectoryResult
 from ..specs import EngineSpec, PotentialSpec, SimulationSpec, as_singlepoint
 
+# ---------------------------------------------------------------------------
+# The execution-plan contract (what ``mlip validate`` shows for every route)
+# ---------------------------------------------------------------------------
+
+#: Top-level keys every :meth:`Bridge.execution_plan` returns. Bridges add
+#: route-specific keys freely; these are the ones a reader may always index.
+EXECUTION_PLAN_KEYS = (
+    "potential_kind",
+    "engine",
+    "bridge",
+    "implementation",
+    "label",
+    "model_checkpoint",
+    "exported_model",
+    "elements",
+    "energy_convention",
+    "units",
+    "device",
+    "precision",
+    "dynamics",
+    "lammps",
+    "openmm",
+    "availability",
+    "unmet_capabilities",
+    "model_hashes",
+)
+
+#: Keys of every ``dynamics`` section (user value in fs, native value as the
+#: engine is given it). ``None`` means the value does not apply or is unknown.
+PLAN_DYNAMICS_KEYS = (
+    "ensemble",
+    "integrator",
+    "thermostat",
+    "barostat",
+    "barostat_coupling",
+    "timestep_fs",
+    "timestep_native",
+    "thermostat_damping_fs",
+    "thermostat_damping_native",
+    "barostat_damping_fs",
+    "barostat_damping_native",
+)
+
+#: Guarantee records: what was asked for, what will run, and whether that is
+#: known (``guaranteed``) or only expected (``note`` says which and why).
+PLAN_GUARANTEE_KEYS = ("requested", "effective", "guaranteed", "note")
+
+#: Required sub-keys of each section. Sections in :data:`PLAN_NULLABLE` may be
+#: ``None`` (no export, no MD, not a LAMMPS/OpenMM route); when present they
+#: carry at least these keys.
+PLAN_SECTION_KEYS = {
+    "model_checkpoint": ("path", "sha256"),
+    "exported_model": ("path", "sha256"),
+    "units": ("native", "pressure_unit"),
+    "device": PLAN_GUARANTEE_KEYS,
+    "precision": PLAN_GUARANTEE_KEYS,
+    "dynamics": PLAN_DYNAMICS_KEYS,
+    "lammps": ("pair_style", "pair_coeff", "launch_command", "kokkos_args", "env"),
+    "openmm": ("platform", "properties", "create_system_kwargs"),
+    "availability": ("available", "missing"),
+    "model_hashes": ("declared", "observed"),
+}
+PLAN_NULLABLE = frozenset({"exported_model", "dynamics", "lammps", "openmm"})
+
+_PLAN_EMPTY_VALUES = {
+    "lammps": {"pair_coeff": [], "kokkos_args": [], "env": {}},
+    "availability": {"missing": []},
+    "model_hashes": {"declared": {}, "observed": {}},
+}
+
+
+def complete_plan(plan: dict) -> dict:
+    """Give ``plan`` every key of the contract, filling what a route left out.
+
+    A missing top-level key becomes ``None`` (nullable sections) or an empty
+    section whose values are ``None``; a present section gains its missing
+    sub-keys as ``None``. Nothing that is already there is changed, so a
+    route's own values -- and its extra keys -- are kept verbatim. A missing
+    ``guaranteed`` flag is filled with ``False``: a route that did not say
+    is not trusted.
+    """
+    plan = dict(plan)
+    for key in EXECUTION_PLAN_KEYS:
+        if key not in plan:
+            plan[key] = None if key in PLAN_NULLABLE else _empty_section(key)
+    plan["unmet_capabilities"] = list(plan.get("unmet_capabilities") or [])
+    for key, subkeys in PLAN_SECTION_KEYS.items():
+        section = plan.get(key)
+        if section is None:
+            if key in PLAN_NULLABLE:
+                continue
+            section = _empty_section(key)
+        elif not isinstance(section, dict):
+            continue
+        section = dict(section)
+        for subkey in subkeys:
+            if subkey not in section:
+                section[subkey] = _empty_value(key, subkey)
+        plan[key] = section
+    if plan["availability"].get("available") is None:
+        plan["availability"]["available"] = False
+    return plan
+
+
+def _empty_value(key: str, subkey: str):
+    if subkey == "guaranteed":
+        return False
+    value = _PLAN_EMPTY_VALUES.get(key, {}).get(subkey)
+    return type(value)() if value is not None else None
+
+
+def _empty_section(key: str):
+    subkeys = PLAN_SECTION_KEYS.get(key)
+    if subkeys is None:
+        return None
+    return {subkey: _empty_value(key, subkey) for subkey in subkeys}
+
+
+def plan_problems(plan: dict) -> list[str]:
+    """Every way ``plan`` departs from the contract (empty when it conforms)."""
+    problems = [f"missing key {key!r}" for key in EXECUTION_PLAN_KEYS if key not in plan]
+    for key, subkeys in PLAN_SECTION_KEYS.items():
+        section = plan.get(key)
+        if section is None:
+            if key not in PLAN_NULLABLE and key in plan:
+                problems.append(f"{key!r} is None but is not optional")
+            continue
+        if not isinstance(section, dict):
+            problems.append(f"{key!r} is {type(section).__name__}, not a mapping")
+            continue
+        problems += [f"{key}.{sub} missing" for sub in subkeys if sub not in section]
+    if not isinstance(plan.get("unmet_capabilities"), list):
+        problems.append("'unmet_capabilities' is not a list")
+    return problems
+
 
 class Bridge(ABC):
     """Base class for every cell of the compatibility matrix."""
@@ -188,6 +323,121 @@ class Bridge(ABC):
         self.check_simulation(simulation, atoms)
         return capabilities
 
+    def plan_refusals(self, simulation: SimulationSpec | None, atoms=None) -> list[str]:
+        """Every refusal :meth:`validate` would raise, collected instead of raised.
+
+        Element coverage, capability negotiation and :meth:`check_simulation`,
+        in that order, each message once. What an execution plan lists as
+        ``unmet_capabilities``; empty exactly when ``validate`` would pass.
+        """
+        from ..errors import MlipError
+
+        problems: list[str] = []
+
+        def add(messages) -> None:
+            for message in messages:
+                if message not in problems:
+                    problems.append(message)
+
+        capabilities = self.capabilities()
+        if atoms is not None:
+            try:
+                check_elements(
+                    capabilities, atoms.get_chemical_symbols(), label=self.potential.label
+                )
+            except MlipError as exc:
+                add([str(exc)])
+        if simulation is None:
+            return problems
+        try:
+            add(self.requirements(simulation, atoms).unmet(capabilities))
+        except MlipError as exc:
+            add([str(exc)])
+        try:
+            self.check_simulation(simulation, atoms)
+        except MlipError as exc:
+            add([str(exc)])
+        return problems
+
+    def plan_identity(self) -> dict:
+        """The plan keys that name the route: kinds, bridge class, implementation."""
+        return {
+            "potential_kind": self.potential_kind,
+            "engine": self.engine_kind,
+            "bridge": type(self).__name__,
+            "bridge_class": f"{type(self).__module__}.{type(self).__qualname__}",
+            "implementation": self.implementation,
+            "label": self.label,
+        }
+
+    def execution_plan(self, simulation: SimulationSpec, atoms=None) -> dict:
+        """What a run would execute, resolved without running anything.
+
+        This default states only what every route knows -- identity, model
+        file hashes, capabilities, availability, refusals -- and leaves the
+        engine-specific sections ``None`` with ``guaranteed = False``. Every
+        registered bridge overrides it with its own resolved plan; all of them
+        return :func:`complete_plan` output, so the keys in
+        :data:`EXECUTION_PLAN_KEYS` are always present.
+        """
+        from ..provenance import sha256_file
+
+        capabilities = self.capabilities()
+        files = [Path(p) for p in self.potential.model_files()]
+        observed = {str(p): (sha256_file(p) if p.is_file() else None) for p in files}
+        first = files[0] if files else None
+        dynamics = None
+        if simulation is not None and simulation.task == "md":
+            dynamics = dict.fromkeys(PLAN_DYNAMICS_KEYS)
+            dynamics.update(
+                ensemble=simulation.ensemble,
+                thermostat=simulation.thermostat,
+                barostat=simulation.barostat,
+                barostat_coupling=simulation.barostat_coupling,
+                timestep_fs=simulation.timestep_fs,
+                thermostat_damping_fs=simulation.thermostat_damping_fs,
+                barostat_damping_fs=simulation.barostat_damping_fs,
+                note="as requested; this route does not resolve its integrator before a run",
+            )
+        unresolved = "not resolved by this route before a run"
+        return complete_plan(
+            {
+                **self.plan_identity(),
+                "model_checkpoint": {
+                    "path": str(first) if first is not None else None,
+                    "sha256": observed.get(str(first)) if first is not None else None,
+                },
+                "exported_model": None,
+                "elements": (
+                    sorted(capabilities.elements)
+                    if capabilities.elements is not None
+                    else list(self.potential.elements)
+                ),
+                "energy_convention": capabilities.native_energy_convention,
+                "units": {"native": capabilities.native_units, "pressure_unit": None},
+                "device": {
+                    "requested": getattr(self.potential, "device", None),
+                    "effective": None,
+                    "guaranteed": False,
+                    "note": unresolved,
+                },
+                "precision": {
+                    "requested": getattr(self.potential, "precision", None)
+                    or self.engine.precision,
+                    "effective": None,
+                    "guaranteed": False,
+                    "note": unresolved,
+                },
+                "dynamics": dynamics,
+                "availability": self.availability().as_dict(),
+                "unmet_capabilities": self.plan_refusals(simulation, atoms),
+                "model_hashes": {
+                    "declared": dict(self.potential.declared_hashes()),
+                    "observed": {k: v for k, v in observed.items() if v},
+                },
+            }
+        )
+
     def require_available(self) -> None:
         availability = self.availability()
         if not availability:
@@ -210,6 +460,46 @@ class Bridge(ABC):
         )
 
     # -- helpers for subclasses -------------------------------------------
+
+    def in_requested_convention(
+        self,
+        result: PotentialResult,
+        simulation: SimulationSpec | None,
+        *,
+        source: str = "potential.atomic_reference_energies",
+    ) -> PotentialResult:
+        """Report ``result`` in ``simulation.energy_convention`` when one is named.
+
+        Capability negotiation only lets such a request through when the route
+        lists the convention as reachable -- natively or by conversion with
+        known atomic reference energies -- so a route that claims a
+        convertible convention must also deliver it. The engine's own number
+        and the conversion are kept in ``extras``.
+        """
+        from dataclasses import replace
+
+        target = getattr(simulation, "energy_convention", None)
+        if not target or target == result.energy_convention:
+            return result
+        converted = result.in_convention(
+            target, atomic_reference_energies=self.atomic_reference_energies()
+        )
+        extras = {
+            **result.extras,
+            "native_energy_convention": result.energy_convention,
+            "native_energy_eV": result.energy_eV,
+            "energy_conversion": (
+                f"{target} = {result.energy_convention} "
+                f"{'-' if target == 'interaction' else '+'} sum of atomic reference energies (E0)"
+            ),
+            "atomic_reference_energies_source": source,
+        }
+        return replace(converted, extras=extras)
+
+    def reported_energy_convention(self, simulation: SimulationSpec | None) -> str:
+        """The convention a result of this job is reported in (for plans)."""
+        requested = getattr(simulation, "energy_convention", None)
+        return requested or self.capabilities().native_energy_convention
 
     def _result(self, payload: dict, *, energy_convention: str, native_units: str, **extras):
         """Build a validated :class:`PotentialResult` from an engine payload.
@@ -305,4 +595,13 @@ class Bridge(ABC):
         )
 
 
-__all__ = ["Bridge"]
+__all__ = [
+    "Bridge",
+    "EXECUTION_PLAN_KEYS",
+    "PLAN_DYNAMICS_KEYS",
+    "PLAN_GUARANTEE_KEYS",
+    "PLAN_NULLABLE",
+    "PLAN_SECTION_KEYS",
+    "complete_plan",
+    "plan_problems",
+]

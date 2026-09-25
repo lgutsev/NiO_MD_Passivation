@@ -105,12 +105,25 @@ def inspect_environment(job: JobSpec | None = None, *, probe_torch: bool = False
     return report
 
 
-def validate_job(job: JobSpec, *, structure: StructureSpec | None = None) -> dict:
-    """Resolve, negotiate and render -- but execute nothing.
+def validate_job(
+    job: JobSpec, *, structure: StructureSpec | None = None, strict: bool = True
+) -> dict:
+    """Resolve, negotiate and render the execution plan -- but execute nothing.
 
     Deliberately ordered so the most informative failure comes first: an
-    impossible combination, then a missing element, then an unmet capability.
+    impossible combination, then a missing element, then an unmet capability,
+    then an engine-specific refusal. With ``strict=True`` (the default) each
+    of those raises, as before. With ``strict=False`` only an impossible
+    combination (no bridge to plan with) or an unreadable structure raises;
+    every other refusal is listed in ``execution_plan["unmet_capabilities"]``
+    and ``ok`` is false, so the plan of a refused job can still be shown.
+
+    ``execution_plan`` is :meth:`Bridge.execution_plan` for the resolved
+    route: every key in :data:`~nio_md_prep.mlip.bridges.base.EXECUTION_PLAN_KEYS`
+    is present, and nothing in it was produced by running an engine.
     """
+    from .errors import CapabilityError
+
     registration = resolve_bridge(
         job.potential.kind,
         job.engine.kind,
@@ -125,32 +138,43 @@ def validate_job(job: JobSpec, *, structure: StructureSpec | None = None) -> dic
     if structure_spec is not None:
         atoms = load_structure(structure_spec)
         structure_report = describe_structure(atoms)
-        check_elements(
-            capabilities, atoms.get_chemical_symbols(), label=job.potential.label
-        )
+        if strict:
+            check_elements(
+                capabilities, atoms.get_chemical_symbols(), label=job.potential.label
+            )
 
-    requirements = bridge.requirements(job.simulation, atoms)
-    unmet = requirements.unmet(capabilities)
-    availability = bridge.availability()
+    requirements = None
+    unmet: list[str] = []
+    try:
+        requirements = bridge.requirements(job.simulation, atoms)
+        unmet = requirements.unmet(capabilities)
+    except MlipError:
+        if strict:
+            raise
+    if strict:
+        if unmet:
+            raise CapabilityError(f"{bridge.label} cannot satisfy this job:", unmet)
+        # Engine-specific refusals (unsupported thermostat, platform property...).
+        bridge.check_simulation(job.simulation, atoms)
 
-    if unmet:
-        from .errors import CapabilityError
-
-        raise CapabilityError(
-            f"{bridge.label} cannot satisfy this job:", unmet
-        )
-    # Engine-specific refusals (unsupported thermostat, platform property...).
-    bridge.check_simulation(job.simulation, atoms)
+    plan = bridge.execution_plan(job.simulation, atoms)
+    try:
+        engine_parameters = bridge.engine_parameters(job.simulation)
+    except MlipError as exc:
+        if strict:
+            raise
+        engine_parameters = {"refused": str(exc)}
     return {
-        "ok": True,
+        "ok": not plan["unmet_capabilities"],
         "job": job.as_dict(),
         "route": registration.as_dict(),
         "capabilities": capabilities.as_dict(),
-        "requirements": requirements.as_dict(),
-        "unmet": unmet,
-        "availability": availability.as_dict(),
+        "requirements": requirements.as_dict() if requirements is not None else None,
+        "unmet": list(plan["unmet_capabilities"]),
+        "availability": bridge.availability().as_dict(),
         "structure": structure_report,
-        "engine_parameters": bridge.engine_parameters(job.simulation),
+        "engine_parameters": engine_parameters,
+        "execution_plan": plan,
     }
 
 

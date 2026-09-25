@@ -117,7 +117,10 @@ class LammpsMlipAdapter(PotentialAdapter):
             periodic=True,
             gpu=False,
             elements=frozenset(self.spec.elements),
-            precisions=None,
+            # Fixed by the pair style's package and model build and not readable
+            # from here: no precision is guaranteed (an empty set, not None,
+            # which would mean "any").
+            precisions=frozenset(),
             engines=frozenset({"lammps", "ase"}),
             native_energy_convention=self.spec.energy_convention,
             native_units=lammps_unit_system(self.spec.units).name,

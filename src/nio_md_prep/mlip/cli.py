@@ -46,11 +46,15 @@ def add_parser(subparsers) -> None:
     )
 
     validate = group.add_parser(
-        "validate", help="check a configuration and its route without executing anything"
+        "validate",
+        help="show the execution plan of a configuration and refuse an impossible job, "
+        "without executing anything",
     )
     validate.add_argument("config", type=Path)
     validate.add_argument("--structure", type=Path)
-    validate.add_argument("--json", action="store_true")
+    validate.add_argument(
+        "--json", action="store_true", help="emit the report and execution plan as JSON"
+    )
 
     singlepoint = group.add_parser(
         "singlepoint", help="evaluate one geometry and write an MLIP manifest"
@@ -101,8 +105,17 @@ def run(args) -> int:
     job = parse_job(args.config)
 
     if args.mlip_command == "validate":
-        report = jobs.validate_job(job, structure=structure)
+        # The plan is printed even for a refused job; the refusal then exits
+        # through the top-level error handler (status 2), as before.
+        report = jobs.validate_job(job, structure=structure, strict=False)
         _emit(report, args.json, _format_validate)
+        if not report["ok"]:
+            from .errors import CapabilityError
+
+            raise CapabilityError(
+                f"{report['execution_plan']['label']} cannot run this job:",
+                report["execution_plan"]["unmet_capabilities"],
+            )
         return 0
 
     if args.mlip_command == "singlepoint":
@@ -274,14 +287,134 @@ def _format_validate(report: dict) -> str:
             f"fixed atoms={structure['constraints']['n_fixed']}, "
             f"sha256={structure['sha256'][:16]}..."
         )
-    parameters = report["engine_parameters"]
-    if parameters.get("pair_commands"):
-        lines.append("  rendered LAMMPS commands:")
-        lines += [f"    {command}" for command in parameters["pair_commands"]]
-    if parameters.get("returnEnergyType"):
-        lines.append(f"  OpenMM-ML returnEnergyType: {parameters['returnEnergyType']}")
     lines.append("")
-    lines.append("Configuration is valid for this route." if report["ok"] else "INVALID")
+    lines.append(format_plan(report["execution_plan"]))
+    lines.append("")
+    lines.append(
+        "Configuration is valid for this route."
+        if report["ok"]
+        else "INVALID: this route refuses the job (see unmet capabilities)."
+    )
+    return "\n".join(lines)
+
+
+def _flag(guaranteed) -> str:
+    return "guaranteed" if guaranteed else "NOT guaranteed"
+
+
+def _native(value) -> str:
+    """A native value as the engine receives it: a number or ``{value, unit}``."""
+    if value is None:
+        return "n/a"
+    if isinstance(value, dict) and "value" in value:
+        return f"{value['value']!r} {value.get('unit', '')}".strip()
+    return repr(value)
+
+
+def _guarantee_lines(name: str, record: dict | None, pad: str) -> list[str]:
+    if not record:
+        return [f"  {name + ':':<14}not stated"]
+    lines = [
+        f"  {name + ':':<14}requested {record.get('requested')} -> effective "
+        f"{record.get('effective')} [{_flag(record.get('guaranteed'))}]"
+    ]
+    if record.get("note"):
+        lines.append(f"{pad}{record['note']}")
+    return lines
+
+
+def format_plan(plan: dict) -> str:
+    """The readable form of an execution plan: every contract key, in order."""
+    pad = " " * 16
+    lines = ["Execution plan (resolved without running anything):"]
+    lines.append(
+        f"  {'route:':<14}{plan['potential_kind']} -> {plan['engine']} "
+        f"({plan['implementation']}), bridge {plan['bridge']}"
+    )
+    checkpoint = plan.get("model_checkpoint") or {}
+    if checkpoint.get("path"):
+        lines.append(f"  {'checkpoint:':<14}{checkpoint['path']}")
+        lines.append(f"{pad}sha256 {checkpoint.get('sha256') or '(file not found)'}")
+    else:
+        lines.append(f"  {'checkpoint:':<14}none (no model file)")
+    exported = plan.get("exported_model")
+    if exported:
+        lines.append(f"  {'exported:':<14}{exported.get('path')}")
+        lines.append(f"{pad}sha256 {exported.get('sha256') or '(file not found)'}")
+        if exported.get("exporter"):
+            lines.append(f"{pad}created by: {exported['exporter']}")
+    else:
+        lines.append(f"  {'exported:':<14}none (the engine evaluates the checkpoint itself)")
+    elements = ", ".join(plan.get("elements") or []) or "unrestricted"
+    lines.append(f"  {'elements:':<14}{elements}")
+    lines.append(f"  {'energy:':<14}{plan.get('energy_convention')} convention")
+    units = plan.get("units") or {}
+    lines.append(
+        f"  {'units:':<14}native {units.get('native')}; pressure unit "
+        f"{units.get('pressure_unit') or 'n/a'}"
+    )
+    lines += _guarantee_lines("device", plan.get("device"), pad)
+    lines += _guarantee_lines("precision", plan.get("precision"), pad)
+    dynamics = plan.get("dynamics")
+    if dynamics is None:
+        lines.append(f"  {'dynamics:':<14}none (this task integrates nothing)")
+    else:
+        coupling = dynamics.get("barostat_coupling")
+        lines.append(
+            f"  {'dynamics:':<14}{dynamics.get('ensemble')}: integrator "
+            f"{dynamics.get('integrator')}, thermostat {dynamics.get('thermostat')}, "
+            f"barostat {dynamics.get('barostat')}" + (f" ({coupling})" if coupling else "")
+        )
+        lines.append(
+            f"{pad}timestep {dynamics.get('timestep_fs')} fs -> native "
+            f"{_native(dynamics.get('timestep_native'))}"
+        )
+        for label, key in (("thermostat", "thermostat_damping"), ("barostat", "barostat_damping")):
+            user, native = dynamics.get(f"{key}_fs"), dynamics.get(f"{key}_native")
+            if user is not None or native is not None:
+                lines.append(f"{pad}{label} damping {user} fs -> native {_native(native)}")
+        if dynamics.get("native_time_unit"):
+            lines.append(f"{pad}native time unit: {dynamics['native_time_unit']}")
+        if dynamics.get("refused"):
+            lines.append(f"{pad}REFUSED: {dynamics['refused']}")
+    lammps = plan.get("lammps")
+    if lammps:
+        lines.append(f"  {'LAMMPS:':<14}{lammps.get('pair_style')}")
+        lines += [f"{pad}{command}" for command in lammps.get("pair_coeff") or []]
+        lines.append(f"{pad}launch: {lammps.get('launch_command')}")
+        kokkos = lammps.get("kokkos_args") or []
+        lines.append(f"{pad}KOKKOS: {' '.join(kokkos) if kokkos else 'off'}")
+        if lammps.get("env"):
+            lines.append(
+                f"{pad}environment: "
+                + " ".join(f"{k}={v!r}" for k, v in sorted(lammps["env"].items()))
+            )
+        if lammps.get("launch_refused"):
+            lines.append(f"{pad}launch REFUSED: {lammps['launch_refused']}")
+    openmm = plan.get("openmm")
+    if openmm:
+        platform = openmm.get("platform")
+        if isinstance(platform, dict):
+            platform = platform.get("effective") or "chosen by OpenMM when the Context is created"
+        lines.append(f"  {'OpenMM:':<14}platform {platform}")
+        lines.append(f"{pad}platform properties: {openmm.get('properties')}")
+        lines.append(f"{pad}createSystem: {openmm.get('create_system_kwargs')}")
+    availability = plan.get("availability") or {}
+    if availability.get("available"):
+        lines.append(f"  {'available:':<14}yes")
+    else:
+        missing = ", ".join(availability.get("missing") or [])
+        lines.append(
+            f"  {'available:':<14}no" + (f" (missing modules: {missing})" if missing else "")
+        )
+        if availability.get("detail"):
+            lines.append(f"{pad}{availability['detail']}")
+    unmet = plan.get("unmet_capabilities") or []
+    lines.append(f"  {'unmet:':<14}" + ("none" if not unmet else f"{len(unmet)} refusal(s)"))
+    lines += [f"{pad}- {item}" for item in unmet]
+    hashes = plan.get("model_hashes") or {}
+    lines.append(f"  {'model hashes:':<14}declared {hashes.get('declared') or 'none'}")
+    lines.append(f"{pad}observed {hashes.get('observed') or 'none'}")
     return "\n".join(lines)
 
 

@@ -53,7 +53,7 @@ from ..specs import SimulationSpec
 from ..units import INTERACTION, OPENMM
 from ..engines import openmm_engine
 from ..engines.openmm_engine import ENERGY_TYPE, OpenMMEngine
-from .base import Bridge
+from .base import Bridge, complete_plan
 
 #: What OpenMM-ML gives you if nobody says otherwise.
 OPENMM_ML_DEFAULT_CONVENTION = INTERACTION
@@ -449,12 +449,8 @@ class MaceOpenMMBridge(Bridge):
                 "imported at execution (an unavailable one is refused with the list of "
                 "available platforms)"
             )
-        return {
-            "potential_kind": self.potential_kind,
-            "engine": self.engine_kind,
-            "bridge": type(self).__name__,
-            "implementation": self.implementation,
-            "label": self.label,
+        return complete_plan({
+            **self.plan_identity(),
             "model_checkpoint": {
                 "path": str(model_path),
                 "exists": exists,
@@ -531,7 +527,7 @@ class MaceOpenMMBridge(Bridge):
                     else None
                 ),
             },
-        }
+        })
 
     # -- execution --------------------------------------------------------
 

@@ -570,7 +570,9 @@ def test_the_mock_execution_plan_is_what_the_run_constructs(tmp_path, pinned_nio
     plan = bridge.execution_plan(job.simulation, pinned_nio)
     assert PLAN_KEYS <= set(plan) and DYNAMICS_KEYS <= set(plan["dynamics"])
     assert plan["potential_kind"] == "mock" and plan["engine"] == "ase"
-    assert plan["model_checkpoint"] is None and plan["exported_model"] is None
+    # The shared contract: a model-free route still has a model_checkpoint section.
+    assert plan["model_checkpoint"] == {"path": None, "sha256": None}
+    assert plan["exported_model"] is None
     assert plan["lammps"] is None and plan["openmm"] is None
     assert plan["units"] == {**plan["units"], "native": "ase", "pressure_unit": "eV/Angstrom^3"}
     assert plan["device"]["effective"] == "cpu" and plan["device"]["guaranteed"] is True

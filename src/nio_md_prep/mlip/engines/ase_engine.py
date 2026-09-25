@@ -1054,26 +1054,10 @@ def base_execution_plan(bridge, simulation: SimulationSpec, atoms=None) -> dict:
     calculator is built. The bridge fills in ``model_checkpoint``,
     ``energy_convention``, ``device``, ``precision`` and ``model_hashes``.
     """
-    from ..capabilities import check_elements
     from ..errors import MlipError
 
-    unmet: list[str] = []
     capabilities = bridge.capabilities()
-    if atoms is not None:
-        try:
-            check_elements(
-                capabilities, atoms.get_chemical_symbols(), label=bridge.potential.label
-            )
-        except MlipError as exc:
-            unmet.append(str(exc))
-    try:
-        unmet += bridge.requirements(simulation, atoms).unmet(capabilities)
-    except MlipError as exc:
-        unmet.append(str(exc))
-    try:
-        bridge.check_simulation(simulation, atoms)
-    except MlipError as exc:
-        unmet.append(str(exc))
+    unmet = bridge.plan_refusals(simulation, atoms)
     dynamics = None
     if simulation.task == "md":
         try:
@@ -1087,10 +1071,7 @@ def base_execution_plan(bridge, simulation: SimulationSpec, atoms=None) -> dict:
         else sorted(bridge.potential.elements)
     )
     return {
-        "potential_kind": bridge.potential_kind,
-        "engine": bridge.engine_kind,
-        "bridge": f"{type(bridge).__module__}.{type(bridge).__qualname__}",
-        "implementation": bridge.implementation,
+        **bridge.plan_identity(),
         "model_checkpoint": None,
         "exported_model": None,
         "elements": elements,
