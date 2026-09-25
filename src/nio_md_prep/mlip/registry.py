@@ -34,6 +34,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from .errors import (
+    ConfigError,
     UnknownEngineError,
     UnknownPotentialError,
     UnsupportedCombinationError,
@@ -143,9 +144,17 @@ class BridgeRegistry:
         """Select the implementation for a (potential, engine) pair.
 
         Raises a specific, actionable error for each way this can fail: an
-        unknown potential kind, an unknown engine kind, a combination that is
-        registered as impossible, and a requested implementation that does not
-        exist for an otherwise-valid pair.
+        unknown potential kind, an unknown engine kind, a preference naming an
+        implementation no engine registers for this potential, a combination
+        that is registered as impossible, and a requested implementation that
+        does not exist for an otherwise-valid pair.
+
+        ``preferences`` is a potential-level ordering shared by every engine
+        (``("mliap", "pair-mace")`` means nothing to ASE), so a preferred name
+        registered only for another engine is skipped here -- but a name
+        registered for *no* engine is a typo (``"pair_mace"``) and is refused
+        rather than silently falling back to the default. Availability on
+        this machine is never consulted.
         """
         if potential not in self.potentials():
             raise UnknownPotentialError(
@@ -155,6 +164,17 @@ class BridgeRegistry:
         if engine not in ENGINE_KINDS:
             raise UnknownEngineError(
                 f"unknown engine kind {engine!r}; known engines: {', '.join(ENGINE_KINDS)}"
+            )
+        preferences = tuple(preferences)
+        known = sorted(
+            {e.implementation for e in self._entries if e.potential == potential and e.supported}
+        )
+        unknown = [name for name in preferences if name not in known]
+        if unknown:
+            raise ConfigError(
+                f"potential.implementation names {', '.join(repr(n) for n in unknown)}, "
+                f"which no engine registers for potential kind {potential!r}; registered "
+                f"implementations: {', '.join(known)}"
             )
         candidates = self.for_pair(potential, engine)
         if not candidates:
@@ -278,14 +298,14 @@ register(
     module=".bridges.mace_openmm",
     attribute="MaceOpenMMBridge",
     requires=("openmmml", "openmm", "mace", "torch"),
-    packages=("openmm-ml", "openmm", "mace-torch", "torch"),
+    packages=("openmmml", "openmm", "mace-torch", "torch"),
     priority=10,
     notes=(
         "accepts both pretrained (mace-off / mace-mp) and locally trained models",
         "defaults to the INTERACTION energy (atomic self-energies removed); this "
         "subsystem harmonises the convention before any comparison",
-        "OpenMM reports no stress tensor here, so constant-pressure jobs are "
-        "rejected by capability negotiation rather than run without a virial",
+        "no stress tensor is reported here and constant-pressure jobs are refused "
+        "by policy until an OpenMM NPT path has been validated",
     ),
 )
 

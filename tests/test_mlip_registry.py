@@ -6,7 +6,6 @@ These tests are the executable statement of the matrix in
 an impossible combination must produce a typed, explanatory error rather than
 an import traceback from a half-written adapter.
 """
-import sys
 
 import pytest
 
@@ -51,13 +50,11 @@ def test_the_unsupported_cell_is_registered_rather_than_absent():
     assert entries[0].reason
 
 
-def test_resolution_imports_no_backend():
+def test_resolution_imports_no_backend(backend_import_guard):
     """Resolving must stay cheap: no torch, no OpenMM, no LAMMPS."""
     for potential, engine, _ in SUPPORTED_CELLS:
         registry.resolve_bridge(potential, engine)
-    assert "torch" not in sys.modules
-    assert "openmm" not in sys.modules
-    assert "mace" not in sys.modules
+    backend_import_guard()
 
 
 def test_unknown_potential_and_engine_are_distinguished():
@@ -77,9 +74,27 @@ def test_implementation_preference_selects_the_older_route():
     assert chosen.implementation == "pair-mace"
 
 
-def test_an_unknown_preference_falls_back_to_the_default():
-    chosen = registry.resolve_bridge("mace", "lammps", preferences=("nonexistent",))
-    assert chosen.implementation == "mliap"
+def test_an_unknown_preference_is_refused_rather_than_ignored():
+    """A typo must not silently select the default route."""
+    from nio_md_prep.mlip.errors import ConfigError
+
+    with pytest.raises(ConfigError, match="no engine registers"):
+        registry.resolve_bridge("mace", "lammps", preferences=("nonexistent",))
+    # The docstring once spelled the registered 'pair-mace' as 'pair_mace'.
+    with pytest.raises(ConfigError, match="pair-mace"):
+        registry.resolve_bridge("mace", "lammps", preferences=("pair_mace",))
+
+
+def test_a_preference_for_another_engine_is_skipped():
+    """Preferences are potential-level: 'pair-mace' means nothing to ASE."""
+    chosen = registry.resolve_bridge("mace", "ase", preferences=("pair-mace",))
+    assert chosen.implementation == "mace-ase-calculator"
+
+
+def test_openmm_ml_is_recorded_under_its_real_distribution_name():
+    """PyPI has 'openmmml'; 'openmm-ml' is not a distribution."""
+    entry = registry.resolve_bridge("mace", "openmm")
+    assert "openmmml" in entry.packages and "openmm-ml" not in entry.packages
 
 
 def test_an_explicitly_requested_missing_implementation_is_an_error():

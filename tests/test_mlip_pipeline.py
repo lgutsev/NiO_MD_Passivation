@@ -146,6 +146,55 @@ def test_validate_rejects_npt_on_openmm_before_anything_is_generated(
     assert "integrates the simulation cell" in message
 
 
+def test_validate_refuses_npt_on_a_vacuum_slab_written_as_a_periodic_cell(
+    tmp_path, rattled_nio_structure
+):
+    """A POSCAR-style slab (pbc TTT + vacuum) must not get an isotropic barostat."""
+    from ase.io import write
+
+    slab = rattled_nio_structure.copy()
+    slab.center(vacuum=8.0, axis=2)
+    path = tmp_path / "slab.xyz"
+    write(str(path), slab, format="extxyz")
+    config = MOCK_CONFIG.replace(
+        'task = "singlepoint"\ncompute_stress = true\ncompute_per_atom_energy = true',
+        'task = "md"\nensemble = "npt"\ntemperature_K = 300\npressure_bar = 1.0\n'
+        "timestep_fs = 0.5\nsteps = 10",
+    )
+    job = parse_job(write_config(tmp_path, config, path))
+    with pytest.raises(ConfigError, match="vacuum slab"):
+        jobs.validate_job(job)
+
+
+def test_validate_refuses_stress_on_a_slab(tmp_path, rattled_nio_structure):
+    """A slab has no full stress tensor; asking for one is refused, not zero-filled."""
+    from ase.io import write
+
+    slab = rattled_nio_structure.copy()
+    slab.pbc = (True, True, False)
+    path = tmp_path / "slab.xyz"
+    write(str(path), slab, format="extxyz")
+    job = parse_job(write_config(tmp_path, MOCK_CONFIG, path))
+    with pytest.raises(ConfigError, match="periodic along all three axes"):
+        jobs.validate_job(job)
+
+
+def test_validate_runs_the_engine_specific_checks(tmp_path, structure_file, monkeypatch):
+    """Bridge.check_simulation is the hook engine routes refuse requests through."""
+    from nio_md_prep.mlip.bridges.mock_ase import MockAseBridge
+
+    def refuse(self, simulation, atoms=None):
+        raise ConfigError("the mock route refuses this request")
+
+    monkeypatch.setattr(MockAseBridge, "check_simulation", refuse)
+    job = parse_job(write_config(tmp_path, MOCK_CONFIG, structure_file))
+    with pytest.raises(ConfigError, match="refuses this request"):
+        jobs.validate_job(job)
+    with pytest.raises(ConfigError, match="refuses this request"):
+        jobs.run_singlepoint(job, output_dir=tmp_path / "run")
+    assert not (tmp_path / "run" / MANIFEST_NAME).exists()
+
+
 def test_validate_accepts_npt_on_a_route_that_reports_a_virial(tmp_path, structure_file):
     config = MOCK_CONFIG.replace(
         'task = "singlepoint"\ncompute_stress = true\ncompute_per_atom_energy = true',
@@ -176,6 +225,7 @@ def test_singlepoint_writes_canonical_results_and_a_manifest(tmp_path, structure
     assert sum(result.per_atom_energy_eV) == pytest.approx(result.energy_eV, rel=1e-10)
 
     manifest = read_manifest(output)
+    assert manifest["status"] == "completed"
     assert manifest["bridge"]["implementation"] == "mock-ase"
     assert manifest["structure"]["sha256"] == report["structure"]["sha256"]
     assert manifest["units"]["canonical_energy"] == "eV"
@@ -209,13 +259,75 @@ def test_smoke_md_runs_a_short_trajectory_and_reports_drift(tmp_path, structure_
 
     trajectory = report["trajectory"]
     assert trajectory.steps == 20
-    assert trajectory.frames >= 2
+    # Reported by the integrator, and counted by reading the file back:
+    # 20 steps written every 5 steps, step 0 included, is 5 frames.
+    assert trajectory.steps_completed == 20
+    assert trajectory.frames_written == 5
     assert Path(trajectory.trajectory_path).exists()
     assert Path(trajectory.log_path).exists()
-    # NVE on a conservative analytic potential: drift is the diagnostic.
-    assert trajectory.total_energy_drift_eV_per_atom is not None
-    assert abs(trajectory.total_energy_drift_eV_per_atom) < 1e-2
-    assert read_manifest(output)["results"]["trajectory"]["steps"] == 20
+    # NVE on a conservative analytic potential: drift is a conservation test,
+    # fitted per unit time, not an endpoint difference.
+    diagnostics = trajectory.diagnostics
+    assert diagnostics["ensemble"] == "nve" and diagnostics["conservation_test"] is True
+    assert diagnostics["samples"] == 5  # steps 0, 5, 10, 15, 20 -- no duplicate rows
+    # The mock start is violently repulsive (0 -> ~720 K in 10 fs); a 0.5 fs
+    # velocity-Verlet step still holds E_total to ~1e-4 eV/atom (measured
+    # drift ~ -0.01 eV/atom/ps), so these bounds catch a broken integrator or
+    # unit conversion by orders of magnitude.
+    assert abs(diagnostics["energy_drift_eV_per_atom_per_ps"]) < 0.05
+    assert diagnostics["max_abs_energy_excursion_eV_per_atom"] < 1e-3
+    # 16 free atoms with the centre of mass held by FixCom: 3 * 16 - 3.
+    assert trajectory.temperature_ndof == 45
+    resolved = trajectory.integrator_resolved
+    assert resolved["integrator"] == "VelocityVerlet" and resolved["seed"] == 12345
+    assert resolved["seed_source"] == "simulation.seed"
+    assert trajectory.final_pbc == (True, True, True)
+    assert len(trajectory.final_positions_angstrom) == 16
+    manifest = read_manifest(output)
+    assert manifest["status"] == "completed" and manifest["error"] is None
+    assert manifest["results"]["trajectory"]["steps_completed"] == 20
+    assert "total_energy_drift_eV_per_atom" not in manifest["results"]["trajectory"]
+
+
+def test_a_thermostatted_energy_change_is_not_called_a_drift(tmp_path, structure_file):
+    """Under a thermostat E_total is not conserved; the report must say so."""
+    config = MOCK_MD_CONFIG.replace(
+        'ensemble = "nve"', 'ensemble = "nvt"\ntemperature_K = 300\nthermostat = "langevin"'
+    )
+    job = parse_job(write_config(tmp_path, config, structure_file))
+    diagnostics = jobs.run_smoke_md(job, output_dir=tmp_path / "nvt")["trajectory"].diagnostics
+    assert diagnostics["conservation_test"] is False
+    assert diagnostics["label"] == "descriptive; not conserved under a thermostat"
+    assert "total_energy_change_eV_per_atom" in diagnostics
+    assert not any(key.startswith("energy_drift") for key in diagnostics)
+
+
+def test_a_failed_run_leaves_a_failed_manifest(tmp_path, structure_file, monkeypatch):
+    """A crash is recorded as a failure with its error, not as a run with no results."""
+    from nio_md_prep.mlip.bridges.mock_ase import MockAseBridge
+
+    def explode(self, atoms, simulation):
+        raise RuntimeError("engine fell over")
+
+    monkeypatch.setattr(MockAseBridge, "singlepoint", explode)
+    job = parse_job(write_config(tmp_path, MOCK_CONFIG, structure_file))
+    with pytest.raises(RuntimeError, match="engine fell over"):
+        jobs.run_singlepoint(job, output_dir=tmp_path / "run")
+    manifest = read_manifest(tmp_path / "run")
+    assert manifest["status"] == "failed"
+    assert manifest["error"] == {"type": "RuntimeError", "message": "engine fell over"}
+    assert "results" not in manifest and manifest["finished_utc"]
+
+
+def test_every_executed_md_path_is_capped(tmp_path, structure_file):
+    """The 500-step ceiling holds for jobs._execute itself, not only run_smoke_md."""
+    config = MOCK_MD_CONFIG.replace("steps = 20", "steps = 501")
+    job = parse_job(write_config(tmp_path, config, structure_file))
+    with pytest.raises(ConfigError, match="at most 500 steps"):
+        jobs._execute(job, job.structure, output_dir=tmp_path / "md", md=True)
+    with pytest.raises(ConfigError, match="at most 500 steps"):
+        jobs.run_smoke_md(job, output_dir=tmp_path / "md", max_steps=10_000)
+    assert not (tmp_path / "md" / MANIFEST_NAME).exists()
 
 
 def test_smoke_md_refuses_to_become_a_production_run(tmp_path, structure_file):
@@ -235,15 +347,13 @@ def test_smoke_md_requires_an_md_task(tmp_path, structure_file):
 # --- inspect --------------------------------------------------------------
 
 
-def test_inspect_reports_the_matrix_without_importing_a_backend():
-    import sys
-
+def test_inspect_reports_the_matrix_without_importing_a_backend(backend_import_guard):
     report = jobs.inspect_environment()
     assert "mace" in report["matrix"] and "lammps" in report["matrix"]
     unsupported = [r for r in report["routes"] if r["status"] != "supported"]
     assert unsupported and unsupported[0]["potential"] == "lammps"
     assert unsupported[0]["engine"] == "openmm"
-    assert "torch" not in sys.modules
+    backend_import_guard()
 
 
 def test_inspect_with_a_config_reports_the_selected_route(tmp_path, structure_file):

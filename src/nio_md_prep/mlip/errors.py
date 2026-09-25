@@ -142,6 +142,17 @@ class ProvenanceError(MlipError):
     """A job manifest cannot be assembled from the information available."""
 
 
+class ResultError(MlipError, ValueError):
+    """An engine produced output that fails validation.
+
+    Non-finite energies or forces, force rows that are not 3-vectors, a
+    per-atom array whose length is not the atom count, a trajectory that is
+    missing, unreadable or shorter than the run says it should be: each is a
+    failed job, never a result with a hole in it. Also a ``ValueError``, so
+    existing callers that caught the untyped error keep working.
+    """
+
+
 __all__ = [
     "MlipError",
     "ConfigError",
@@ -156,4 +167,5 @@ __all__ = [
     "UnitError",
     "ModelIntegrityError",
     "ProvenanceError",
+    "ResultError",
 ]

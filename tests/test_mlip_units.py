@@ -160,3 +160,72 @@ def test_convention_offset_is_large_enough_to_look_like_a_bug():
     offset = u.self_energy_eV(symbols, E0)
     assert abs(offset) > 1000.0
     assert math.isfinite(offset)
+
+
+# --- LAMMPS pressure units --------------------------------------------------
+
+
+def test_lammps_real_pressure_is_atmospheres_not_bar():
+    """1 atm = 101325 Pa and 1 bar = 1e5 Pa, both exact: the ratio is 1.01325.
+
+    Measured with the same LJ system in both unit styles, LAMMPS reports
+    pxx(metal) / pxx(real) = 1.013250, i.e. real-units pressure is in atm.
+    """
+    assert u.ATM_IN_BAR == 1.01325
+    assert u.LAMMPS_PRESSURE_UNITS["metal"] == ("bar", 1.0)
+    assert u.LAMMPS_PRESSURE_UNITS["real"] == ("atm", 1.01325)
+    same_state_metal = 1013.25  # bar
+    same_state_real = 1000.0  # atm
+    assert u.pressure_from_lammps(same_state_real, "real") == pytest.approx(same_state_metal)
+    assert same_state_metal / same_state_real == pytest.approx(1.01325, rel=1e-15)
+
+
+def test_a_barostat_target_in_bar_is_restated_in_the_native_unit():
+    assert u.pressure_to_lammps(1013.25, "metal") == pytest.approx(1013.25)
+    assert u.pressure_to_lammps(1013.25, "real") == pytest.approx(1000.0)
+    assert u.pressure_from_lammps(u.pressure_to_lammps(250.0, "real"), "real") == pytest.approx(
+        250.0, rel=1e-15
+    )
+    with pytest.raises(UnitError, match="no pressure mapping"):
+        u.pressure_to_lammps(1.0, "lj")
+
+
+def test_pressure_tensor_becomes_ase_stress_with_the_sign_flipped():
+    """ASE stress = -pressure; Voigt order (xx, yy, zz, yz, xz, xy)."""
+    pressure_bar = [[1.0e4, 30.0, 20.0], [30.0, 2.0e4, 10.0], [20.0, 10.0, 3.0e4]]
+    stress = u.lammps_pressure_tensor_to_stress(pressure_bar, "metal")
+    scale = 1.0 / u.EV_PER_ANGSTROM3_IN_BAR
+    assert stress == pytest.approx(
+        (-1.0e4 * scale, -2.0e4 * scale, -3.0e4 * scale, -10.0 * scale, -20.0 * scale,
+         -30.0 * scale),
+        rel=1e-15,
+    )
+    assert stress[0] < 0  # compressive pressure is negative stress
+    real = u.lammps_pressure_tensor_to_stress(pressure_bar, "real")
+    assert real[0] / stress[0] == pytest.approx(1.01325, rel=1e-15)
+
+
+def test_an_asymmetric_pressure_tensor_is_refused():
+    with pytest.raises(UnitError, match="not symmetric"):
+        u.lammps_pressure_tensor_to_stress([[1, 2, 0], [0, 1, 0], [0, 0, 1]], "metal")
+    with pytest.raises(UnitError, match="3x3"):
+        u.lammps_pressure_tensor_to_stress([1, 2, 3, 4, 5, 6], "metal")
+
+
+@pytest.mark.parametrize("system", [u.LAMMPS_METAL, u.LAMMPS_REAL])
+def test_a_lammps_stress_cannot_be_converted_with_an_energy_density_factor(system):
+    """The trap: kcal/mol/A^3 applied to a number that is really in atm."""
+    with pytest.raises(UnitError, match="reports stress as a pressure"):
+        system.factor("stress")
+    with pytest.raises(UnitError, match="reports stress as a pressure"):
+        u.to_canonical(1.0, "stress", system)
+    assert system.label("stress") == system.pressure
+    # The energy-density factor still exists, under a name that says what it is.
+    assert u.LAMMPS_REAL.energy_density_in_eV_per_angstrom3 == pytest.approx(
+        u.KCAL_PER_MOL_IN_EV
+    )
+
+
+def test_stress_conversion_still_works_where_stress_is_an_energy_density():
+    assert u.to_canonical(2.0, "stress", u.ASE) == 2.0
+    assert u.to_canonical(1.0, "stress", u.OPENMM) == pytest.approx(u.KJ_PER_MOL_IN_EV / 1000.0)

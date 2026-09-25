@@ -27,8 +27,19 @@ FLAGS = (
     "stress",
     "per_atom_energy",
     "periodic",
+    "partial_periodic",
+    "fixed_atoms",
     "gpu",
 )
+
+#: Flags that describe what the *engine route* does with a structure rather
+#: than what a model can compute: any full-system potential can be evaluated
+#: on a slab or with frozen atoms, but whether the engine honours per-axis
+#: periodicity or ASE ``FixAtoms`` is the engine's business. In
+#: :meth:`CapabilitySet.intersect` they are taken from the engine side, so a
+#: potential adapter never has to declare them. Both default to ``False``:
+#: an engine that has not been taught to honour them refuses such jobs.
+ENGINE_FLAGS = ("partial_periodic", "fixed_atoms")
 
 FLAG_DESCRIPTIONS = {
     "energy": "total potential energy",
@@ -36,6 +47,14 @@ FLAG_DESCRIPTIONS = {
     "stress": "stress tensor / virial",
     "per_atom_energy": "per-atom (site) energy decomposition",
     "periodic": "periodic cells with the minimum-image convention",
+    "partial_periodic": (
+        "cells periodic along some axes only (slabs, wires), each axis honoured "
+        "independently"
+    ),
+    "fixed_atoms": (
+        "ASE FixAtoms honoured in velocity initialisation, integration and the "
+        "temperature degrees of freedom"
+    ),
     "gpu": "GPU-accelerated evaluation",
 }
 
@@ -47,7 +66,9 @@ class CapabilitySet:
     ``elements`` and ``precisions`` use ``None`` to mean "unrestricted", which
     is the honest answer for an engine: LAMMPS does not care which elements a
     model covers. Intersecting an unrestricted set with a restricted one
-    yields the restricted one.
+    yields the restricted one. An *empty* ``precisions`` set means the route
+    can guarantee no precision at all (a LAMMPS pair style's precision is
+    fixed by its build), so any precision requirement is refused.
     """
 
     energy: bool = True
@@ -55,6 +76,8 @@ class CapabilitySet:
     stress: bool = False
     per_atom_energy: bool = False
     periodic: bool = False
+    partial_periodic: bool = False
+    fixed_atoms: bool = False
     gpu: bool = False
     elements: frozenset[str] | None = None
     precisions: frozenset[str] | None = None
@@ -82,12 +105,21 @@ class CapabilitySet:
         """Combine a potential's capabilities with an engine's.
 
         Flags are ANDed: a capability survives only if both sides have it.
-        Set-valued fields are intersected, with ``None`` acting as the
-        identity. The energy convention and native units come from ``other``
-        (the engine side), because that is what actually produces numbers.
+        The :data:`ENGINE_FLAGS` are the exception: they come from ``other``
+        (the engine side) alone. Set-valued fields are intersected, with
+        ``None`` acting as the identity. The energy convention and native
+        units come from ``other`` too, because that is what actually produces
+        numbers.
         """
         return CapabilitySet(
-            **{name: getattr(self, name) and getattr(other, name) for name in FLAGS},
+            **{
+                name: (
+                    getattr(other, name)
+                    if name in ENGINE_FLAGS
+                    else getattr(self, name) and getattr(other, name)
+                )
+                for name in FLAGS
+            },
             elements=_intersect(self.elements, other.elements),
             precisions=_intersect(self.precisions, other.precisions),
             engines=_intersect(self.engines, other.engines),
@@ -141,11 +173,17 @@ class RequirementSet:
     stress: bool = False
     per_atom_energy: bool = False
     periodic: bool = False
+    partial_periodic: bool = False
+    fixed_atoms: bool = False
     gpu: bool = False
     elements: frozenset[str] = frozenset()
     precision: str | None = None
     engine: str | None = None
     energy_convention: str | None = None
+    #: Per-axis periodicity of the structure the job runs on, when known.
+    #: Carried so an engine can act on (and a manifest can record) exactly
+    #: which cell axes are periodic, not just whether any are.
+    periodic_axes: tuple[bool, bool, bool] | None = None
     reasons: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -153,6 +191,11 @@ class RequirementSet:
             object.__setattr__(self, "elements", frozenset(self.elements))
         if not isinstance(self.reasons, dict):
             object.__setattr__(self, "reasons", dict(self.reasons))
+        if self.periodic_axes is not None:
+            axes = tuple(bool(v) for v in self.periodic_axes)
+            if len(axes) != 3:
+                raise ValueError(f"periodic_axes needs three entries; got {self.periodic_axes!r}")
+            object.__setattr__(self, "periodic_axes", axes)
 
     def merge(self, other: "RequirementSet") -> "RequirementSet":
         reasons = dict(self.reasons)
@@ -163,6 +206,9 @@ class RequirementSet:
             precision=other.precision or self.precision,
             engine=other.engine or self.engine,
             energy_convention=other.energy_convention or self.energy_convention,
+            periodic_axes=(
+                other.periodic_axes if other.periodic_axes is not None else self.periodic_axes
+            ),
             reasons=reasons,
         )
 
@@ -182,9 +228,15 @@ class RequirementSet:
                 )
         if self.precision is not None and capabilities.precisions is not None:
             if self.precision not in capabilities.precisions:
+                reason = self.reasons.get("precision")
+                offered = (
+                    f"offered: {', '.join(sorted(capabilities.precisions))}"
+                    if capabilities.precisions
+                    else "this route guarantees no precision"
+                )
                 problems.append(
-                    f"precision {self.precision!r} is not available "
-                    f"(offered: {', '.join(sorted(capabilities.precisions))})"
+                    f"precision {self.precision!r} is not available ({offered})"
+                    + (f": {reason}" if reason else "")
                 )
         if self.engine is not None and capabilities.engines is not None:
             if self.engine not in capabilities.engines:
@@ -207,6 +259,7 @@ class RequirementSet:
             "precision": self.precision,
             "engine": self.engine,
             "energy_convention": self.energy_convention,
+            "periodic_axes": None if self.periodic_axes is None else list(self.periodic_axes),
             "reasons": dict(self.reasons),
         }
 
@@ -242,6 +295,7 @@ def negotiate(
 
 __all__ = [
     "FLAGS",
+    "ENGINE_FLAGS",
     "FLAG_DESCRIPTIONS",
     "CapabilitySet",
     "RequirementSet",

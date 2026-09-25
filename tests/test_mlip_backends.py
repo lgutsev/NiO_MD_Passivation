@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pytest
 
-from nio_md_prep.mlip import jobs
+from nio_md_prep.mlip import jobs, tolerances
 from nio_md_prep.mlip.registry import build_bridge
 from nio_md_prep.mlip.results import compare_results
 from nio_md_prep.mlip.specs import (
@@ -250,70 +250,31 @@ def test_cross_engine_single_point_equivalence(
         structure=StructureSpec(path=structure_path),
         convention="total",
     )
-    measured = {
-        pair: {
-            "delta_energy_per_atom_eV": abs(values["delta_energy_per_atom_eV"]),
-            "force_rmse_eV_per_A": values["force_rmse_eV_per_A"],
-            "force_max_abs_error_eV_per_A": values["force_max_abs_error_eV_per_A"],
-            "stress_max_abs_error_eV_per_A3": values["stress_max_abs_error_eV_per_A3"],
-        }
-        for pair, values in report["comparisons"].items()
-    }
+    measured = tolerances.measured_metrics(report)
 
     reference = _load_reference()
     if reference is None:
         candidate = tmp_path / "compare" / "candidate_tolerances.json"
-        candidate.write_text(
-            json.dumps(
-                {
-                    "note": (
-                        "Measured agreement between the adapters installed on this "
-                        "machine, in double precision. Review these numbers and commit "
-                        "them as tests/data/mlip_cross_engine_tolerances.json to turn "
-                        "this acceptance test into a regression criterion."
-                    ),
-                    "structure_sha256": report["structure"]["sha256"],
-                    "energy_convention": report["energy_convention"],
-                    "measured": measured,
-                },
-                indent=2,
-            )
-            + "\n",
-            encoding="utf-8",
+        record = tolerances.candidate_record(
+            report,
+            measured_on={"engines": engines, "source": "tests/test_mlip_backends.py"},
         )
+        candidate.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
         pytest.skip(
-            "no committed cross-engine tolerance reference; measured values written "
-            f"to {candidate} for review"
+            "no reviewed cross-engine tolerance reference; measured values written "
+            f"to {candidate} for review (a candidate is never an acceptance criterion)"
         )
 
-    for pair, values in measured.items():
-        limits = reference["tolerances"].get(pair)
-        if limits is None:
-            pytest.skip(f"no committed tolerance for the {pair} route")
-        for metric, measured_value in values.items():
-            limit = limits.get(metric)
-            if limit is None or measured_value is None:
-                continue
-            assert measured_value <= limit, (
-                f"{pair} {metric} = {measured_value:.3e} exceeds the committed "
-                f"reference tolerance {limit:.3e}"
-            )
+    problems = tolerances.exceedances(measured, reference)
+    assert not problems, "; ".join(problems)
 
 
 def _load_reference() -> dict | None:
-    if not TOLERANCE_FILE.exists():
-        return None
-    return json.loads(TOLERANCE_FILE.read_text(encoding="utf-8"))
+    return tolerances.load_reference(TOLERANCE_FILE)
 
 
 def test_the_tolerance_file_is_well_formed_if_present():
-    """Runs in ordinary CI: a malformed reference must fail loudly, not silently."""
-    reference = _load_reference()
+    """Runs in ordinary CI: a malformed or unreviewed reference must fail loudly, not silently."""
+    reference = _load_reference()  # validates status, reviewer, provenance and metric names
     if reference is None:
-        pytest.skip("no cross-engine tolerance reference has been committed yet")
-    assert "tolerances" in reference
-    assert reference.get("measured_on"), "a tolerance file must record where it came from"
-    for pair, limits in reference["tolerances"].items():
-        assert "->" in pair
-        for metric, value in limits.items():
-            assert value is None or value >= 0, f"{pair}.{metric}"
+        pytest.skip("no reviewed cross-engine tolerance reference has been committed yet")

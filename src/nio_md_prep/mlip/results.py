@@ -18,13 +18,21 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from .errors import EnergyConventionError
+from .errors import EnergyConventionError, ResultError
 from .units import CANONICAL, convert_energy_convention
 
 
 @dataclass(frozen=True)
 class PotentialResult:
-    """One evaluated geometry, in canonical units, under a declared convention."""
+    """One evaluated geometry, in canonical units, under a declared convention.
+
+    Validated on construction, so an engine that returns a NaN energy, a
+    force row that is not a 3-vector, ghost-atom rows, or a per-atom array of
+    the wrong length fails with :class:`~nio_md_prep.mlip.errors.ResultError`
+    instead of producing a plausible-looking result: at least one atom; every
+    energy, force and stress component finite; exactly one 3-component force
+    row per atom; a 6-component Voigt stress; one per-atom energy per atom.
+    """
 
     energy_eV: float
     forces_eV_per_A: tuple[tuple[float, float, float], ...]
@@ -40,28 +48,47 @@ class PotentialResult:
     extras: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "symbols", tuple(self.symbols))
-        object.__setattr__(
-            self,
-            "forces_eV_per_A",
-            tuple(tuple(float(c) for c in row) for row in self.forces_eV_per_A),
-        )
-        if len(self.forces_eV_per_A) != len(self.symbols):
-            raise ValueError(
-                f"{len(self.forces_eV_per_A)} force rows for {len(self.symbols)} atoms"
+        object.__setattr__(self, "symbols", tuple(str(s) for s in self.symbols))
+        n_atoms = len(self.symbols)
+        if n_atoms < 1:
+            raise ResultError("a result must describe at least one atom; got none")
+        energy = float(self.energy_eV)
+        if not math.isfinite(energy):
+            raise ResultError(f"energy is not finite: {self.energy_eV!r}")
+        object.__setattr__(self, "energy_eV", energy)
+        forces = tuple(tuple(float(c) for c in row) for row in self.forces_eV_per_A)
+        if len(forces) != n_atoms:
+            raise ResultError(
+                f"{len(forces)} force rows for {n_atoms} atoms (ghost or missing atoms "
+                "in the engine output?)"
             )
+        for index, row in enumerate(forces):
+            if len(row) != 3:
+                raise ResultError(
+                    f"force row {index} has {len(row)} components; expected 3"
+                )
+            if not all(math.isfinite(c) for c in row):
+                raise ResultError(f"force on atom {index} is not finite: {row}")
+        object.__setattr__(self, "forces_eV_per_A", forces)
         if self.stress_eV_per_A3 is not None:
             stress = tuple(float(v) for v in self.stress_eV_per_A3)
             if len(stress) != 6:
-                raise ValueError(
+                raise ResultError(
                     "stress must be the 6-component Voigt vector "
                     f"(xx, yy, zz, yz, xz, xy); got {len(stress)} components"
                 )
+            if not all(math.isfinite(v) for v in stress):
+                raise ResultError(f"stress is not finite: {stress}")
             object.__setattr__(self, "stress_eV_per_A3", stress)
         if self.per_atom_energy_eV is not None:
-            object.__setattr__(
-                self, "per_atom_energy_eV", tuple(float(v) for v in self.per_atom_energy_eV)
-            )
+            per_atom = tuple(float(v) for v in self.per_atom_energy_eV)
+            if len(per_atom) != n_atoms:
+                raise ResultError(
+                    f"{len(per_atom)} per-atom energies for {n_atoms} atoms"
+                )
+            if not all(math.isfinite(v) for v in per_atom):
+                raise ResultError("a per-atom energy is not finite")
+            object.__setattr__(self, "per_atom_energy_eV", per_atom)
 
     @property
     def n_atoms(self) -> int:
@@ -139,40 +166,137 @@ class PotentialResult:
 
 @dataclass(frozen=True)
 class TrajectoryResult:
-    """A short diagnostic trajectory. Deliberately not a production MD result."""
+    """A short diagnostic trajectory. Deliberately not a production MD result.
+
+    What the engine *reported* is kept apart from what was *requested*:
+
+    ``steps``
+        The requested number of steps (``simulation.steps``).
+    ``steps_completed``
+        The step counter the engine reported after the run (ASE
+        ``dyn.nsteps``, LAMMPS ``ntimestep``, OpenMM ``currentStep``);
+        ``None`` when the engine did not report one. A run that stopped
+        early must say so here, not look complete.
+    ``frames_written``
+        Frames counted by reading the written trajectory back, never
+        estimated from ``steps // interval``; ``None`` when not verified.
+    ``final_positions_angstrom`` / ``final_cell_angstrom`` / ``final_pbc``
+        The final geometry in the *source* basis: the same Cartesian frame and
+        cell-vector convention as the input structure, after rotating back
+        from any engine-internal frame (LAMMPS restricted triclinic, OpenMM
+        reduced box). The cell changes under NPT, so it must be returned.
+    ``integrator_resolved``
+        What actually integrated: class or fix names and every resolved
+        parameter (damping times after defaults, friction, chain length,
+        coupling, compressibility, seed ...).
+    ``diagnostics``
+        :func:`nio_md_prep.mlip.diagnostics.ensemble_diagnostics` output.
+        ``conservation_test`` says whether any number in it is a
+        conservation test; an NVT total-energy change is labelled
+        descriptive. Empty with ``available: False`` when the engine
+        supplied no energy series.
+    ``temperature_ndof``
+        The kinetic degrees of freedom the temperatures were computed with
+        (see :func:`nio_md_prep.mlip.diagnostics.temperature_ndof`).
+    ``constraints``
+        What the engine applied, e.g. ``{"fixed_atoms": [...], "n_fixed": 4,
+        "method": "zero particle mass"}``; ``None`` when there were none or
+        the engine did not report them.
+    """
 
     steps: int
     timestep_fs: float
     ensemble: str | None
-    frames: int
     trajectory_path: str | None
     log_path: str | None
     initial: PotentialResult
     final: PotentialResult
+    steps_completed: int | None = None
+    frames_written: int | None = None
+    final_positions_angstrom: tuple[tuple[float, float, float], ...] | None = None
+    final_cell_angstrom: tuple[tuple[float, float, float], ...] | None = None
+    final_pbc: tuple[bool, bool, bool] | None = None
+    integrator_resolved: dict[str, Any] = field(default_factory=dict)
+    diagnostics: dict[str, Any] = field(default_factory=dict)
     temperature_start_K: float | None = None
     temperature_end_K: float | None = None
-    total_energy_drift_eV_per_atom: float | None = None
     max_temperature_K: float | None = None
+    temperature_ndof: int | None = None
+    constraints: dict[str, Any] | None = None
     wall_time_s: float | None = None
     extras: dict[str, Any] = field(default_factory=dict)
 
-    def as_dict(self) -> dict:
-        return {
+    def __post_init__(self) -> None:
+        n_atoms = self.initial.n_atoms
+        if self.final.symbols != self.initial.symbols:
+            raise ResultError(
+                "the final frame does not have the initial frame's atoms in the same order"
+            )
+        for name in ("steps_completed", "frames_written", "temperature_ndof"):
+            value = getattr(self, name)
+            if value is not None and (isinstance(value, bool) or int(value) != value or value < 0):
+                raise ResultError(f"{name} must be a non-negative integer; got {value!r}")
+        if self.final_positions_angstrom is not None:
+            positions = tuple(tuple(float(c) for c in row) for row in self.final_positions_angstrom)
+            if len(positions) != n_atoms or any(len(row) != 3 for row in positions):
+                raise ResultError(
+                    f"final positions must be {n_atoms} rows of 3 coordinates"
+                )
+            if not all(math.isfinite(c) for row in positions for c in row):
+                raise ResultError("a final position is not finite")
+            object.__setattr__(self, "final_positions_angstrom", positions)
+        if self.final_cell_angstrom is not None:
+            cell = tuple(tuple(float(c) for c in row) for row in self.final_cell_angstrom)
+            if len(cell) != 3 or any(len(row) != 3 for row in cell):
+                raise ResultError("the final cell must be 3 rows of 3 components")
+            if not all(math.isfinite(c) for row in cell for c in row):
+                raise ResultError("a final cell component is not finite")
+            object.__setattr__(self, "final_cell_angstrom", cell)
+        if self.final_pbc is not None:
+            pbc = tuple(bool(v) for v in self.final_pbc)
+            if len(pbc) != 3:
+                raise ResultError(f"final_pbc needs three entries; got {self.final_pbc!r}")
+            object.__setattr__(self, "final_pbc", pbc)
+
+    @property
+    def frames(self) -> int | None:
+        """Backwards-compatible alias of :attr:`frames_written`."""
+        return self.frames_written
+
+    def as_dict(self, *, include_arrays: bool = False) -> dict:
+        payload = {
             "steps": self.steps,
+            "steps_completed": self.steps_completed,
             "timestep_fs": self.timestep_fs,
             "ensemble": self.ensemble,
-            "frames": self.frames,
+            "frames_written": self.frames_written,
             "trajectory_path": self.trajectory_path,
             "log_path": self.log_path,
             "temperature_start_K": self.temperature_start_K,
             "temperature_end_K": self.temperature_end_K,
             "max_temperature_K": self.max_temperature_K,
-            "total_energy_drift_eV_per_atom": self.total_energy_drift_eV_per_atom,
+            "temperature_ndof": self.temperature_ndof,
+            "integrator_resolved": dict(self.integrator_resolved),
+            "diagnostics": dict(self.diagnostics),
+            "constraints": dict(self.constraints) if self.constraints else None,
+            "final_cell_angstrom": (
+                [list(row) for row in self.final_cell_angstrom]
+                if self.final_cell_angstrom is not None
+                else None
+            ),
+            "final_pbc": list(self.final_pbc) if self.final_pbc is not None else None,
             "wall_time_s": self.wall_time_s,
-            "initial": self.initial.as_dict(include_arrays=False),
-            "final": self.final.as_dict(include_arrays=False),
+            "initial": self.initial.as_dict(include_arrays=include_arrays),
+            "final": self.final.as_dict(include_arrays=include_arrays),
             "extras": dict(self.extras),
         }
+        if include_arrays:
+            payload["final_positions_angstrom"] = (
+                [list(row) for row in self.final_positions_angstrom]
+                if self.final_positions_angstrom is not None
+                else None
+            )
+        return payload
 
 
 @dataclass(frozen=True)
@@ -224,7 +348,7 @@ def compare_results(
     names the shortfall instead of a meaningless energy difference.
     """
     if reference.symbols != candidate.symbols:
-        raise ValueError(
+        raise ResultError(
             "cannot compare results for different structures: "
             f"{len(reference.symbols)} vs {len(candidate.symbols)} atoms, or a different "
             "element order"

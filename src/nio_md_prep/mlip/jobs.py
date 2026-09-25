@@ -20,7 +20,12 @@
 
 Every operation that executes anything writes ``mlip_manifest.json`` first --
 before the numbers exist -- so a crashed job still leaves behind a record of
-what was attempted.
+what was attempted. The manifest's ``status`` moves ``prepared`` ->
+``running`` -> ``completed`` (or ``failed``, with an ``error`` record), each
+write atomic.
+
+Every MD path that executes through this module is held to
+:data:`SMOKE_MD_MAX_STEPS`, not only :func:`run_smoke_md`.
 """
 from __future__ import annotations
 
@@ -34,6 +39,7 @@ from .errors import ConfigError, MlipError
 from .provenance import (
     build_manifest,
     device_report,
+    mark_manifest,
     package_versions,
     write_manifest,
 )
@@ -48,8 +54,11 @@ from .units import describe_conventions
 SMOKE_MD_MAX_STEPS = 500
 
 
-def inspect_environment(job: JobSpec | None = None) -> dict:
-    """Report what this machine can run, and what a named model contains."""
+def inspect_environment(job: JobSpec | None = None, *, probe_torch: bool = False) -> dict:
+    """Report what this machine can run, and what a named model contains.
+
+    torch is imported (to report CUDA devices) only with ``probe_torch=True``.
+    """
     routes = []
     for registration in REGISTRY.entries():
         row = registration.as_dict()
@@ -67,7 +76,8 @@ def inspect_environment(job: JobSpec | None = None) -> dict:
         "routes": routes,
         "packages": package_versions(),
         "device": device_report(
-            getattr(job.potential, "device", None) if job else None
+            getattr(job.potential, "device", None) if job else None,
+            probe_torch=probe_torch,
         ),
         "energy_conventions": describe_conventions(),
         "canonical_units": {
@@ -95,12 +105,25 @@ def inspect_environment(job: JobSpec | None = None) -> dict:
     return report
 
 
-def validate_job(job: JobSpec, *, structure: StructureSpec | None = None) -> dict:
-    """Resolve, negotiate and render -- but execute nothing.
+def validate_job(
+    job: JobSpec, *, structure: StructureSpec | None = None, strict: bool = True
+) -> dict:
+    """Resolve, negotiate and render the execution plan -- but execute nothing.
 
     Deliberately ordered so the most informative failure comes first: an
-    impossible combination, then a missing element, then an unmet capability.
+    impossible combination, then a missing element, then an unmet capability,
+    then an engine-specific refusal. With ``strict=True`` (the default) each
+    of those raises, as before. With ``strict=False`` only an impossible
+    combination (no bridge to plan with) or an unreadable structure raises;
+    every other refusal is listed in ``execution_plan["unmet_capabilities"]``
+    and ``ok`` is false, so the plan of a refused job can still be shown.
+
+    ``execution_plan`` is :meth:`Bridge.execution_plan` for the resolved
+    route: every key in :data:`~nio_md_prep.mlip.bridges.base.EXECUTION_PLAN_KEYS`
+    is present, and nothing in it was produced by running an engine.
     """
+    from .errors import CapabilityError
+
     registration = resolve_bridge(
         job.potential.kind,
         job.engine.kind,
@@ -115,32 +138,44 @@ def validate_job(job: JobSpec, *, structure: StructureSpec | None = None) -> dic
     if structure_spec is not None:
         atoms = load_structure(structure_spec)
         structure_report = describe_structure(atoms)
-        check_elements(
-            capabilities, atoms.get_chemical_symbols(), label=job.potential.label
-        )
+        if strict:
+            check_elements(
+                capabilities, atoms.get_chemical_symbols(), label=job.potential.label
+            )
 
-    requirements = bridge.requirements(job.simulation, atoms)
-    unmet = requirements.unmet(capabilities)
-    availability = bridge.availability()
+    requirements = None
+    unmet: list[str] = []
+    try:
+        requirements = bridge.requirements(job.simulation, atoms)
+        unmet = requirements.unmet(capabilities)
+    except MlipError:
+        if strict:
+            raise
+    if strict:
+        if unmet:
+            raise CapabilityError(f"{bridge.label} cannot satisfy this job:", unmet)
+        # Engine-specific refusals (unsupported thermostat, platform property...).
+        bridge.check_simulation(job.simulation, atoms)
 
-    report = {
-        "ok": not unmet,
+    plan = bridge.execution_plan(job.simulation, atoms)
+    try:
+        engine_parameters = bridge.engine_parameters(job.simulation)
+    except MlipError as exc:
+        if strict:
+            raise
+        engine_parameters = {"refused": str(exc)}
+    return {
+        "ok": not plan["unmet_capabilities"],
         "job": job.as_dict(),
         "route": registration.as_dict(),
         "capabilities": capabilities.as_dict(),
-        "requirements": requirements.as_dict(),
-        "unmet": unmet,
-        "availability": availability.as_dict(),
+        "requirements": requirements.as_dict() if requirements is not None else None,
+        "unmet": list(plan["unmet_capabilities"]),
+        "availability": bridge.availability().as_dict(),
         "structure": structure_report,
-        "engine_parameters": bridge.engine_parameters(),
+        "engine_parameters": engine_parameters,
+        "execution_plan": plan,
     }
-    if unmet:
-        from .errors import CapabilityError
-
-        raise CapabilityError(
-            f"{bridge.label} cannot satisfy this job:", unmet
-        )
-    return report
 
 
 def run_singlepoint(
@@ -180,18 +215,26 @@ def run_smoke_md(
             f"smoke-md needs simulation.task = 'md'; this configuration says "
             f"{job.simulation.task!r}"
         )
-    if job.simulation.steps > max_steps:
+    _check_smoke_steps(job.simulation.steps, min(max_steps, SMOKE_MD_MAX_STEPS))
+    return _execute(job, structure_spec, output_dir=Path(output_dir), md=True)
+
+
+def _check_smoke_steps(steps: int, max_steps: int = SMOKE_MD_MAX_STEPS) -> None:
+    if steps > max_steps:
         raise ConfigError(
             f"smoke-md runs a diagnostic trajectory of at most {max_steps} steps; this "
-            f"configuration asks for {job.simulation.steps}. This command is not a "
+            f"configuration asks for {steps}. This command is not a "
             "replacement for the existing production deposition and relaxation "
             "workflows -- run those through the classical pipeline, or lower "
             "simulation.steps for a diagnostic."
         )
-    return _execute(job, structure_spec, output_dir=Path(output_dir), md=True)
 
 
 def _execute(job: JobSpec, structure_spec: StructureSpec, *, output_dir: Path, md: bool) -> dict:
+    if md:
+        # The cap belongs to every MD path this module executes, not only to
+        # the run_smoke_md entry point.
+        _check_smoke_steps(job.simulation.steps)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -218,21 +261,28 @@ def _execute(job: JobSpec, structure_spec: StructureSpec, *, output_dir: Path, m
         capabilities=capabilities,
         requirements=bridge.requirements(job.simulation, atoms),
         structure={**structure_report, "path": str(structure_spec.path)},
-        engine_parameters=bridge.engine_parameters(),
+        engine_parameters=bridge.engine_parameters(job.simulation),
     )
     manifest_path = write_manifest(output_dir, manifest)
+    mark_manifest(output_dir, manifest, "running")
 
-    if md:
-        trajectory = bridge.run_md(atoms, job.simulation, workdir=output_dir)
-        results = {"trajectory": trajectory.as_dict()}
-        payload = {"trajectory": trajectory}
-    else:
-        result = bridge.singlepoint(atoms, job.simulation)
-        results = {"singlepoint": result.as_dict(include_arrays=False)}
-        payload = {"result": result}
+    try:
+        if md:
+            trajectory = bridge.run_md(atoms, job.simulation, workdir=output_dir)
+            results = {"trajectory": trajectory.as_dict()}
+            payload = {"trajectory": trajectory}
+        else:
+            result = bridge.singlepoint(atoms, job.simulation)
+            results = {"singlepoint": result.as_dict(include_arrays=False)}
+            payload = {"result": result}
+    except BaseException as exc:
+        _refresh_device(manifest, job)
+        mark_manifest(output_dir, manifest, "failed", error=exc)
+        raise
 
     manifest["results"] = results
-    write_manifest(output_dir, manifest)
+    _refresh_device(manifest, job)
+    mark_manifest(output_dir, manifest, "completed")
     return {
         "manifest_path": str(manifest_path),
         "output_dir": str(output_dir),
@@ -241,6 +291,11 @@ def _execute(job: JobSpec, structure_spec: StructureSpec, *, output_dir: Path, m
         "results": results,
         **payload,
     }
+
+
+def _refresh_device(manifest: dict, job: JobSpec) -> None:
+    """Re-read the device after the run: a MACE route has imported torch by now."""
+    manifest["environment"]["device"] = device_report(getattr(job.potential, "device", None))
 
 
 def compare_engines(
@@ -275,17 +330,26 @@ def compare_engines(
 
     results = {}
     parameters = {}
+    stress_not_requested = {}
     reference_energies = None
     for kind in engines:
+        # Engine-specific fields (an OpenMM platform, a LAMMPS executable) only
+        # travel to the engine that reads them.
         engine_spec = replace(
-            job.engine,
-            kind=kind,
+            job.engine.retargeted(kind),
             options={**dict(job.engine.options), "workdir": str(output_dir / kind)},
         )
         bridge = build_bridge(job.potential, engine_spec)
         bridge.require_available()
-        results[kind] = bridge.singlepoint(atoms, simulation)
-        parameters[kind] = bridge.engine_parameters()
+        # Stress is compared only between routes that genuinely provide a
+        # virial; a route without one is asked for energy and forces only
+        # (never an invented zero), and the report says so.
+        engine_simulation = simulation
+        if simulation.compute_stress and not bridge.capabilities().stress:
+            engine_simulation = replace(simulation, compute_stress=False)
+            stress_not_requested[kind] = f"{bridge.label} provides no stress/virial"
+        results[kind] = bridge.singlepoint(atoms, engine_simulation)
+        parameters[kind] = bridge.engine_parameters(engine_simulation)
         if reference_energies is None:
             reference_energies = bridge.atomic_reference_energies()
 
@@ -308,6 +372,7 @@ def compare_engines(
         "atomic_reference_energies_known": bool(reference_energies),
         "results": {k: v.as_dict(include_arrays=False) for k, v in results.items()},
         "engine_parameters": parameters,
+        "stress_not_requested": stress_not_requested,
         "comparisons": comparisons,
     }
     output_dir.mkdir(parents=True, exist_ok=True)

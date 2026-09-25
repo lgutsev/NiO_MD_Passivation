@@ -47,8 +47,11 @@ KNOWN_FRAMEWORKS: dict[str, dict] = {
     "mace": {
         "framework": "mace",
         "packages": ("a LAMMPS build with the MACE pair style",),
-        "per_atom_energy": True,
+        # pair_mace tallies eatom, but MACE site energies through LAMMPS have
+        # not been demonstrated against a reference: not claimed.
+        "per_atom_energy": False,
         "stress": True,
+        "note": "per-atom energies are not claimed for pair_style mace (not demonstrated)",
     },
     "nequip": {
         "framework": "nequip",
@@ -82,8 +85,20 @@ class LammpsMlipAdapter(PotentialAdapter):
 
     @property
     def hints(self) -> Mapping:
-        token = self.spec.pair_style.split()[0] if self.spec.pair_style else ""
-        return KNOWN_FRAMEWORKS.get(token, {})
+        tokens = self.spec.pair_style.split() if self.spec.pair_style else []
+        token = tokens[0] if tokens else ""
+        hints = dict(KNOWN_FRAMEWORKS.get(token, {}))
+        if token == "mliap" and len(tokens) > 1 and tokens[1] == "unified":
+            # A python-coupled ML-IAP model (a MACE export, typically): whether
+            # its site energies are right has not been demonstrated here.
+            hints.update(
+                per_atom_energy=False,
+                note=(
+                    "pair_style mliap unified runs a python-coupled model (e.g. a MACE "
+                    "export); per-atom energies are not claimed for it (not demonstrated)"
+                ),
+            )
+        return hints
 
     def capabilities(self) -> CapabilitySet:
         """Advertise conservatively: a pair style cannot be interrogated from here.
@@ -102,7 +117,10 @@ class LammpsMlipAdapter(PotentialAdapter):
             periodic=True,
             gpu=False,
             elements=frozenset(self.spec.elements),
-            precisions=None,
+            # Fixed by the pair style's package and model build and not readable
+            # from here: no precision is guaranteed (an empty set, not None,
+            # which would mean "any").
+            precisions=frozenset(),
             engines=frozenset({"lammps", "ase"}),
             native_energy_convention=self.spec.energy_convention,
             native_units=lammps_unit_system(self.spec.units).name,

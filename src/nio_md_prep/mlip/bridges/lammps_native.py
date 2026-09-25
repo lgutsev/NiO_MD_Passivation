@@ -1,9 +1,11 @@
 """A LAMMPS-native MLIP running in LAMMPS, as intended.
 
 The simplest cell of the matrix and the one with the least to go wrong: the
-pair style already lives inside LAMMPS, so this bridge renders the deck,
-writes the structure in the potential's own type order, runs it, and converts
-the results out of LAMMPS's units.
+pair style already lives inside LAMMPS, so this bridge stages the model
+files, writes the structure in the potential's own type order and frame,
+renders the deck, runs it, and converts the results out of LAMMPS's units
+and back into the source basis -- all through
+:func:`nio_md_prep.mlip.engines.lammps_engine.run_job`.
 
 Nothing here knows which framework the pair style belongs to. DeepMD, ML-IAP,
 PACE and a MACE pair style all arrive as the same
@@ -15,13 +17,13 @@ from pathlib import Path
 
 from ..capabilities import CapabilitySet
 from ..environment import Availability
+from ..errors import ConfigError
 from ..potentials.lammps_mlip import LammpsMlipAdapter
 from ..results import PotentialResult, TrajectoryResult
 from ..specs import SimulationSpec
-from ..units import lammps_unit_system
 from ..engines import lammps_engine
 from ..engines.lammps_engine import LammpsEngine
-from .base import Bridge
+from .base import Bridge, complete_plan
 
 
 class LammpsNativeBridge(Bridge):
@@ -53,7 +55,98 @@ class LammpsNativeBridge(Bridge):
             )
         return self.runtime.availability()
 
-    def engine_parameters(self) -> dict:
+    def launch(self) -> lammps_engine.LammpsLaunch:
+        return lammps_engine.resolve_launch(self.engine)
+
+    def check_simulation(self, simulation: SimulationSpec, atoms=None) -> None:
+        """Launch options, thermostat/barostat mapping and the geometry preflight.
+
+        ``engine.precision`` is refused: a LAMMPS-native pair style evaluates
+        in whatever precision its package and model were built with, which
+        nothing here can read or change, so the cross-check could only ever
+        be recorded, never honoured.
+        """
+        if self.engine.precision is not None:
+            raise ConfigError(
+                f"engine.precision = {self.engine.precision!r} cannot be applied or verified "
+                f"for the LAMMPS-native pair style {self.potential.pair_style.split()[0]!r}: "
+                "its precision is fixed by the LAMMPS package and model it was built with. "
+                "Remove engine.precision."
+            )
+        lammps_engine.check_request(self.potential, self.engine, simulation, atoms)
+
+    def execution_plan(self, simulation: SimulationSpec, atoms=None) -> dict:
+        """What a run would execute, resolved without running (``mlip validate``)."""
+        launch = None
+        launch_error = None
+        try:
+            launch = self.launch()
+        except ConfigError as exc:
+            launch_error = str(exc)
+        accelerator = launch.accelerator if launch is not None else {"gpu": False}
+        files = lammps_engine.model_file_plan(
+            self.potential.model_paths, self.potential.model_hashes
+        )
+        first = self.potential.model_paths[0] if self.potential.model_paths else None
+        plan = {
+            "potential_kind": self.potential_kind,
+            "engine": self.engine_kind,
+            "implementation": self.implementation,
+            "model_checkpoint": {
+                "path": str(first) if first is not None else None,
+                "sha256": files["observed"].get(str(first)) if first is not None else None,
+                "model_files": [
+                    {"path": key, "sha256": value, "exists": value is not None}
+                    for key, value in files["observed"].items()
+                ],
+            },
+            "exported_model": None,
+            "elements": list(self.potential.elements),
+            "type_map": {str(k): v for k, v in sorted(self.potential.type_map.items())},
+            "energy_convention": self.reported_energy_convention(simulation),
+            "energy_convention_native": self.potential.energy_convention,
+            "units": lammps_engine.units_plan(self.potential.units),
+            "device": {
+                "requested": None,
+                "effective": (
+                    f"gpu ({accelerator['gpu_via']}, selected by engine.lammps_args)"
+                    if accelerator["gpu"]
+                    else "cpu"
+                ),
+                "guaranteed": not accelerator["gpu"],
+                "note": (
+                    "a LAMMPS-native pair style has no device setting here; engine.lammps_args "
+                    "select an accelerator, and whether the build has that backend is known "
+                    "only when LAMMPS starts"
+                    if accelerator["gpu"]
+                    else "no accelerator switches: the pair style runs on the host CPU"
+                ),
+            },
+            "precision": {
+                "requested": self.engine.precision,
+                "effective": None,
+                "guaranteed": False,
+                "note": (
+                    "set by the pair style's package and model build; not readable before a "
+                    "run (engine.precision is refused for this route)"
+                ),
+            },
+            "dynamics": lammps_engine.dynamics_plan(
+                simulation, units=self.potential.units, atoms=atoms, options=self.engine.options
+            ),
+            "lammps": lammps_engine.lammps_plan(self.potential, launch, atoms=atoms),
+            "openmm": None,
+            "model_hashes": files,
+            "deck": lammps_engine.deck_plan(
+                self.potential, simulation, atoms, options=self.engine.options
+            ),
+            **lammps_engine.bridge_plan_basics(self, simulation, atoms),
+        }
+        if launch_error is not None:
+            plan["lammps"]["launch_refused"] = launch_error
+        return complete_plan(plan)
+
+    def engine_parameters(self, simulation: SimulationSpec | None = None) -> dict:
         return {
             "implementation": self.implementation,
             "native_units": self.potential.unit_system_name,
@@ -63,30 +156,44 @@ class LammpsNativeBridge(Bridge):
             "framework": self.adapter.framework,
             "required_packages": list(self.adapter.required_packages()),
             "type_map": {str(k): v for k, v in sorted(self.potential.type_map.items())},
-            # The exact strings LAMMPS executes, preserved verbatim.
-            "pair_commands": list(self.potential.render_pair_commands()),
+            # The exact strings LAMMPS executes (model files renamed to their
+            # staged names in the job directory), preserved verbatim.
+            **lammps_engine.describe_request(self.potential, self.engine, simulation, self.launch()),
         }
 
     def deck(self, atoms, simulation: SimulationSpec) -> tuple[str, ...]:
-        """Render the input deck without running it. Used by ``mlip validate``."""
-        from ..structures import is_periodic
+        """Render the input deck for ``atoms`` without running it."""
+        from ..structures import fixed_atom_indices
 
+        geometry = lammps_engine.prepare_geometry(atoms)
+        md = simulation.task == "md"
+        fixed = fixed_atom_indices(atoms) if md else ()
         return lammps_engine.render_deck(
-            self.potential,
+            lammps_engine.rewrite_model_tokens(self.potential),
             simulation,
             n_types=len(self.potential.type_map),
-            periodic=is_periodic(atoms),
+            pbc=geometry.pbc,
+            fixed_ids=[i + 1 for i in fixed],
+            n_atoms=len(atoms),
+            vacuum=(
+                lammps_engine.vacuum_axes(atoms, simulation)
+                if md and simulation.ensemble == "npt"
+                else ()
+            ),
+            options=self.engine.options,
+            triclinic=geometry.triclinic,
         )
 
     def singlepoint(self, atoms, simulation: SimulationSpec) -> PotentialResult:
         capabilities = self.validate(simulation, atoms)
         workdir = Path(self.engine.options.get("workdir", ".")) / "lammps_singlepoint"
         payload = self._run(atoms, self.as_singlepoint(simulation), workdir)
-        return self._result(
+        result = self._result(
             payload,
             energy_convention=capabilities.native_energy_convention,
             native_units=self.potential.unit_system_name,
         )
+        return self.in_requested_convention(result, simulation)
 
     def run_md(self, atoms, simulation: SimulationSpec, *, workdir: Path) -> TrajectoryResult:
         capabilities = self.validate(simulation, atoms)
@@ -98,71 +205,18 @@ class LammpsNativeBridge(Bridge):
             energy_convention=capabilities.native_energy_convention,
             native_units=self.potential.unit_system_name,
         )
-        interval = max(1, simulation.trajectory_interval)
-        payload["frames"] = simulation.steps // interval + 1
+        final = self.in_requested_convention(final, simulation)
         return self._trajectory(payload, simulation, initial, final)
 
     def _run(self, atoms, simulation: SimulationSpec, workdir: Path) -> dict:
-        from ..structures import is_periodic
-
-        workdir = Path(workdir)
-        workdir.mkdir(parents=True, exist_ok=True)
-        lammps_engine.write_data_file(
-            atoms, self.potential, workdir / lammps_engine.DATA_FILE
-        )
-        commands = lammps_engine.render_deck(
+        return lammps_engine.run_job(
             self.potential,
+            atoms,
             simulation,
-            n_types=len(self.potential.type_map),
-            periodic=is_periodic(atoms),
-        )
-        raw = lammps_engine.run_deck(
-            commands,
-            workdir=workdir,
             engine_spec=self.engine,
-            n_atoms=len(atoms),
-            want_per_atom=simulation.compute_per_atom_energy,
+            workdir=Path(workdir),
+            launch=self.launch(),
         )
-        return _to_canonical(raw, self.potential, atoms, commands)
-
-
-def _to_canonical(raw: dict, potential, atoms, commands) -> dict:
-    """Convert LAMMPS output into canonical units, explicitly and once."""
-    units = potential.units
-    thermo = raw["thermo"]
-    per_atom = raw.get("per_atom_energy")
-    if per_atom is not None:
-        per_atom = [lammps_engine.energy_to_eV(v, units) for v in per_atom]
-    final_atoms = atoms.copy()
-    if raw.get("positions"):
-        final_atoms.set_positions(raw["positions"])
-    return {
-        "energy_eV": lammps_engine.energy_to_eV(thermo["pe"], units),
-        "forces_eV_per_A": lammps_engine.forces_to_eV_per_A(raw["forces"], units),
-        "stress_eV_per_A3": lammps_engine.stress_from_pressure(thermo, units),
-        "per_atom_energy_eV": per_atom,
-        "symbols": list(atoms.get_chemical_symbols()),
-        "wall_time_s": raw.get("wall_time_s"),
-        "atoms": final_atoms,
-        "frames": 0,
-        "trajectory_path": str(
-            Path(raw["deck_path"]).parent / lammps_engine.TRAJECTORY_FILE
-        ),
-        "log_path": raw.get("log_path"),
-        "temperature_start_K": None,
-        "temperature_end_K": thermo.get("temp"),
-        "max_temperature_K": None,
-        "total_energy_drift_eV_per_atom": None,
-        "integrator": "lammps fix mlip_integrate",
-        "native": {
-            "route": raw.get("route"),
-            "thermo": thermo,
-            "units": lammps_unit_system(units).name,
-            "deck_path": raw.get("deck_path"),
-            "pair_commands": list(potential.render_pair_commands()),
-            "deck": list(commands),
-        },
-    }
 
 
 __all__ = ["LammpsNativeBridge"]

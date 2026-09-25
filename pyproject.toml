@@ -25,8 +25,11 @@ test = [
 # must not pull in PyTorch, CUDA, OpenMM or LAMMPS, so every backend lives
 # behind an extra and every import of one is lazy. `mlip` is the smallest
 # useful set: ASE as the interchange structure layer, plus numpy.
+# ase>=3.26: the integrators the ASE engine maps thermostats/barostats onto
+# arrived late -- NoseHooverChainNVT and Bussi (csvr) in 3.24, the MTK NPT
+# integrators in 3.25/3.26. Older ASE would fail at run time, not install time.
 mlip = [
-    "ase>=3.23",
+    "ase>=3.26",
     "numpy>=1.24",
 ]
 # A trained MACE model, evaluated through MACE's own ASE calculator. Install
@@ -39,11 +42,16 @@ mace = [
 ]
 # MACE through OpenMM, via OpenMM-ML. Both are conda-forge packages in
 # practice; listed here so the dependency is documented even where pip cannot
-# satisfy it.
+# satisfy it. The distribution is named "openmmml" ("openmm-ml" does not
+# exist on PyPI). openmmml>=1.6 evaluates MACE through openmm.PythonForce and
+# accepts createSystem(device=..., precision=...), which the OpenMM route
+# needs to honour potential.device/precision; 1.2-1.5 used TorchForce with
+# different device semantics. openmmml 1.7 requires openmm>=8.5.2, the
+# combination tested here (openmm 8.5.2 + openmmml 1.7).
 openmm = [
     "nio-md-prep[mace]",
-    "openmm>=8.1",
-    "openmm-ml>=1.2",
+    "openmm>=8.5.2",
+    "openmmml>=1.6",
 ]
 
 [project.scripts]
@@ -62,6 +70,6 @@ pythonpath = ["src"]
 markers = [
     "mace: needs mace-torch and a model from $NIO_MD_TEST_MACE_MODEL",
     "lammps: needs a LAMMPS build with the relevant pair-style package",
-    "openmm: needs openmm and openmm-ml",
+    "openmm: needs openmm and openmmml (OpenMM-ML)",
     "gpu: needs a CUDA device",
 ]

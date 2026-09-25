@@ -8,7 +8,49 @@ The two live side by side.
 
 This document is the contract: the compatibility matrix, the units and energy
 conventions, the dependencies, what a job directory must record, how to extend
-the subsystem, and what is explicitly not supported.
+the subsystem, and what is explicitly not supported. What has actually been
+exercised on real backends, with measurements and blocked items, is in
+[`mlip_backend_status.md`](mlip_backend_status.md).
+
+## Execution guarantees (hardening)
+
+- **The plan is what runs.** `nio-md-prep mlip validate` prints the resolved
+  execution plan without running anything: checkpoint and exported model
+  (path, existence, sha256), bridge implementation, elements, energy
+  convention, native units, requested/effective device and precision with a
+  `guaranteed` flag, the effective integrator/thermostat/barostat with timestep
+  and damping in user and native units, rendered `pair_style`/`pair_coeff`,
+  the LAMMPS launch command with KOKKOS options, availability, unmet
+  capabilities and model hashes (`--json` for machines). Refusals exit with
+  status 2 before any manifest is written; the manifest records what ran.
+- **Geometry.** Periodicity is per axis (`p`/`f` per LAMMPS dimension; atoms
+  outside a non-periodic face are refused, never wrapped). Triclinic cells are
+  rotated into the engine's frame (LAMMPS restricted triclinic, OpenMM reduced
+  box vectors) and positions, forces, stress and the final cell are rotated
+  back to the source basis.
+- **Thermostats and barostats** are implemented as requested or refused at
+  validate; the per-engine table is in `mlip_backend_status.md`. NPT with
+  frozen atoms, and isotropic/anisotropic NPT on a cell with a vacuum gap, are
+  refused; slabs can use in-plane coupling on LAMMPS only.
+- **Frozen atoms** (`FixAtoms`) are honoured on every engine (LAMMPS mobile
+  group, OpenMM zero mass, ASE constraints) and single-point forces are the raw
+  model forces, never zeroed.
+- **LAMMPS units.** `metal` and `real` are converted explicitly for energy,
+  force, time, damping, pressure and virial stress (LAMMPS `real` pressure is
+  atm; user pressures are bar); metal-vs-real equivalence is measured.
+- **GPU truthfulness.** A GPU is claimed only when the launch really
+  activates it (KOKKOS `-k on g N -sf kk -pk kokkos newton on neigh half` and
+  `activate_mliappy_kokkos` for ML-IAP); otherwise the plan says
+  `guaranteed = false`. MACE exports are found at the names mace-torch writes
+  (`<checkpoint>-mliap_lammps.pt`, `<checkpoint>-lammps.pt`) or at an explicit
+  `engine.options.exported_model_path`.
+- **OpenMM precision.** openmmml 1.7's `createSystem(precision=)` casts inputs
+  but not model parameters, so a precision is guaranteed only when the model's
+  stored dtype matches (or openmmml >= 1.8); OpenMM's own platform precision is
+  read back from the Context (an unpinned GPU run may use single precision).
+- **Diagnostics.** Energy drift is reported as a conservation test for NVE
+  only; thermostatted runs report a descriptive energy change and, where the
+  engine provides it, the conserved quantity. Smoke MD stays capped at 500 steps.
 
 ## The architectural rule
 
@@ -153,9 +195,15 @@ stray top-level `import torch` fails CI.
 | Extra | Pulls in | For |
 |---|---|---|
 | *(none)* | `openpyxl` | the classical workflows, unchanged |
-| `mlip` | `ase`, `numpy` | specs, structures, the mock potential |
+| `mlip` | `ase>=3.26`, `numpy` | specs, structures, the mock potential |
 | `mace` | `mlip` + `mace-torch`, `torch` | MACE on ASE and on LAMMPS |
-| `openmm` | `mace` + `openmm`, `openmm-ml` | MACE on OpenMM |
+| `openmm` | `mace` + `openmm>=8.5.2`, `openmmml>=1.6` | MACE on OpenMM |
+
+The OpenMM-ML distribution is named `openmmml` (`openmm-ml` does not exist on
+PyPI). `openmmml>=1.6` evaluates MACE through `openmm.PythonForce` and takes
+`createSystem(device=..., precision=...)`; 1.7 needs `openmm>=8.5.2`. ASE 3.26
+is the first release with every integrator the ASE engine maps onto
+(Nose-Hoover chain and Bussi from 3.24, MTK NPT from 3.25/3.26).
 
 LAMMPS is not a pip dependency: the engine uses the LAMMPS Python module when
 it is importable and otherwise drives an `lmp` executable, and if neither
@@ -305,9 +353,33 @@ charges stay where the classical workflows need them.
 MLIP consumes — it drops topology deliberately, because carrying it would
 suggest the conversion is reversible.
 
-Every structure is hashed (`structures.structure_digest`) over exactly the
+Every structure is hashed (`structures.structure_digest`) over the
 interchange view, rounded to 1e-8 Å so a text round trip does not change the
-digest. That hash goes in the manifest.
+digest: symbols, positions, cell, per-axis PBC, and -- when present and not
+all zero -- constraints, initial magnetic moments, initial charges and tags.
+Ferromagnetic and antiferromagnetic initialisations of the same NiO geometry
+therefore hash differently. That hash goes in the manifest.
+
+### Periodicity, constraints and LAMMPS data files
+
+PBC is per cell axis throughout (`structures.periodic_axes`); nothing
+collapses a slab to "periodic" or "not periodic". A structure periodic along
+some axes only requires the `partial_periodic` capability, which an engine
+declares only once it honours each axis independently. Stress and NPT need a
+fully periodic cell, except NPT with `barostat_coupling = "in-plane"`, which
+is left to engines that implement it. A fully periodic cell with an empty gap
+wider than `simulation.vacuum_gap_threshold_angstrom` (default 5 Å, measured
+normal to the lattice planes) is treated as a vacuum slab and refused for
+isotropic/anisotropic NPT.
+
+ASE `FixAtoms` is the one constraint type honoured (`structures.fixed_atom_indices`);
+any other ASE constraint is refused by name. MD with frozen atoms needs the
+`fixed_atoms` engine capability; NPT with frozen atoms is refused everywhere.
+
+A LAMMPS data file does not say which faces are periodic, so the
+`lammps-data` and `lammps-data-nio` formats require `structure.pbc` (the
+classical slab builds are `[true, true, false]`). The converter keeps the
+`xy xz yz` tilts and subtracts the `xlo/ylo/zlo` origin.
 
 ### Element coverage
 
@@ -358,7 +430,10 @@ trajectories is worthless unless each one records which model produced it.
 
 Every executing job writes `mlip_manifest.json` into its output directory
 **before** the run, so a crash still leaves a record of the attempt, and
-rewrites it with results afterwards. It contains:
+rewrites it with results afterwards. Each write is atomic (temporary file +
+`os.replace`), and `status` moves `prepared` -> `running` -> `completed`, or
+to `failed` with an `error` record (`type`, `message`) and `finished_utc`. It
+contains:
 
 - model SHA256 (declared *and* observed) and any missing model files
 - input structure hash, composition, cell and PBC
@@ -366,8 +441,11 @@ rewrites it with results afterwards. It contains:
 - the potential implementation and the simulation engine, with the bridge's
   own notes
 - package versions (`ase`, `numpy`, `torch`, `mace-torch`, `openmm`,
-  `openmm-ml`, `lammps`, `deepmd-kit`, …), absent ones recorded as `null`
-- CUDA/device information, probed without importing torch when torch is absent
+  `openmmml`, `lammps`, `deepmd-kit`, …), absent ones recorded as `null`
+- CUDA/device information: torch's CUDA state is read only when a route has
+  already imported torch (the record is refreshed after the run) or with
+  `mlip inspect --probe-torch`; otherwise an installed torch is recorded by
+  version with `probed: false`
 - element mapping, including the LAMMPS type map and the `E0` values
 - precision and energy convention (potential-native, requested, reported)
 - thermostat/integrator settings and the seed

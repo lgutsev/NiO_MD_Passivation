@@ -10,9 +10,10 @@ the way production trajectories are produced.
 ``compare`` drives the cross-engine single-point equivalence check that is
 this subsystem's scientific acceptance test.
 
-Everything here is a thin shell over :mod:`nio_md_prep.mlip.jobs`; the module
-is imported lazily from the top-level CLI so ``nio-md-prep --help`` never
-touches this code path.
+Everything here is a thin shell over :mod:`nio_md_prep.mlip.jobs`. Building
+the top-level parser imports this module (to register the ``mlip`` group)
+and the configuration/spec layer, but never ASE, torch, MACE, OpenMM or
+LAMMPS; ``tests/test_mlip_isolation.py`` checks that in a fresh interpreter.
 """
 from __future__ import annotations
 
@@ -38,13 +39,22 @@ def add_parser(subparsers) -> None:
     )
     inspect.add_argument("config", type=Path, nargs="?")
     inspect.add_argument("--json", action="store_true", help="emit the full report as JSON")
+    inspect.add_argument(
+        "--probe-torch",
+        action="store_true",
+        help="import torch to report CUDA devices (slow; off by default)",
+    )
 
     validate = group.add_parser(
-        "validate", help="check a configuration and its route without executing anything"
+        "validate",
+        help="show the execution plan of a configuration and refuse an impossible job, "
+        "without executing anything",
     )
     validate.add_argument("config", type=Path)
     validate.add_argument("--structure", type=Path)
-    validate.add_argument("--json", action="store_true")
+    validate.add_argument(
+        "--json", action="store_true", help="emit the report and execution plan as JSON"
+    )
 
     singlepoint = group.add_parser(
         "singlepoint", help="evaluate one geometry and write an MLIP manifest"
@@ -88,15 +98,24 @@ def run(args) -> int:
 
     if args.mlip_command == "inspect":
         job = parse_job(args.config) if args.config else None
-        report = jobs.inspect_environment(job)
+        report = jobs.inspect_environment(job, probe_torch=args.probe_torch)
         _emit(report, args.json, _format_inspect)
         return 0
 
     job = parse_job(args.config)
 
     if args.mlip_command == "validate":
-        report = jobs.validate_job(job, structure=structure)
+        # The plan is printed even for a refused job; the refusal then exits
+        # through the top-level error handler (status 2), as before.
+        report = jobs.validate_job(job, structure=structure, strict=False)
         _emit(report, args.json, _format_validate)
+        if not report["ok"]:
+            from .errors import CapabilityError
+
+            raise CapabilityError(
+                f"{report['execution_plan']['label']} cannot run this job:",
+                report["execution_plan"]["unmet_capabilities"],
+            )
         return 0
 
     if args.mlip_command == "singlepoint":
@@ -171,7 +190,12 @@ def _format_inspect(report: dict) -> str:
     lines.append("")
     lines.append(f"Device: {device['platform']} ({device['cpu_count']} CPUs)")
     torch_info = device.get("torch")
-    if torch_info and "error" not in torch_info:
+    if torch_info and torch_info.get("probed") is False:
+        lines.append(
+            f"  torch {torch_info.get('version')} installed; CUDA not probed "
+            "(use --probe-torch)"
+        )
+    elif torch_info and "error" not in torch_info:
         lines.append(
             f"  torch {torch_info['version']}, CUDA available: "
             f"{torch_info['cuda_available']} ({torch_info['device_count']} device(s))"
@@ -256,19 +280,141 @@ def _format_validate(report: dict) -> str:
     )
     if report["structure"]:
         structure = report["structure"]
+        pbc = "".join("T" if p else "F" for p in structure["pbc"])
         lines.append(
             f"  structure: {structure['n_atoms']} atoms, elements "
-            f"{', '.join(structure['elements'])}, periodic={structure['periodic']}, "
+            f"{', '.join(structure['elements'])}, pbc={pbc}, "
+            f"fixed atoms={structure['constraints']['n_fixed']}, "
             f"sha256={structure['sha256'][:16]}..."
         )
-    parameters = report["engine_parameters"]
-    if parameters.get("pair_commands"):
-        lines.append("  rendered LAMMPS commands:")
-        lines += [f"    {command}" for command in parameters["pair_commands"]]
-    if parameters.get("returnEnergyType"):
-        lines.append(f"  OpenMM-ML returnEnergyType: {parameters['returnEnergyType']}")
     lines.append("")
-    lines.append("Configuration is valid for this route." if report["ok"] else "INVALID")
+    lines.append(format_plan(report["execution_plan"]))
+    lines.append("")
+    lines.append(
+        "Configuration is valid for this route."
+        if report["ok"]
+        else "INVALID: this route refuses the job (see unmet capabilities)."
+    )
+    return "\n".join(lines)
+
+
+def _flag(guaranteed) -> str:
+    return "guaranteed" if guaranteed else "NOT guaranteed"
+
+
+def _native(value) -> str:
+    """A native value as the engine receives it: a number or ``{value, unit}``."""
+    if value is None:
+        return "n/a"
+    if isinstance(value, dict) and "value" in value:
+        return f"{value['value']!r} {value.get('unit', '')}".strip()
+    return repr(value)
+
+
+def _guarantee_lines(name: str, record: dict | None, pad: str) -> list[str]:
+    if not record:
+        return [f"  {name + ':':<14}not stated"]
+    lines = [
+        f"  {name + ':':<14}requested {record.get('requested')} -> effective "
+        f"{record.get('effective')} [{_flag(record.get('guaranteed'))}]"
+    ]
+    if record.get("note"):
+        lines.append(f"{pad}{record['note']}")
+    return lines
+
+
+def format_plan(plan: dict) -> str:
+    """The readable form of an execution plan: every contract key, in order."""
+    pad = " " * 16
+    lines = ["Execution plan (resolved without running anything):"]
+    lines.append(
+        f"  {'route:':<14}{plan['potential_kind']} -> {plan['engine']} "
+        f"({plan['implementation']}), bridge {plan['bridge']}"
+    )
+    checkpoint = plan.get("model_checkpoint") or {}
+    if checkpoint.get("path"):
+        lines.append(f"  {'checkpoint:':<14}{checkpoint['path']}")
+        lines.append(f"{pad}sha256 {checkpoint.get('sha256') or '(file not found)'}")
+    else:
+        lines.append(f"  {'checkpoint:':<14}none (no model file)")
+    exported = plan.get("exported_model")
+    if exported:
+        lines.append(f"  {'exported:':<14}{exported.get('path')}")
+        lines.append(f"{pad}sha256 {exported.get('sha256') or '(file not found)'}")
+        if exported.get("exporter"):
+            lines.append(f"{pad}created by: {exported['exporter']}")
+    else:
+        lines.append(f"  {'exported:':<14}none (the engine evaluates the checkpoint itself)")
+    elements = ", ".join(plan.get("elements") or []) or "unrestricted"
+    lines.append(f"  {'elements:':<14}{elements}")
+    lines.append(f"  {'energy:':<14}{plan.get('energy_convention')} convention")
+    units = plan.get("units") or {}
+    lines.append(
+        f"  {'units:':<14}native {units.get('native')}; pressure unit "
+        f"{units.get('pressure_unit') or 'n/a'}"
+    )
+    lines += _guarantee_lines("device", plan.get("device"), pad)
+    lines += _guarantee_lines("precision", plan.get("precision"), pad)
+    dynamics = plan.get("dynamics")
+    if dynamics is None:
+        lines.append(f"  {'dynamics:':<14}none (this task integrates nothing)")
+    else:
+        coupling = dynamics.get("barostat_coupling")
+        lines.append(
+            f"  {'dynamics:':<14}{dynamics.get('ensemble')}: integrator "
+            f"{dynamics.get('integrator')}, thermostat {dynamics.get('thermostat')}, "
+            f"barostat {dynamics.get('barostat')}" + (f" ({coupling})" if coupling else "")
+        )
+        lines.append(
+            f"{pad}timestep {dynamics.get('timestep_fs')} fs -> native "
+            f"{_native(dynamics.get('timestep_native'))}"
+        )
+        for label, key in (("thermostat", "thermostat_damping"), ("barostat", "barostat_damping")):
+            user, native = dynamics.get(f"{key}_fs"), dynamics.get(f"{key}_native")
+            if user is not None or native is not None:
+                lines.append(f"{pad}{label} damping {user} fs -> native {_native(native)}")
+        if dynamics.get("native_time_unit"):
+            lines.append(f"{pad}native time unit: {dynamics['native_time_unit']}")
+        if dynamics.get("refused"):
+            lines.append(f"{pad}REFUSED: {dynamics['refused']}")
+    lammps = plan.get("lammps")
+    if lammps:
+        lines.append(f"  {'LAMMPS:':<14}{lammps.get('pair_style')}")
+        lines += [f"{pad}{command}" for command in lammps.get("pair_coeff") or []]
+        lines.append(f"{pad}launch: {lammps.get('launch_command')}")
+        kokkos = lammps.get("kokkos_args") or []
+        lines.append(f"{pad}KOKKOS: {' '.join(kokkos) if kokkos else 'off'}")
+        if lammps.get("env"):
+            lines.append(
+                f"{pad}environment: "
+                + " ".join(f"{k}={v!r}" for k, v in sorted(lammps["env"].items()))
+            )
+        if lammps.get("launch_refused"):
+            lines.append(f"{pad}launch REFUSED: {lammps['launch_refused']}")
+    openmm = plan.get("openmm")
+    if openmm:
+        platform = openmm.get("platform")
+        if isinstance(platform, dict):
+            platform = platform.get("effective") or "chosen by OpenMM when the Context is created"
+        lines.append(f"  {'OpenMM:':<14}platform {platform}")
+        lines.append(f"{pad}platform properties: {openmm.get('properties')}")
+        lines.append(f"{pad}createSystem: {openmm.get('create_system_kwargs')}")
+    availability = plan.get("availability") or {}
+    if availability.get("available"):
+        lines.append(f"  {'available:':<14}yes")
+    else:
+        missing = ", ".join(availability.get("missing") or [])
+        lines.append(
+            f"  {'available:':<14}no" + (f" (missing modules: {missing})" if missing else "")
+        )
+        if availability.get("detail"):
+            lines.append(f"{pad}{availability['detail']}")
+    unmet = plan.get("unmet_capabilities") or []
+    lines.append(f"  {'unmet:':<14}" + ("none" if not unmet else f"{len(unmet)} refusal(s)"))
+    lines += [f"{pad}- {item}" for item in unmet]
+    hashes = plan.get("model_hashes") or {}
+    lines.append(f"  {'model hashes:':<14}declared {hashes.get('declared') or 'none'}")
+    lines.append(f"{pad}observed {hashes.get('observed') or 'none'}")
     return "\n".join(lines)
 
 
@@ -287,11 +433,15 @@ def _format_singlepoint(report: dict) -> str:
 
 def _format_smoke(report: dict) -> str:
     trajectory = report["results"]["trajectory"]
-    drift = trajectory["total_energy_drift_eV_per_atom"]
+    diagnostics = trajectory.get("diagnostics") or {}
+    completed = trajectory.get("steps_completed")
     lines = [
         f"Smoke MD: {trajectory['steps']} steps of {trajectory['timestep_fs']} fs "
-        f"({trajectory['ensemble']})",
-        f"  frames written: {trajectory['frames']} -> {trajectory['trajectory_path']}",
+        f"({trajectory['ensemble']}); engine reports "
+        f"{completed if completed is not None else 'no'} steps completed",
+        f"  frames written: "
+        f"{trajectory['frames_written'] if trajectory['frames_written'] is not None else 'unverified'}"
+        f" -> {trajectory['trajectory_path']}",
     ]
     if trajectory["temperature_start_K"] is not None:
         lines.append(
@@ -299,8 +449,25 @@ def _format_smoke(report: dict) -> str:
             f"{trajectory['temperature_end_K']:.1f} K "
             f"(peak {trajectory['max_temperature_K']:.1f} K)"
         )
-    if drift is not None:
-        lines.append(f"  total-energy drift: {drift:.3e} eV/atom")
+    if "energy_drift_eV_per_atom_per_ps" in diagnostics:
+        lines.append(
+            f"  NVE energy drift: {diagnostics['energy_drift_eV_per_atom_per_ps']:.3e} "
+            f"eV/atom/ps (max excursion "
+            f"{diagnostics['max_abs_energy_excursion_eV_per_atom']:.3e} eV/atom)"
+        )
+    elif "total_energy_change_eV_per_atom" in diagnostics:
+        lines.append(
+            f"  total-energy change: {diagnostics['total_energy_change_eV_per_atom']:.3e} "
+            f"eV/atom ({diagnostics['label']})"
+        )
+        conserved = diagnostics.get("conserved_quantity_drift")
+        if conserved:
+            lines.append(
+                f"  {diagnostics['conserved_quantity']} drift: "
+                f"{conserved['energy_drift_eV_per_atom_per_ps']:.3e} eV/atom/ps"
+            )
+    elif diagnostics.get("available") is False:
+        lines.append(f"  energy diagnostics: none ({diagnostics.get('reason')})")
     lines.append(f"  manifest: {report['manifest_path']}")
     return "\n".join(lines)
 
