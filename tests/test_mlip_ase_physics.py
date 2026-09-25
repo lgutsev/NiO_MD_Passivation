@@ -630,3 +630,29 @@ def test_a_refused_md_request_is_listed_in_the_plan_not_raised(tmp_path):
     assert DYNAMICS_KEYS <= set(dynamics)
     assert dynamics["integrator"] is None and dynamics["timestep_native"] is None
     assert dynamics["barostat"] == "parrinello-rahman" and "MelchionnaNPT" in dynamics["refused"]
+
+
+def test_ase_npt_is_refused_with_frozen_atoms_and_on_vacuum_slabs():
+    """NPT must never scale frozen atoms or vacuum silently on the ASE engine."""
+    from ase.build import bulk, fcc111
+    from ase.constraints import FixAtoms
+
+    from nio_md_prep.mlip.engines import ase_engine
+    from nio_md_prep.mlip.errors import ConfigError
+    from nio_md_prep.mlip.specs import SimulationSpec
+
+    npt = SimulationSpec(task="md", ensemble="npt", steps=10, timestep_fs=1.0,
+                         temperature_K=300.0, pressure_bar=1.0, barostat="mtk")
+
+    frozen = bulk("Cu", "fcc", a=3.6, cubic=True).repeat((2, 2, 2))
+    frozen.set_constraint(FixAtoms(indices=[0, 1]))
+    with pytest.raises(ConfigError, match="frozen atom"):
+        ase_engine.check_simulation(npt, frozen)
+
+    slab = fcc111("Cu", size=(2, 2, 3), vacuum=8.0)
+    slab.pbc = (True, True, True)  # a POSCAR-style slab: fully periodic with vacuum
+    with pytest.raises(ConfigError, match="vacuum gap"):
+        ase_engine.check_simulation(npt, slab)
+
+    bulk_cell = bulk("Cu", "fcc", a=3.6, cubic=True).repeat((2, 2, 2))
+    assert ase_engine.check_simulation(npt, bulk_cell).integrator == "IsotropicMTKNPT"

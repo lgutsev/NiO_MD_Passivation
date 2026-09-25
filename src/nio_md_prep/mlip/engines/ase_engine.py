@@ -339,6 +339,29 @@ def check_simulation(
             "atoms of a half-frozen Cu slab to 0 K (measured, ASE 3.29). Use thermostat = "
             "'langevin' or 'csvr' (Bussi, which counts the constrained degrees of freedom)."
         )
+    if plan.ensemble == "npt" and fixed:
+        raise ConfigError(
+            f"NPT with {len(fixed)} frozen atom(s) is refused on the ASE engine: the barostat "
+            "rescales every position with the cell, frozen atoms included, and ASE's MTK "
+            "integrators keep private momenta that ignore FixAtoms (the mechanism that froze "
+            "the Nose-Hoover chain run). Run NVT, or remove the constraint."
+        )
+    if plan.ensemble == "npt":
+        from ..structures import periodic_axes, vacuum_gaps
+
+        gaps = (
+            vacuum_gaps(atoms, threshold_angstrom=simulation.resolved_vacuum_gap_threshold_angstrom)
+            if all(periodic_axes(atoms))
+            else {}
+        )
+        if gaps:
+            widths = ", ".join(f"axis {axis}: {width:.2f} A" for axis, width in sorted(gaps.items()))
+            raise ConfigError(
+                f"NPT is refused on the ASE engine for a cell with a vacuum gap ({widths} > "
+                f"{simulation.resolved_vacuum_gap_threshold_angstrom:g} A): the barostat would "
+                "scale the vacuum with the solid and target a vacuum-diluted pressure. In-plane "
+                "coupling for slabs is available on the LAMMPS engine; otherwise run NVT."
+            )
     if plan.integrator == "Inhomogeneous_NPTBerendsen" and not _is_axis_aligned(atoms):
         raise ConfigError(
             "barostat = 'berendsen' with barostat_coupling = 'anisotropic' uses ASE's "

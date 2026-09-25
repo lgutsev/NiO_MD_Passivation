@@ -8,7 +8,49 @@ The two live side by side.
 
 This document is the contract: the compatibility matrix, the units and energy
 conventions, the dependencies, what a job directory must record, how to extend
-the subsystem, and what is explicitly not supported.
+the subsystem, and what is explicitly not supported. What has actually been
+exercised on real backends, with measurements and blocked items, is in
+[`mlip_backend_status.md`](mlip_backend_status.md).
+
+## Execution guarantees (hardening)
+
+- **The plan is what runs.** `nio-md-prep mlip validate` prints the resolved
+  execution plan without running anything: checkpoint and exported model
+  (path, existence, sha256), bridge implementation, elements, energy
+  convention, native units, requested/effective device and precision with a
+  `guaranteed` flag, the effective integrator/thermostat/barostat with timestep
+  and damping in user and native units, rendered `pair_style`/`pair_coeff`,
+  the LAMMPS launch command with KOKKOS options, availability, unmet
+  capabilities and model hashes (`--json` for machines). Refusals exit with
+  status 2 before any manifest is written; the manifest records what ran.
+- **Geometry.** Periodicity is per axis (`p`/`f` per LAMMPS dimension; atoms
+  outside a non-periodic face are refused, never wrapped). Triclinic cells are
+  rotated into the engine's frame (LAMMPS restricted triclinic, OpenMM reduced
+  box vectors) and positions, forces, stress and the final cell are rotated
+  back to the source basis.
+- **Thermostats and barostats** are implemented as requested or refused at
+  validate; the per-engine table is in `mlip_backend_status.md`. NPT with
+  frozen atoms, and isotropic/anisotropic NPT on a cell with a vacuum gap, are
+  refused; slabs can use in-plane coupling on LAMMPS only.
+- **Frozen atoms** (`FixAtoms`) are honoured on every engine (LAMMPS mobile
+  group, OpenMM zero mass, ASE constraints) and single-point forces are the raw
+  model forces, never zeroed.
+- **LAMMPS units.** `metal` and `real` are converted explicitly for energy,
+  force, time, damping, pressure and virial stress (LAMMPS `real` pressure is
+  atm; user pressures are bar); metal-vs-real equivalence is measured.
+- **GPU truthfulness.** A GPU is claimed only when the launch really
+  activates it (KOKKOS `-k on g N -sf kk -pk kokkos newton on neigh half` and
+  `activate_mliappy_kokkos` for ML-IAP); otherwise the plan says
+  `guaranteed = false`. MACE exports are found at the names mace-torch writes
+  (`<checkpoint>-mliap_lammps.pt`, `<checkpoint>-lammps.pt`) or at an explicit
+  `engine.options.exported_model_path`.
+- **OpenMM precision.** openmmml 1.7's `createSystem(precision=)` casts inputs
+  but not model parameters, so a precision is guaranteed only when the model's
+  stored dtype matches (or openmmml >= 1.8); OpenMM's own platform precision is
+  read back from the Context (an unpinned GPU run may use single precision).
+- **Diagnostics.** Energy drift is reported as a conservation test for NVE
+  only; thermostatted runs report a descriptive energy change and, where the
+  engine provides it, the conserved quantity. Smoke MD stays capped at 500 steps.
 
 ## The architectural rule
 

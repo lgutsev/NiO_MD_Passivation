@@ -330,6 +330,7 @@ def compare_engines(
 
     results = {}
     parameters = {}
+    stress_not_requested = {}
     reference_energies = None
     for kind in engines:
         # Engine-specific fields (an OpenMM platform, a LAMMPS executable) only
@@ -340,8 +341,15 @@ def compare_engines(
         )
         bridge = build_bridge(job.potential, engine_spec)
         bridge.require_available()
-        results[kind] = bridge.singlepoint(atoms, simulation)
-        parameters[kind] = bridge.engine_parameters(simulation)
+        # Stress is compared only between routes that genuinely provide a
+        # virial; a route without one is asked for energy and forces only
+        # (never an invented zero), and the report says so.
+        engine_simulation = simulation
+        if simulation.compute_stress and not bridge.capabilities().stress:
+            engine_simulation = replace(simulation, compute_stress=False)
+            stress_not_requested[kind] = f"{bridge.label} provides no stress/virial"
+        results[kind] = bridge.singlepoint(atoms, engine_simulation)
+        parameters[kind] = bridge.engine_parameters(engine_simulation)
         if reference_energies is None:
             reference_energies = bridge.atomic_reference_energies()
 
@@ -364,6 +372,7 @@ def compare_engines(
         "atomic_reference_energies_known": bool(reference_energies),
         "results": {k: v.as_dict(include_arrays=False) for k, v in results.items()},
         "engine_parameters": parameters,
+        "stress_not_requested": stress_not_requested,
         "comparisons": comparisons,
     }
     output_dir.mkdir(parents=True, exist_ok=True)
