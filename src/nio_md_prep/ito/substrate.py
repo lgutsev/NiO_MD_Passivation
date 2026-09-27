@@ -30,13 +30,14 @@ from pathlib import Path
 
 import numpy as np
 
-# Marezio, Acta Cryst. 20, 723 (1966); see docs/ito/parameter-sources.md.
+# Marezio, Acta Cryst. 20, 723 (1966), as deposited in COD 2310009 (checked
+# against the COD CIF on 2026-09-26); see docs/ito/parameter-sources.md.
 BIXBYITE = {
     "a": 10.117,
     "in_8b": (0.25, 0.25, 0.25),
-    "in_24d_x": -0.0335,
-    "o_48e": (0.3905, 0.1529, 0.3832),
-    "source": "Marezio, Acta Cryst. 20, 723 (1966), doi:10.1107/S0365110X66001749",
+    "in_24d_x": 0.4663,
+    "o_48e": (0.3912, 0.1558, 0.3796),
+    "source": "Marezio, Acta Cryst. 20, 723 (1966), doi:10.1107/S0365110X66001749; coordinates from COD 2310009",
 }
 ORIENTATION = ((1, -1, 0), (1, 1, -2), (1, 1, 1))
 MASSES = {"In": 114.818, "Sn": 118.710, "O": 15.999, "Oh": 15.999, "Hh": 1.008}

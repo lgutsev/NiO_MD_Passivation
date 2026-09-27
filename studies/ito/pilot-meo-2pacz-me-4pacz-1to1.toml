@@ -1,0 +1,47 @@
+# ITO pilot 2: MeO-2PACz:Me-4PACz 1:1 molar on hydroxylated In2O3(111).
+# Ratio basis: docs/ito/literature-matrix.md B2-4/B2-5 (1:1 w/w and v/v; MW differ by ~1 %,
+# so 1:1 by mass ~= 1:1 molar). Follow-up: 1:2 (B2-2, the verified direct ITO/SAM stack).
+# Areal dose matched to the NiO baseline (180 molecules / 52.17 nm2 = 3.45 nm^-2)
+# on the 28.37 nm2 slab -> 98 molecules.  Not a production study.
+[study]
+name = "ITO pilot: MeO-2PACz + Me-4PACz (1:1 molar) on In2O3(111)-OH"
+protocol = "ito-pilot-deposition"
+
+[substrate]
+path = "inputs/ito/surfaces/in2o3-111-oh"
+
+[forcefield]
+surface_parameter_set = "uff-cation/clayff-anion"
+
+[box]
+# Lowered from the slab file default (200 A) to shrink the PPPM grid.
+zhi = 125.0
+
+[packing]
+gap = 8.0
+height = 50.0
+lateral_inset = 1.0
+
+[random]
+packmol_seed = 11
+velocity_seed = 101
+
+[protocol]
+temperature = 300.0
+timestep = 1.0
+shake = true
+deposition_steps = 300000
+hold_steps = 200000
+release_steps = 100000
+relax_steps = 300000
+wall_clearance = 30.0
+release_height = 40.0
+dump_every = 5000
+
+[[molecules]]
+slug = "me-4pacz"
+count = 49
+
+[[molecules]]
+slug = "meo-2pacz"
+count = 49

@@ -2,8 +2,8 @@
   "model_id": "in2o3-111-oh",
   "description": "Stoichiometric bulk-terminated bixbyite In2O3(111), 6 O-In-O trilayers, dissociatively hydroxylated top face (In2O3 proxy; pilot default)",
   "model_toml_sha256": "9348f988d3415275f0f8c71d1ca6615b6f6bebad17d7d731efad14b2280c6d0c",
-  "surface_lmp_sha256": "06bb6f800d4dcf8c66d87127742616264fc8e3c44507032ef9d2c77078acf369",
-  "code_commit": "4c82afa4d3f4b360db3489e824fa82799d4176ed",
+  "surface_lmp_sha256": "5dfef77f912b2043e92e533c34ae75d8df8a8bbe12ab27c17487d849fcdbffb4",
+  "code_commit": "4b832c74bf4b4083b3566f274efdd366ad956174",
   "lattice": {
     "a": 10.117,
     "in_8b": [
@@ -11,13 +11,13 @@
       0.25,
       0.25
     ],
-    "in_24d_x": -0.0335,
+    "in_24d_x": 0.4663,
     "o_48e": [
-      0.3905,
-      0.1529,
-      0.3832
+      0.3912,
+      0.1558,
+      0.3796
     ],
-    "source": "Marezio, Acta Cryst. 20, 723 (1966), doi:10.1107/S0365110X66001749"
+    "source": "Marezio, Acta Cryst. 20, 723 (1966), doi:10.1107/S0365110X66001749; coordinates from COD 2310009"
   },
   "orientation_vectors_cubic": [
     [
@@ -77,11 +77,11 @@
       "Hh": 0.425
     }
   },
-  "total_charge": 3.268496584496461e-13,
-  "dipole_z_e_per_angstrom": 0.002774834593038003,
-  "z_top_cation_angstrom": 16.454245,
-  "z_top_atom_angstrom": 19.332024,
-  "z_bottom_atom_angstrom": 0.624409,
+  "total_charge": 3.410605131648481e-13,
+  "dipole_z_e_per_angstrom": 0.0015612269451490339,
+  "z_top_cation_angstrom": 16.456582,
+  "z_top_atom_angstrom": 19.369405,
+  "z_bottom_atom_angstrom": 0.625577,
   "top_surface": {
     "bare_in5c": 192,
     "bare_o3c": 192,
@@ -94,247 +94,247 @@
     "top_o3c_available": 192,
     "site_selection": "periodic farthest-point sampling over top In5c, seeded",
     "seed": 20260926,
-    "min_new_atom_to_slab_nonbonded_angstrom": 2.0692,
+    "min_new_atom_to_slab_nonbonded_angstrom": 2.051,
     "sites": [
       {
         "in_index": 3338,
-        "protonated_o_index": 3349,
-        "vacancy_direction_z": 0.9273
+        "protonated_o_index": 3348,
+        "vacancy_direction_z": 0.933
       },
       {
         "in_index": 1898,
-        "protonated_o_index": 1909,
-        "vacancy_direction_z": 0.9273
+        "protonated_o_index": 1908,
+        "vacancy_direction_z": 0.933
       },
       {
         "in_index": 1418,
-        "protonated_o_index": 1429,
-        "vacancy_direction_z": 0.9273
+        "protonated_o_index": 1428,
+        "vacancy_direction_z": 0.933
       },
       {
         "in_index": 3818,
-        "protonated_o_index": 3829,
-        "vacancy_direction_z": 0.9273
+        "protonated_o_index": 3828,
+        "vacancy_direction_z": 0.933
       },
       {
-        "in_index": 2352,
-        "protonated_o_index": 2337,
-        "vacancy_direction_z": 0.807
+        "in_index": 916,
+        "protonated_o_index": 919,
+        "vacancy_direction_z": 0.8221
       },
       {
-        "in_index": 432,
-        "protonated_o_index": 417,
-        "vacancy_direction_z": 0.807
+        "in_index": 2836,
+        "protonated_o_index": 2839,
+        "vacancy_direction_z": 0.8221
       },
       {
-        "in_index": 912,
-        "protonated_o_index": 897,
-        "vacancy_direction_z": 0.807
+        "in_index": 436,
+        "protonated_o_index": 439,
+        "vacancy_direction_z": 0.8221
       },
       {
-        "in_index": 2832,
-        "protonated_o_index": 2817,
-        "vacancy_direction_z": 0.807
-      },
-      {
-        "in_index": 938,
-        "protonated_o_index": 949,
-        "vacancy_direction_z": 0.9273
-      },
-      {
-        "in_index": 1392,
-        "protonated_o_index": 1377,
-        "vacancy_direction_z": 0.807
-      },
-      {
-        "in_index": 2858,
-        "protonated_o_index": 2869,
-        "vacancy_direction_z": 0.9273
-      },
-      {
-        "in_index": 3312,
-        "protonated_o_index": 3297,
-        "vacancy_direction_z": 0.807
+        "in_index": 2356,
+        "protonated_o_index": 2359,
+        "vacancy_direction_z": 0.8221
       },
       {
         "in_index": 458,
-        "protonated_o_index": 469,
-        "vacancy_direction_z": 0.9273
+        "protonated_o_index": 468,
+        "vacancy_direction_z": 0.933
       },
       {
-        "in_index": 1872,
-        "protonated_o_index": 1857,
-        "vacancy_direction_z": 0.807
+        "in_index": 1876,
+        "protonated_o_index": 1879,
+        "vacancy_direction_z": 0.8221
       },
       {
         "in_index": 2378,
+        "protonated_o_index": 2388,
+        "vacancy_direction_z": 0.933
+      },
+      {
+        "in_index": 3796,
+        "protonated_o_index": 3799,
+        "vacancy_direction_z": 0.8221
+      },
+      {
+        "in_index": 938,
+        "protonated_o_index": 948,
+        "vacancy_direction_z": 0.933
+      },
+      {
+        "in_index": 1396,
+        "protonated_o_index": 1399,
+        "vacancy_direction_z": 0.8221
+      },
+      {
+        "in_index": 2858,
+        "protonated_o_index": 2868,
+        "vacancy_direction_z": 0.933
+      },
+      {
+        "in_index": 3316,
+        "protonated_o_index": 3319,
+        "vacancy_direction_z": 0.8221
+      },
+      {
+        "in_index": 462,
+        "protonated_o_index": 949,
+        "vacancy_direction_z": 0.9258
+      },
+      {
+        "in_index": 942,
+        "protonated_o_index": 469,
+        "vacancy_direction_z": 0.9258
+      },
+      {
+        "in_index": 1422,
+        "protonated_o_index": 1909,
+        "vacancy_direction_z": 0.9258
+      },
+      {
+        "in_index": 1902,
+        "protonated_o_index": 1429,
+        "vacancy_direction_z": 0.9258
+      },
+      {
+        "in_index": 2382,
+        "protonated_o_index": 2869,
+        "vacancy_direction_z": 0.9258
+      },
+      {
+        "in_index": 2862,
         "protonated_o_index": 2389,
-        "vacancy_direction_z": 0.9273
+        "vacancy_direction_z": 0.9258
       },
       {
-        "in_index": 3792,
-        "protonated_o_index": 3777,
-        "vacancy_direction_z": 0.807
+        "in_index": 3342,
+        "protonated_o_index": 3829,
+        "vacancy_direction_z": 0.9258
       },
       {
-        "in_index": 1394,
-        "protonated_o_index": 1365,
-        "vacancy_direction_z": 0.807
-      },
-      {
-        "in_index": 1874,
-        "protonated_o_index": 1845,
-        "vacancy_direction_z": 0.807
-      },
-      {
-        "in_index": 434,
-        "protonated_o_index": 405,
-        "vacancy_direction_z": 0.807
-      },
-      {
-        "in_index": 914,
-        "protonated_o_index": 885,
-        "vacancy_direction_z": 0.807
-      },
-      {
-        "in_index": 2354,
-        "protonated_o_index": 2325,
-        "vacancy_direction_z": 0.807
-      },
-      {
-        "in_index": 2834,
-        "protonated_o_index": 2805,
-        "vacancy_direction_z": 0.807
-      },
-      {
-        "in_index": 3314,
-        "protonated_o_index": 3285,
-        "vacancy_direction_z": 0.807
+        "in_index": 3822,
+        "protonated_o_index": 3349,
+        "vacancy_direction_z": 0.9258
       },
       {
         "in_index": 3794,
-        "protonated_o_index": 3765,
-        "vacancy_direction_z": 0.807
+        "protonated_o_index": 2838,
+        "vacancy_direction_z": 0.8221
       },
       {
-        "in_index": 2384,
-        "protonated_o_index": 2388,
-        "vacancy_direction_z": 0.918
+        "in_index": 1874,
+        "protonated_o_index": 918,
+        "vacancy_direction_z": 0.8221
       },
       {
-        "in_index": 2864,
-        "protonated_o_index": 2868,
-        "vacancy_direction_z": 0.918
+        "in_index": 2834,
+        "protonated_o_index": 1878,
+        "vacancy_direction_z": 0.8221
       },
       {
-        "in_index": 464,
-        "protonated_o_index": 468,
-        "vacancy_direction_z": 0.918
+        "in_index": 914,
+        "protonated_o_index": 3798,
+        "vacancy_direction_z": 0.8221
       },
       {
-        "in_index": 944,
-        "protonated_o_index": 948,
-        "vacancy_direction_z": 0.918
+        "in_index": 3314,
+        "protonated_o_index": 2358,
+        "vacancy_direction_z": 0.8221
       },
       {
-        "in_index": 1424,
-        "protonated_o_index": 1428,
-        "vacancy_direction_z": 0.918
+        "in_index": 1394,
+        "protonated_o_index": 438,
+        "vacancy_direction_z": 0.8221
       },
       {
-        "in_index": 3344,
-        "protonated_o_index": 3348,
-        "vacancy_direction_z": 0.918
+        "in_index": 2354,
+        "protonated_o_index": 1398,
+        "vacancy_direction_z": 0.8221
       },
       {
-        "in_index": 1904,
-        "protonated_o_index": 1908,
-        "vacancy_direction_z": 0.918
+        "in_index": 434,
+        "protonated_o_index": 3318,
+        "vacancy_direction_z": 0.8221
       },
       {
-        "in_index": 3824,
-        "protonated_o_index": 3828,
-        "vacancy_direction_z": 0.918
+        "in_index": 915,
+        "protonated_o_index": 922,
+        "vacancy_direction_z": 0.9258
       },
       {
-        "in_index": 431,
+        "in_index": 1875,
+        "protonated_o_index": 1882,
+        "vacancy_direction_z": 0.9258
+      },
+      {
+        "in_index": 2835,
+        "protonated_o_index": 2842,
+        "vacancy_direction_z": 0.9258
+      },
+      {
+        "in_index": 3795,
+        "protonated_o_index": 3802,
+        "vacancy_direction_z": 0.9258
+      },
+      {
+        "in_index": 435,
         "protonated_o_index": 442,
-        "vacancy_direction_z": 0.9273
+        "vacancy_direction_z": 0.9258
       },
       {
-        "in_index": 1391,
+        "in_index": 1395,
         "protonated_o_index": 1402,
-        "vacancy_direction_z": 0.9273
+        "vacancy_direction_z": 0.9258
       },
       {
-        "in_index": 2351,
+        "in_index": 2355,
         "protonated_o_index": 2362,
-        "vacancy_direction_z": 0.9273
+        "vacancy_direction_z": 0.9258
       },
       {
-        "in_index": 3311,
+        "in_index": 3315,
         "protonated_o_index": 3322,
-        "vacancy_direction_z": 0.9273
+        "vacancy_direction_z": 0.9258
       },
       {
         "in_index": 911,
-        "protonated_o_index": 922,
-        "vacancy_direction_z": 0.9273
+        "protonated_o_index": 921,
+        "vacancy_direction_z": 0.933
       },
       {
         "in_index": 1871,
-        "protonated_o_index": 1882,
-        "vacancy_direction_z": 0.9273
+        "protonated_o_index": 1881,
+        "vacancy_direction_z": 0.933
       },
       {
         "in_index": 2831,
-        "protonated_o_index": 2842,
-        "vacancy_direction_z": 0.9273
+        "protonated_o_index": 2841,
+        "vacancy_direction_z": 0.933
       },
       {
         "in_index": 3791,
-        "protonated_o_index": 3802,
-        "vacancy_direction_z": 0.9273
-      },
-      {
-        "in_index": 437,
-        "protonated_o_index": 441,
-        "vacancy_direction_z": 0.918
-      },
-      {
-        "in_index": 1397,
-        "protonated_o_index": 1401,
-        "vacancy_direction_z": 0.918
-      },
-      {
-        "in_index": 2357,
-        "protonated_o_index": 2361,
-        "vacancy_direction_z": 0.918
-      },
-      {
-        "in_index": 3317,
-        "protonated_o_index": 3321,
-        "vacancy_direction_z": 0.918
-      },
-      {
-        "in_index": 917,
-        "protonated_o_index": 921,
-        "vacancy_direction_z": 0.918
-      },
-      {
-        "in_index": 1877,
-        "protonated_o_index": 1881,
-        "vacancy_direction_z": 0.918
-      },
-      {
-        "in_index": 2837,
-        "protonated_o_index": 2841,
-        "vacancy_direction_z": 0.918
-      },
-      {
-        "in_index": 3797,
         "protonated_o_index": 3801,
-        "vacancy_direction_z": 0.918
+        "vacancy_direction_z": 0.933
+      },
+      {
+        "in_index": 431,
+        "protonated_o_index": 441,
+        "vacancy_direction_z": 0.933
+      },
+      {
+        "in_index": 1391,
+        "protonated_o_index": 1401,
+        "vacancy_direction_z": 0.933
+      },
+      {
+        "in_index": 2351,
+        "protonated_o_index": 2361,
+        "vacancy_direction_z": 0.933
+      },
+      {
+        "in_index": 3311,
+        "protonated_o_index": 3321,
+        "vacancy_direction_z": 0.933
       }
     ],
     "oh_groups_per_nm2": 3.3844

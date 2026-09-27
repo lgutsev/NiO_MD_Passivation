@@ -18,6 +18,7 @@ def main(argv=None) -> int:
     s.add_argument("--parameter-set"); s.add_argument("--no-lammps", action="store_true")
     s = sub.add_parser("adsorption-scan", help="single-molecule placement/energy checks on rigid slabs")
     s.add_argument("config", type=Path); s.add_argument("--output", type=Path, required=True)
+    s.add_argument("--workers", type=int)
     s = sub.add_parser("analyze", help="contacts, orientation, clustering and coverage of an ITO pilot trajectory")
     s.add_argument("build_directory", type=Path); s.add_argument("--trajectory", type=Path, required=True)
     s.add_argument("--output", type=Path); s.add_argument("--last-frames", type=int, default=20)
@@ -32,7 +33,7 @@ def main(argv=None) -> int:
         print((out / "validation_report.txt").read_text())
     elif a.command == "adsorption-scan":
         from .checks import adsorption_scan
-        print(adsorption_scan(a.config, a.output))
+        print(adsorption_scan(a.config, a.output, a.workers))
     elif a.command == "analyze":
         from .analysis import analyze
         print(analyze(a.build_directory, a.trajectory, a.output, last_frames=a.last_frames))

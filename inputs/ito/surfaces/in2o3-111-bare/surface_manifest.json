@@ -2,8 +2,8 @@
   "model_id": "in2o3-111-bare",
   "description": "Stoichiometric bulk-terminated bixbyite In2O3(111), 6 O-In-O trilayers, no hydroxyls (In2O3 proxy, reference only)",
   "model_toml_sha256": "20794688c1c08d42e9f37a3e10ad21b7bf2a7730f910e9d4c244af43b46ec78b",
-  "surface_lmp_sha256": "291ece5c3098fa348d08b32af6dc57bc6cc7b5fa90eedfd4163c3ed046eaad75",
-  "code_commit": "4c82afa4d3f4b360db3489e824fa82799d4176ed",
+  "surface_lmp_sha256": "3cdcaec907ec5612e5c8a0d347008efb078ea7d3d586c08d21b97e78e9dc49c7",
+  "code_commit": "4b832c74bf4b4083b3566f274efdd366ad956174",
   "lattice": {
     "a": 10.117,
     "in_8b": [
@@ -11,13 +11,13 @@
       0.25,
       0.25
     ],
-    "in_24d_x": -0.0335,
+    "in_24d_x": 0.4663,
     "o_48e": [
-      0.3905,
-      0.1529,
-      0.3832
+      0.3912,
+      0.1558,
+      0.3796
     ],
-    "source": "Marezio, Acta Cryst. 20, 723 (1966), doi:10.1107/S0365110X66001749"
+    "source": "Marezio, Acta Cryst. 20, 723 (1966), doi:10.1107/S0365110X66001749; coordinates from COD 2310009"
   },
   "orientation_vectors_cubic": [
     [
@@ -74,10 +74,10 @@
     }
   },
   "total_charge": 3.126388037344441e-13,
-  "dipole_z_e_per_angstrom": -1.6031939591813906e-16,
-  "z_top_cation_angstrom": 16.454245,
-  "z_top_atom_angstrom": 17.2901,
-  "z_bottom_atom_angstrom": 0.624409,
+  "dipole_z_e_per_angstrom": 2.0039924489767382e-16,
+  "z_top_cation_angstrom": 16.456582,
+  "z_top_atom_angstrom": 17.291268,
+  "z_bottom_atom_angstrom": 0.625577,
   "top_surface": {
     "bare_in5c": 192,
     "bare_o3c": 192,
