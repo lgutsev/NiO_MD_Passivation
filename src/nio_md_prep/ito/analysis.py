@@ -147,7 +147,7 @@ def analyze(build_directory: Path, trajectory: Path, output: Path | None = None,
         index = {int(i): k for k, i in enumerate(ids)}
         slab_mask = f.molecule_ids[order] <= 0
         labels = np.array([label_of_type.get(int(t), "?") for t in types])
-        cations = xyz[slab_mask & np.isin(labels, ["In", "Sn"])]
+        cations = xyz[slab_mask & np.isin(labels, ["In", "Sn", "Ni"])]
         slab_o = xyz[slab_mask & np.isin(labels, ["O", "Oh"])]
         slab_h = xyz[slab_mask & (labels == "Hh")]
         mols = []

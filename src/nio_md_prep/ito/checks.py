@@ -114,7 +114,7 @@ def _contacts(xyz_mol: np.ndarray, frame: dict, slab_xyz: np.ndarray, slab_label
         for ax in (0, 1): d[..., ax] -= lengths[ax] * np.round(d[..., ax] / lengths[ax])
         return np.linalg.norm(d, axis=2)
     lab = np.array(slab_labels)
-    cat = slab_xyz[np.isin(lab, ["In", "Sn"])]
+    cat = slab_xyz[np.isin(lab, ["In", "Sn", "Ni"])]
     ox = slab_xyz[np.isin(lab, ["O", "Oh"])]
     hh = slab_xyz[lab == "Hh"]
     ao = xyz_mol[frame["anchor_o"]]; ah = xyz_mol[frame["acid_h"]]

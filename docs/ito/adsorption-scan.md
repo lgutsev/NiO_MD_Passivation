@@ -87,3 +87,25 @@ Pooled over both parameter sets and both molecules, E_int by initial tilt:
 - **The groove preference therefore depends on how the rim is terminated.** The follow-up scans on the hydroxylation series answer this; CN 3 In are now hydroxylatable:
   - `adsorption-scan-groove-hydroxylation.toml` (ITO 0/25/100%)
   - `adsorption-scan-nio-groove-hydroxylation.toml` (rigid NiO 0/25/100%)
+
+## Corrugated ITO vs hydroxylation (UFF-cation set, 2026-09-28)
+
+**Setup:** `studies/ito/adsorption-scan-groove-hydroxylation.toml` on `in2o3-111-groove-oh000/025/100`. The 100% surface is the saturated one, 64% achieved. Sites are groove floor, wall midpoint and plateau centre, with 3 tilts each. Heights are measured from the local surface. Raw rows: `data/adsorption-scan-ito-groove-hydroxylation.json`.
+
+Median E_int (kcal/mol) over 3 placements; the two numbers are Me-4PACz / MeO-2PACz:
+
+| Site | 0% OH | 25% OH | 100% (sat.) OH |
+|---|---|---|---|
+| Groove floor | −92 / −63 | −62 / −49 | −88 / −51 |
+| Groove wall | −38 / −35 | −17 / −16 | −17 / −19 |
+| Plateau | −54 / −43 | −8 / −4 | +5 / −2 |
+
+- **Hydroxylation removes plateau binding** (from about −50 to about 0). On the bare slab, the plateau binding came from anchor O contacting exposed In (2–3 of 3 placements).
+- **The groove floor stays strongly binding at every level.** At 25% it does so with no anchor–cation contacts at all. The concave floor encloses the molecule, so dispersion and electrostatics act from several sides. This is a geometric effect, not an anchoring one.
+- **Within this model, the groove/plateau preference therefore grows with hydroxylation.** That is consistent with the hypothesis that SAMs accumulate in corrugations.
+- **Caveats:**
+  - only 3 local minimizations per cell;
+  - the floor sites sit on ideal, unrelaxed trilayer steps;
+  - these are classical physisorption energies, not binding energies.
+
+  The MD pilots on the same surfaces, with groove/plateau densities, are the real test.
