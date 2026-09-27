@@ -11,9 +11,13 @@ path = "inputs/ito/surfaces/in2o3-111-oh"
 [forcefield]
 surface_parameter_set = "uff-cation/clayff-anion"
 
+[box]
+# Lowered from the slab file default (200 A) to shrink the PPPM grid.
+zhi = 125.0
+
 [packing]
 gap = 8.0
-height = 60.0
+height = 50.0
 lateral_inset = 1.0
 
 [random]
@@ -22,14 +26,15 @@ velocity_seed = 101
 
 [protocol]
 temperature = 300.0
-timestep = 0.5
-deposition_steps = 200000
+timestep = 1.0
+shake = true
+deposition_steps = 300000
 hold_steps = 200000
 release_steps = 100000
-relax_steps = 200000
+relax_steps = 300000
 wall_clearance = 30.0
-release_height = 60.0
-dump_every = 2000
+release_height = 40.0
+dump_every = 5000
 
 [[molecules]]
 slug = "me-4pacz"

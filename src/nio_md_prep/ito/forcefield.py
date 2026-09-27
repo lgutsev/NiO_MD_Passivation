@@ -60,6 +60,7 @@ improper_style  cvff
 pair_style      lj/cut/coul/long 10.0 8.0
 pair_modify     mix geometric
 kspace_style    pppm 1e-4
-kspace_modify   slab 3.0
+# ad differentiation: ~2x cheaper than ik for this rigid-slab geometry (measured)
+kspace_modify   slab 3.0 diff ad
 special_bonds   amber
 """

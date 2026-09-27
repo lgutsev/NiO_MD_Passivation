@@ -34,6 +34,8 @@ DEFAULTS = {
     "release_height": 60.0,
     "dump_every": 1000,
     "tdamp": 100.0,
+    # SHAKE on ligand X-H bonds; applied to dynamics only (never to minimization).
+    "shake": False,
 }
 
 
@@ -42,7 +44,7 @@ def _strip_pair_style(line: str) -> str:
     return re.sub(r"^(pair_coeff\s+\d+\s+\d+\s+)lj/cut/coul/long\s+", r"\1", line)
 
 
-def _init(source: str) -> str:
+def _init(source: str, shake: str = "") -> str:
     return f"""boundary p p f
 processors * * 1
 units real
@@ -60,10 +62,11 @@ thermo_style custom step c_tmobile pe ke etotal evdwl ecoul elong fnorm fmax
 thermo_modify temp tmobile
 fix freeze slab setforce 0.0 0.0 0.0
 velocity slab set 0.0 0.0 0.0
-"""
+{shake}"""
 
 
-def _stage_inputs(p: dict, surface_top: float, zhi: float, velocity_seed: int, deposit_zstart: float) -> dict[str, str]:
+def _stage_inputs(p: dict, surface_top: float, zhi: float, velocity_seed: int, deposit_zstart: float,
+                  shake_bond_types: list[int] | None = None) -> dict[str, str]:
     t = float(p["temperature"]); dt = float(p["timestep"])
     zend = surface_top + float(p["wall_clearance"])
     zrel = zend + float(p["release_height"])
@@ -71,6 +74,11 @@ def _stage_inputs(p: dict, surface_top: float, zhi: float, velocity_seed: int, d
         raise ValueError("release wall would leave the box; raise zhi")
     ns, nh, nr, nx = (int(p[k]) for k in ("deposition_steps", "hold_steps", "release_steps", "relax_steps"))
     dump = int(p["dump_every"]); tdamp = float(p["tdamp"])
+    shake = ""
+    if p.get("shake"):
+        if not shake_bond_types:
+            raise ValueError("shake requested but no ligand X-H bond types were found")
+        shake = f"fix constrain mobile shake 0.0001 20 0 b {' '.join(map(str, shake_bond_types))}\n"
     deposit = f"""# ITO pilot: minimization + moving-wall deposition (rigid slab, NVT ligands)
 {_init('topology_output.lmp')}fix walllo mobile wall/lj93 zlo EDGE 1.0 1.0 2.5 units box
 min_style sd
@@ -82,7 +90,7 @@ minimize 0.0 1.0 20000 200000
 print "optimization pe=$(pe) fnorm=$(fnorm) fmax=$(fmax)" file optimization-summary.txt screen yes
 write_data optimized.data nocoeff
 reset_timestep 0
-variable zstart equal {deposit_zstart:.4f}
+{shake}variable zstart equal {deposit_zstart:.4f}
 variable zend equal {zend:.4f}
 variable zwall equal "v_zstart-(v_zstart-v_zend)*(step/{ns}.0)"
 velocity mobile create {t} {velocity_seed} mom yes rot yes dist gaussian
@@ -97,7 +105,7 @@ undump trajectory
 write_data deposited.data nocoeff
 """
     hold = f"""# ITO pilot: compressed-film hold at the deposition endpoint
-{_init('deposited.data')}fix walllo mobile wall/lj93 zlo EDGE 1.0 1.0 2.5 units box
+{_init('deposited.data', shake)}fix walllo mobile wall/lj93 zlo EDGE 1.0 1.0 2.5 units box
 fix wall mobile wall/lj126 zhi {zend:.4f} 1.0 1.0 2.5 units box
 fix ensemble mobile nvt temp {t} {t} {tdamp}
 dump trajectory all custom {dump} hold.lammpstrj id mol type q x y z
@@ -108,7 +116,7 @@ undump trajectory
 write_data held.data nocoeff
 """
     relax = f"""# ITO pilot: gradual wall release then relaxed-film hold
-{_init('held.data')}fix walllo mobile wall/lj93 zlo EDGE 1.0 1.0 2.5 units box
+{_init('held.data', shake)}fix walllo mobile wall/lj93 zlo EDGE 1.0 1.0 2.5 units box
 reset_timestep 0
 variable zwall equal "{zend:.4f}+({zrel:.4f}-{zend:.4f})*(step/{nr}.0)"
 fix wall mobile wall/lj126 zhi v_zwall 1.0 1.0 2.5 units box
@@ -162,6 +170,7 @@ def build_pilot(study_path: Path, output: Path, packmol_seed: int | None = None,
     surface = parse(surface_path)
     lx = surface.bounds["x"][1] - surface.bounds["x"][0]; ly = surface.bounds["y"][1] - surface.bounds["y"][0]
     zlo, zhi = surface.bounds["z"]
+    zhi = float(cfg.get("box", {}).get("zhi", zhi))
     top = float(smanifest["z_top_atom_angstrom"])
     pk = cfg.get("packing", {})
     z0 = top + float(pk.get("gap", 8.0)); z1 = z0 + float(pk.get("height", 60.0))
@@ -214,6 +223,13 @@ def build_pilot(study_path: Path, output: Path, packmol_seed: int | None = None,
     manifest_out["surface"] = {"component": smanifest["model_id"], "atom_ids": [ids["atom"] + 1, ids["atom"] + sinc["atom"]],
                                "molecule_ids": [0, 0], "label_to_type": label_to_type, "charge": charge(surface)}
     result.bounds = deepcopy(surface.bounds)
+    result.bounds["z"] = (zlo, zhi)
+    if max(float(a.fields[6]) for a in result.sections["Atoms"]) > zhi - 5.0:
+        raise ValueError(f"packed atoms reach within 5 A of box zhi={zhi}")
+    masses = {int(r.fields[0]): float(r.fields[1]) for r in result.sections["Masses"]}
+    atom_type = {int(a.fields[0]): int(a.fields[2]) for a in result.sections["Atoms"]}
+    shake_types = sorted({int(b.fields[1]) for b in result.sections.get("Bonds", [])
+                          if any(abs(masses[atom_type[int(i)]] - 1.008) < 0.01 for i in b.fields[2:4])})
     topo = deepcopy(result)
     for sec in ("Pair Coeffs", "Bond Coeffs", "Angle Coeffs", "Dihedral Coeffs", "Improper Coeffs"):
         topo.sections.pop(sec, None)
@@ -224,7 +240,7 @@ def build_pilot(study_path: Path, output: Path, packmol_seed: int | None = None,
     p = DEFAULTS | cfg.get("protocol", {})
     ligand_zmax = max(float(a.fields[6]) for a in result.sections["Atoms"] if int(a.fields[1]) > 0)
     zstart = ligand_zmax + 4.0
-    stages = _stage_inputs(p, top, zhi, vseed, zstart)
+    stages = _stage_inputs(p, top, zhi, vseed, zstart, shake_types)
     for name in ("deposition", "hold", "relax"):
         (output / f"{name}.in").write_text(stages[name], encoding="utf-8")
     min_sep = _minimum_ligand_slab_distance(result, lx, ly)
@@ -235,7 +251,7 @@ def build_pilot(study_path: Path, output: Path, packmol_seed: int | None = None,
                       "area_nm2": smanifest["area_nm2"], "z_top_atom_angstrom": top},
         "surface_parameter_set": pset, "surface_parameter_sources": PARAMETER_SETS[pset]["sources"],
         "packing_region": region, "areal_dose_molecules_per_nm2": round(sum(t["count"] for t in templates) / area, 4),
-        "protocol": {k: p[k] for k in DEFAULTS}, "deposition_wall": {"zstart": zstart, "zend": stages["_zend"], "release": stages["_zrel"]},
+        "protocol": {k: p[k] for k in DEFAULTS}, "shake_bond_types": shake_types if p.get("shake") else [], "deposition_wall": {"zstart": zstart, "zend": stages["_zend"], "release": stages["_zrel"]},
         "total_charge": charge(result), "counts": {s.lower(): result.count(s) for s in ("Atoms", "Bonds", "Angles", "Dihedrals", "Impropers")},
         "box": result.bounds, "minimum_ligand_slab_distance_angstrom": round(min_sep, 4),
         "model_scope": "classical-ff: rigid slab, fixed charges, protonated neutral phosphonic acids; physisorption/H-bonding only",

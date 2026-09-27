@@ -1,0 +1,117 @@
+"""ITO extension: slab construction invariants, force-field text, and analysis helpers."""
+from __future__ import annotations
+
+import json
+import math
+
+import numpy as np
+import pytest
+
+pytest.importorskip("ase")
+
+from nio_md_prep.ito import substrate as sub
+from nio_md_prep.ito.assemble import _stage_inputs, _strip_pair_style
+from nio_md_prep.ito.forcefield import PARAMETER_SETS, surface_pair_lines
+
+
+def _slab(nx=1, ny=1, trilayers=4):
+    return sub.build_slab(nx, ny, trilayers)
+
+
+def test_bixbyite_cell_is_in32o48_with_sixfold_indium():
+    symbols, pos, lengths = sub.oriented_cell()
+    assert symbols.count("In") == 192 and symbols.count("O") == 288 and symbols.count("X") == 96
+    assert np.allclose(lengths, [10.117 * math.sqrt(2), 10.117 * math.sqrt(6), 10.117 * math.sqrt(3)], atol=1e-6)
+
+
+@pytest.mark.parametrize("trilayers", [2, 3, 6])
+def test_slab_is_stoichiometric_neutral_and_dipole_free(trilayers):
+    slab, _ = _slab(1, 1, trilayers)
+    assert slab.count("In") == 32 * trilayers and slab.count("O") == 48 * trilayers
+    q = sub.charges(slab, 0.525, 0.425)
+    assert abs(q.sum()) < 1e-9
+    assert abs(sub._dipole_per_area(slab, q)) < 1e-9
+    if trilayers < 3:
+        return  # no bulk-like interior to check
+    cn, _ = sub.coordination(slab)
+    z = slab.positions[:, 2]
+    interior = (z > z.min() + 3.0) & (z < z.max() - 3.0)
+    lab = np.array(slab.labels)
+    assert set(cn[interior & (lab == "In")]) == {6}
+    assert set(cn[interior & (lab == "O")]) == {4}
+
+
+def test_top_face_has_12_in5c_and_12_o3c_per_primitive_cell():
+    slab, _ = _slab(1, 1, 3)
+    cn, _ = sub.coordination(slab)
+    z = slab.positions[:, 2]; top = z > z.mean(); lab = np.array(slab.labels)
+    # Orthorhombic cell = two primitive (111) surface cells.
+    assert int(((lab == "In") & (cn == 5) & top).sum()) == 24
+    assert int(((lab == "O") & (cn == 3) & top).sum()) == 24
+
+
+def test_hydroxylation_and_doping_stay_neutral_and_deterministic():
+    runs = []
+    for _ in range(2):
+        slab, sites = _slab(2, 1, 4)
+        doping = sub.dope_sn(slab, sites, 0.09, seed=5)
+        hyd = sub.hydroxylate(slab, 6, seed=3)
+        q = sub.charges(slab, 0.525, 0.425)
+        assert abs(q.sum()) < 1e-9
+        assert slab.count("Hh") == 12 and slab.count("Oh") == 12
+        assert slab.count("Sn") == 2 * doping["clusters"]
+        assert hyd["min_new_atom_to_slab_nonbonded_angstrom"] > 1.5
+        runs.append((list(slab.labels), slab.positions.copy()))
+    assert runs[0][0] == runs[1][0] and np.array_equal(runs[0][1], runs[1][1])
+
+
+def test_clayff_charge_pattern():
+    slab, _ = _slab(1, 1, 2)
+    sub.hydroxylate(slab, 2, seed=1)
+    q = sub.charges(slab, 0.525, 0.425)
+    by = {lab: round(float(q[slab.labels.index(lab)]), 6) for lab in set(slab.labels)}
+    assert by == {"In": 1.575, "O": -1.05, "Oh": -0.95, "Hh": 0.425}
+
+
+def test_committed_models_match_their_manifests(tmp_path):
+    from nio_md_prep.config import ROOT
+    for model in ("in2o3-111-bare", "in2o3-111-oh", "ito-111-oh"):
+        folder = ROOT / "inputs" / "ito" / "surfaces" / model
+        man = sub.build_from_model(folder / "model.toml", tmp_path / model)
+        committed = json.loads((folder / "surface_manifest.json").read_text(encoding="utf-8"))
+        assert man["surface_lmp_sha256"] == committed["surface_lmp_sha256"]
+        assert (tmp_path / model / "surface.lmp").read_bytes() == (folder / "surface.lmp").read_bytes()
+
+
+def test_surface_pair_lines_cover_every_label_and_set():
+    ids = {"In": 10, "Sn": 11, "O": 12, "Oh": 13, "Hh": 14}
+    for name in PARAMETER_SETS:
+        lines = surface_pair_lines(ids, name)
+        assert [int(l.split()[1]) for l in lines] == [10, 11, 12, 13, 14]
+        assert all("lj/cut/coul/long" not in l for l in lines)
+
+
+def test_strip_pair_style_only_touches_pair_coeff():
+    assert _strip_pair_style("pair_coeff 3 3 lj/cut/coul/long 0.2 3.7 # x") == "pair_coeff 3 3 0.2 3.7 # x"
+    assert _strip_pair_style("dihedral_coeff 3 charmm 0.5 0 3 0.0") == "dihedral_coeff 3 charmm 0.5 0 3 0.0"
+
+
+def test_stage_inputs_rigid_slab_nvt_and_shake():
+    p = {"temperature": 300.0, "timestep": 1.0, "deposition_steps": 10, "hold_steps": 10, "release_steps": 10,
+         "relax_steps": 10, "wall_clearance": 30.0, "release_height": 40.0, "dump_every": 5, "tdamp": 100.0, "shake": True}
+    st = _stage_inputs(p, 19.0, 125.0, 7, 80.0, [2, 5])
+    for name in ("deposition", "hold", "relax"):
+        text = st[name]
+        assert "neigh_modify exclude group slab slab" in text and "fix freeze slab setforce" in text
+        assert "npt" not in text and "fix ensemble mobile nvt" in text
+        assert "fix constrain mobile shake 0.0001 20 0 b 2 5" in text
+    dep = st["deposition"]
+    assert dep.index("minimize") < dep.index("fix constrain")
+    with pytest.raises(ValueError):
+        _stage_inputs(p | {"release_height": 200.0}, 19.0, 125.0, 7, 80.0, [2])
+
+
+def test_periodic_clusters_merge_across_the_boundary():
+    from nio_md_prep.ito.analysis import _periodic_clusters
+    xy = np.array([[0.5, 5.0], [9.6, 5.0], [5.0, 5.0]])
+    assert _periodic_clusters(xy, (10.0, 10.0), 1.5) == [2, 1]
