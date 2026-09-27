@@ -6,13 +6,17 @@ Structural, classical-FF observables only (see ``analysis/model_scope.py``):
   anchor H-bonds (acidic H to slab O, or phosphonate O to slab hydroxyl H,
   shorter than ``hbond_cutoff``).  "Contact" means proximity in a
   nonreactive model, never a P-O-In bond;
-* P height above the rigid slab's top atom, and tilt of the P -> core vector
+* P height above the *local* rigid-slab surface (max slab z within 2.5 A
+  laterally; on flat slabs this equals the height above the top atom), tilt of the P -> core vector
   from the surface normal (core = farthest 30 % of C/N atoms, as in
   ``checks.molecule_frame``);
 * clustering: periodic single-linkage of P heads of surface-resident
   molecules in x/y (``cluster_cutoff``), plus the fraction of molecules
   stranded above the first layer;
-* coverage: delegated unchanged to ``analysis.coverage.analyze_coverage``.
+* coverage: delegated unchanged to ``analysis.coverage.analyze_coverage``;
+* corrugated slabs: surface-resident molecules are binned into groove floor,
+  groove walls and plateau (from the slab manifest's ``corrugation`` block),
+  giving projected-area densities and the groove/plateau enrichment ratio.
 """
 from __future__ import annotations
 
@@ -23,7 +27,7 @@ from pathlib import Path
 import numpy as np
 
 from ..analysis.coverage import analyze_coverage, iter_dump_frames
-from ..config import molecule_manifest
+from ..config import ROOT, molecule_manifest
 from ..lammps import parse
 from .checks import molecule_frame
 
@@ -62,6 +66,41 @@ def _min_periodic(a: np.ndarray, b: np.ndarray, lengths) -> np.ndarray:
     return d
 
 
+def _local_surface_height(slab_xyz: np.ndarray, lengths, radius: float = 2.5, spacing: float = 0.5):
+    """Callable giving the max slab z within ``radius`` (periodic x/y) of a point."""
+    nx = max(1, int(round(lengths[0] / spacing))); ny = max(1, int(round(lengths[1] / spacing)))
+    grid = np.full((nx, ny), -np.inf)
+    ix = np.floor((slab_xyz[:, 0] % lengths[0]) / lengths[0] * nx).astype(int) % nx
+    iy = np.floor((slab_xyz[:, 1] % lengths[1]) / lengths[1] * ny).astype(int) % ny
+    np.maximum.at(grid, (ix, iy), slab_xyz[:, 2])
+    rx = int(np.ceil(radius / (lengths[0] / nx))); ry = int(np.ceil(radius / (lengths[1] / ny)))
+    local = np.full_like(grid, -np.inf)
+    for dx in range(-rx, rx + 1):
+        for dy in range(-ry, ry + 1):
+            if (dx * lengths[0] / nx) ** 2 + (dy * lengths[1] / ny) ** 2 <= radius ** 2:
+                local = np.maximum(local, np.roll(np.roll(grid, dx, axis=0), dy, axis=1))
+
+    def height(x: float, y: float) -> float:
+        return float(local[int(np.floor((x % lengths[0]) / lengths[0] * nx)) % nx, int(np.floor((y % lengths[1]) / lengths[1] * ny)) % ny])
+    return height
+
+
+def _groove_regions(corr: dict, lengths) -> dict:
+    """Projected groove floor / wall / plateau bands (groove runs along x, profile along y)."""
+    half = corr["depth_angstrom"] / corr["wall_slope"]; floor = corr["step_run_angstrom"] / 2.0
+    ly = lengths[1]
+    return {"center_y": corr["groove_center_y_angstrom"], "floor_half_width": floor, "opening_half_width": half,
+            "area_nm2": {"groove_floor": 2 * floor * lengths[0] / 100.0, "groove_wall": 2 * (half - floor) * lengths[0] / 100.0,
+                         "plateau": (ly - 2 * half) * lengths[0] / 100.0}}
+
+
+def _region(y: float, regions: dict, ly: float) -> str:
+    dy = y - regions["center_y"]; dy -= ly * round(dy / ly); dy = abs(dy)
+    if dy < regions["floor_half_width"]: return "groove_floor"
+    if dy < regions["opening_half_width"]: return "groove_wall"
+    return "plateau"
+
+
 def _find_summary_values(node, keys: set[str], out: dict, prefix: str = "") -> None:
     if isinstance(node, dict):
         for k, v in node.items():
@@ -91,6 +130,13 @@ def analyze(build_directory: Path, trajectory: Path, output: Path | None = None,
     if not frames:
         raise ValueError(f"{trajectory}: no frames")
     frames = frames[-last_frames:] if last_frames else frames
+    smanifest_path = ROOT / man["substrate"]["path"] / "surface_manifest.json"
+    corrugation = json.loads(smanifest_path.read_text(encoding="utf-8")).get("corrugation") if smanifest_path.is_file() else None
+    f0 = frames[0]; m0 = f0.molecule_ids <= 0
+    lengths0 = (f0.bounds[0][1] - f0.bounds[0][0], f0.bounds[1][1] - f0.bounds[1][0])
+    # The slab is rigid, so one height map from the first analyzed frame serves every frame.
+    local_height = _local_surface_height(np.column_stack([f0.x[m0], f0.y[m0], f0.z[m0]]), lengths0)
+    regions = _groove_regions(corrugation, lengths0) if corrugation else None
     per_frame = []
     last_molecules = []
     for f in frames:
@@ -122,7 +168,8 @@ def analyze(build_directory: Path, trajectory: Path, output: Path | None = None,
                 d_cat = _min_periodic(ao, cations, lengths)
                 hb = int((_min_periodic(ah, slab_o, lengths) < hbond_cutoff).sum()) + int((_min_periodic(ao, slab_h, lengths) < hbond_cutoff).sum())
                 mols.append({"component": c["name"], "molecule": c["mol_lo"] + m, "p_x": float(p[0] % lengths[0]), "p_y": float(p[1] % lengths[1]),
-                             "p_height": float(p[2] - top), "tilt_deg": float(math.degrees(math.acos(max(-1, min(1, v[2] / np.linalg.norm(v)))))),
+                             "p_height": float(p[2] - local_height(p[0], p[1])), "p_height_above_top_atom": float(p[2] - top),
+                             "region": _region(p[1] % lengths[1], regions, lengths[1]) if regions else "flat", "tilt_deg": float(math.degrees(math.acos(max(-1, min(1, v[2] / np.linalg.norm(v)))))),
                              "min_anchor_o_cation": float(d_cat.min()), "cation_contacts": int((d_cat < cation_cutoff).sum()), "anchor_hbonds": hb})
         surf = [m for m in mols if m["p_height"] <= surface_layer_height]
         sizes = _periodic_clusters(np.array([[m["p_x"], m["p_y"]] for m in surf]), lengths, cluster_cutoff) if surf else []
@@ -134,20 +181,35 @@ def analyze(build_directory: Path, trajectory: Path, output: Path | None = None,
                "tilt_median_surface_resident": float(np.median([m["tilt_deg"] for m in surf])) if surf else None,
                "cluster_count": len(sizes), "largest_cluster_fraction_of_surface": (sizes[0] / len(surf)) if surf else None,
                "surface_density_nm2": len(surf) / (lengths[0] * lengths[1] / 100.0)}
+        if regions:
+            dens = {}
+            for reg, area in regions["area_nm2"].items():
+                n_reg = sum(1 for m in surf if m["region"] == reg)
+                row[f"{reg}_surface_resident"] = n_reg
+                dens[reg] = n_reg / area if area > 0 else float("nan")
+                row[f"{reg}_density_nm2"] = dens[reg]
+            groove_area = regions["area_nm2"]["groove_floor"] + regions["area_nm2"]["groove_wall"]
+            groove_density = (row["groove_floor_surface_resident"] + row["groove_wall_surface_resident"]) / groove_area
+            row["groove_density_nm2"] = groove_density
+            row["groove_to_plateau_density_ratio"] = groove_density / dens["plateau"] if dens["plateau"] > 0 else None
+            for c in comps:
+                cs = [m for m in surf if m["component"] == c["name"]]
+                row[f"{c['name']}_groove_fraction_of_surface_resident"] = (
+                    sum(1 for m in cs if m["region"] != "plateau") / len(cs)) if cs else None
         for c in comps:
             cm = [m for m in mols if m["component"] == c["name"]]
             row[f"{c['name']}_surface_resident_fraction"] = float(np.mean([m["p_height"] <= surface_layer_height for m in cm]))
             row[f"{c['name']}_anchored_fraction"] = float(np.mean([(m["cation_contacts"] > 0) or (m["anchor_hbonds"] > 0) for m in cm]))
         per_frame.append(row)
         last_molecules = mols
-    keys = [k for k, v in per_frame[0].items() if isinstance(v, (int, float)) and k != "step"]
+    keys = sorted({k for r in per_frame for k, v in r.items() if isinstance(v, (int, float)) and not isinstance(v, bool) and k != "step"})
     summary = {"build_directory": str(build_directory), "trajectory": str(trajectory), "frames": len(per_frame),
+               "corrugation_regions": regions,
                "steps": [per_frame[0]["step"], per_frame[-1]["step"]],
                "parameters": {"cation_cutoff": cation_cutoff, "hbond_cutoff": hbond_cutoff,
                               "surface_layer_height": surface_layer_height, "cluster_cutoff": cluster_cutoff},
                "model_scope": man.get("model_scope"),
-               "mean": {k: float(np.mean([r[k] for r in per_frame if r[k] is not None])) for k in keys
-                        if any(r[k] is not None for r in per_frame)},
+               "mean": {k: float(np.mean([r[k] for r in per_frame if r.get(k) is not None])) for k in keys},
                "tilt_histogram_surface_resident_last_frame": np.histogram(
                    [m["tilt_deg"] for m in last_molecules if m["p_height"] <= surface_layer_height], bins=range(0, 181, 15))[0].tolist()}
     if run_coverage:

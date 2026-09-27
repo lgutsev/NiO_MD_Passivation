@@ -3,7 +3,7 @@
 #SBATCH -N 1
 #SBATCH -n 1
 #SBATCH -c 1
-#SBATCH -t 02:00:00
+#SBATCH -t 06:00:00
 #SBATCH -A loni_perovsk27
 #SBATCH -J ito.build
 #SBATCH -o ito.build.%j.out
@@ -24,7 +24,7 @@ for executable in python packmol lmp_mpi; do
 done
 echo "Commit: $(git rev-parse --short HEAD)"
 
-studies=(${STUDIES:-smoke-me-4pacz pilot-me-4pacz pilot-meo-2pacz-me-4pacz-1to1 pilot-me-4pacz-monolayer})
+studies=(${STUDIES:-smoke-me-4pacz smoke-me-4pacz-groove pilot-me-4pacz pilot-meo-2pacz-me-4pacz-1to1 pilot-me-4pacz-monolayer pilot-me-4pacz-groove pilot-meo-2pacz-me-4pacz-1to1-groove})
 seeds=(${SEEDS:-11 12 13})
 prepared_root="${PREPARED_ROOT:-prepared/ito}"
 

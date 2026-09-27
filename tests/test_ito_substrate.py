@@ -75,7 +75,7 @@ def test_clayff_charge_pattern():
 
 def test_committed_models_match_their_manifests(tmp_path):
     from nio_md_prep.config import ROOT
-    for model in ("in2o3-111-bare", "in2o3-111-oh", "ito-111-oh"):
+    for model in ("in2o3-111-bare", "in2o3-111-oh", "ito-111-oh", "in2o3-111-oh-groove"):
         folder = ROOT / "inputs" / "ito" / "surfaces" / model
         man = sub.build_from_model(folder / "model.toml", tmp_path / model)
         committed = json.loads((folder / "surface_manifest.json").read_text(encoding="utf-8"))
@@ -141,3 +141,47 @@ def test_energy_decomposition_vanishes_at_large_separation(tmp_path):
     e_slab = checks._energy_run(path, ff, ks, n, ns, False, delete="mol")[0]
     e_mol = checks._energy_run(path, ff, ks, n, ns, False, delete="slab")[0]
     assert abs(e_cx - e_slab - e_mol) < 0.05
+
+
+def test_groove_slab_is_neutral_with_nio_like_profile(tmp_path):
+    model = tmp_path / "model.toml"
+    model.write_text("\n".join([
+        '[model]', 'id = "g"',
+        '[slab]', 'nx = 3', 'ny = 1', 'trilayers = 8', 'zlo = -5.0', 'zhi = 80.0',
+        '[corrugation]', 'depth_trilayers = 5', 'wall_slope = 1.0', 'profile_axis = "x"',
+        '[charges]', 'scale = 0.525', 'hydroxyl_h = 0.425',
+        '[hydroxylation]', 'pairs_per_primitive_cell = 3', 'seed = 1', '']))
+    man = sub.build_from_model(model, tmp_path)
+    assert abs(man["total_charge"]) < 1e-9
+    c = man["corrugation"]
+    assert c["profile_axis"] == "y" and abs(c["depth_angstrom"] - 14.6026) < 1e-3
+    assert man["box_angstrom"]["y"][1] == pytest.approx(3 * 10.117 * math.sqrt(2), abs=1e-6)
+    assert man["hydroxylation"]["min_new_atom_nonbonded_angstrom"] >= 1.5
+    # Lattice-only top heights: plateau minus floor ~ the 5-trilayer depth, minimum at the groove centre.
+    from nio_md_prep.lammps import parse
+    data = parse(tmp_path / "surface.lmp")
+    lattice = {man["type_ids"]["In"], man["type_ids"]["O"]}
+    xyz = np.array([[float(a.fields[4]), float(a.fields[5]), float(a.fields[6])] for a in data.sections["Atoms"] if int(a.fields[2]) in lattice])
+    ly = man["box_angstrom"]["y"][1]
+    tops = np.array([xyz[(xyz[:, 1] >= a) & (xyz[:, 1] < a + 2.0), 2].max() for a in np.arange(0, ly - 2.0, 2.0)])
+    centre = c["groove_center_y_angstrom"]
+    assert 13.0 < tops.max() - tops.min() < 16.5
+    assert abs(np.arange(0, ly - 2.0, 2.0)[np.argmin(tops)] + 1.0 - centre) < 3.0
+
+
+def test_groove_region_bands():
+    from nio_md_prep.ito.analysis import _groove_regions, _region
+    corr = {"depth_angstrom": 14.6, "wall_slope": 1.0, "step_run_angstrom": 2.92, "groove_center_y_angstrom": 21.0}
+    reg = _groove_regions(corr, (100.0, 42.0))
+    assert _region(21.5, reg, 42.0) == "groove_floor"
+    assert _region(30.0, reg, 42.0) == "groove_wall"
+    assert _region(40.0, reg, 42.0) == "plateau" and _region(1.0, reg, 42.0) == "plateau"
+    assert sum(reg["area_nm2"].values()) == pytest.approx(42.0)
+
+
+def test_local_surface_height_follows_a_step():
+    from nio_md_prep.ito.analysis import _local_surface_height
+    xs, ys = np.meshgrid(np.arange(0, 20, 1.0), np.arange(0, 20, 1.0))
+    z = np.where(ys < 10, 10.0, 5.0)
+    h = _local_surface_height(np.column_stack([xs.ravel(), ys.ravel(), z.ravel()]), (20.0, 20.0))
+    assert h(5.0, 4.0) == 10.0 and h(5.0, 15.0) == 5.0

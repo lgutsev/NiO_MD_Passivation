@@ -178,7 +178,8 @@ MIN_H_CONTACT = 1.5     # new H to any atom other than its own O
 MIN_H_CATION = 2.5      # new H to any In/Sn (rejects acute M-O-H angles)
 
 
-def hydroxylate(slab: Slab, pairs: int, seed: int) -> dict:
+def hydroxylate(slab: Slab, pairs: int, seed: int, exposed_z_min: float | None = None,
+                cation_cn: tuple[int, ...] = (5,), anion_cn: tuple[int, ...] = (3,)) -> dict:
     """Dissociate ``pairs`` waters on the top surface: In5c-OH + O3c-H.
 
     The terminal O goes along the missing-octahedron direction of an In5c.
@@ -195,9 +196,11 @@ def hydroxylate(slab: Slab, pairs: int, seed: int) -> dict:
     cn, nbr = coordination(slab)
     pos = slab.positions
     L = slab.lengths
-    z_mid = 0.5 * (pos[:, 2].min() + pos[:, 2].max())
-    top_in = [i for i, s in enumerate(slab.labels) if s == "In" and cn[i] == 5 and pos[i, 2] > z_mid]
-    top_o = [i for i, s in enumerate(slab.labels) if s == "O" and cn[i] == 3 and pos[i, 2] > z_mid]
+    # Flat slabs: the upper half.  Corrugated slabs pass a lower bound that keeps
+    # groove floors and step walls while excluding the bottom face.
+    z_mid = 0.5 * (pos[:, 2].min() + pos[:, 2].max()) if exposed_z_min is None else exposed_z_min
+    top_in = [i for i, s in enumerate(slab.labels) if s == "In" and cn[i] in cation_cn and pos[i, 2] > z_mid]
+    top_o = [i for i, s in enumerate(slab.labels) if s == "O" and cn[i] in anion_cn and pos[i, 2] > z_mid]
     lattice_o = [i for i, s in enumerate(slab.labels) if s == "O"]
     z_hat = np.array([0.0, 0.0, 1.0])
     terminal, excluded = {}, []
@@ -265,6 +268,97 @@ def hydroxylate(slab: Slab, pairs: int, seed: int) -> dict:
             "top_o3c_available": len(top_o), "seed": seed,
             "site_selection": "seeded periodic farthest-point over clash-free top In5c; O3c >= 2.5 A from terminal O; every H >= 1.5 A from all atoms and >= 2.5 A from cations",
             "min_new_atom_nonbonded_angstrom": round(min_sep, 4), "sites": records}
+
+
+def groove_surface_height(coord: np.ndarray, period: float, center: float, top: float, depth: float, slope: float) -> np.ndarray:
+    """Height of an ideal symmetric V-groove surface (periodic along the profile axis)."""
+    d = coord - center
+    d -= period * np.round(d / period)
+    return top - np.clip(depth - slope * np.abs(d), 0.0, depth)
+
+
+def carve_groove(slab: Slab, depth_trilayers: int, slope: float = 1.0, axis: int = 0,
+                 center_fraction: float = 0.5, sites: np.ndarray | None = None) -> tuple[dict, np.ndarray | None]:
+    """Cut a V-groove running perpendicular to ``axis`` out of a flat (111) slab.
+
+    The walls are staircases of whole O-In-O trilayers: at profile coordinate u
+    the number of removed top trilayers is round((depth - slope*|u-u0|)/d), so
+    each step is one neutral trilayer (2.92 A) high, mirroring the monatomic
+    2.085 A steps of the corrugated NiO(110) slab.  Lateral cuts through a
+    trilayer at the step edges can leave a non-stoichiometric rim, so dangling
+    atoms (O with CN<=1, cations with CN<=2) are removed and neutrality is then
+    restored by removing the lowest-coordinated exposed rim atoms; every removal
+    is recorded.
+    """
+    d = trilayer_spacing()
+    period = slab.lengths[axis]
+    center = center_fraction * period
+    z = slab.positions[:, 2]
+    n_tri = int(round((z.max() - z.min()) / d + 0.5))
+    if depth_trilayers >= n_tri - 2:
+        raise ValueError("groove must leave at least two full trilayers under its floor")
+    depth = depth_trilayers * d
+    u = slab.positions[:, axis]
+    du = u - center; du -= period * np.round(du / period)
+    removed_layers = np.rint(np.clip(depth - slope * np.abs(du), 0.0, depth) / d).astype(int)
+    layer = np.floor(z / d + 1e-9).astype(int)
+    keep = layer < (n_tri - removed_layers)
+    carved = int((~keep).sum())
+    slab.labels = [s for s, k in zip(slab.labels, keep) if k]
+    slab.positions = slab.positions[keep]
+    floor_z = (n_tri - depth_trilayers) * d
+    exposed_z_min = 2.0 * d
+    # Dangling atoms, then charge-neutralizing rim removals.
+    removals = []
+    formal = {"In": 3, "Sn": 4, "O": -2}
+    for _ in range(10000):
+        cn, nbr = coordination(slab)
+        lab = slab.labels; zz = slab.positions[:, 2]
+        dangling = [i for i, s in enumerate(lab) if zz[i] > exposed_z_min and ((s == "O" and cn[i] <= 1) or (s in ("In", "Sn") and cn[i] <= 2))]
+        q = sum(formal[s] for s in lab)
+        if dangling:
+            pick = dangling[0]; why = "dangling"
+        elif q != 0:
+            want = "O" if q < 0 else "In"
+            cands = [i for i, s in enumerate(lab) if s == want and zz[i] > exposed_z_min]
+            pick = min(cands, key=lambda i: (cn[i], -zz[i], i)); why = "neutralize"
+        else:
+            break
+        removals.append({"label": lab[pick], "cn": int(cn[pick]), "reason": why,
+                         "position": [round(float(x), 4) for x in slab.positions[pick]]})
+        del slab.labels[pick]
+        slab.positions = np.delete(slab.positions, pick, axis=0)
+    else:
+        raise RuntimeError("rim neutralization did not converge")
+    kept_sites = None
+    if sites is not None and len(sites):
+        # Interstitial sites must stay at least one trilayer below the local carved surface.
+        su = sites[:, axis] - center; su -= period * np.round(su / period)
+        s_removed = np.rint(np.clip(depth - slope * np.abs(su), 0.0, depth) / d).astype(int)
+        s_top = (n_tri - s_removed) * d
+        kept_sites = sites[sites[:, 2] < s_top - d]
+    record = {
+        "profile_axis_before_rotation": "xy"[axis], "period_angstrom": round(period, 6),
+        "center_fraction": center_fraction, "depth_trilayers": depth_trilayers,
+        "depth_angstrom": round(depth, 6), "wall_slope": slope,
+        "step_height_angstrom": round(d, 6), "step_run_angstrom": round(d / slope, 6),
+        "slab_trilayers": n_tri, "trilayers_under_floor": n_tri - depth_trilayers,
+        "floor_top_z_nominal": round(floor_z, 6), "plateau_top_z_nominal": round(n_tri * d, 6),
+        "opening_width_nominal_angstrom": round(2 * depth / slope, 6),
+        "atoms_carved": carved, "rim_removals": removals, "exposed_z_min": round(exposed_z_min, 6),
+    }
+    return record, kept_sites
+
+
+def rotate_quarter(slab: Slab, sites: np.ndarray | None = None) -> np.ndarray | None:
+    """Rotate by +90 deg about z: (x, y) -> (y, Lx - x); keeps handedness."""
+    lx, ly = slab.lengths
+    p = slab.positions.copy()
+    slab.positions = np.column_stack([p[:, 1] % ly, (lx - p[:, 0]) % lx, p[:, 2]])
+    slab.lengths = (ly, lx)
+    if sites is None:
+        return None
+    return np.column_stack([sites[:, 1] % ly, (lx - sites[:, 0]) % lx, sites[:, 2]])
 
 
 def dope_sn(slab: Slab, sites: np.ndarray, target_fraction: float, seed: int, min_separation: float = 5.0) -> dict:
@@ -365,9 +459,24 @@ def build_from_model(model_path: Path, output: Path) -> dict:
     z0 = slab.positions[:, 2]
     bare_in5c = int(sum(1 for i, x in enumerate(slab.labels) if x == "In" and cn0[i] == 5 and z0[i] > z0.mean()))
     bare_o3c = int(sum(1 for i, x in enumerate(slab.labels) if x == "O" and cn0[i] == 3 and z0[i] > z0.mean()))
+    corr = model.get("corrugation")
+    corrugation = None
+    hyd_kwargs: dict = {}
+    if corr:
+        corrugation, sites = carve_groove(slab, int(corr["depth_trilayers"]), float(corr.get("wall_slope", 1.0)),
+                                          {"x": 0, "y": 1}[corr.get("profile_axis", "x")],
+                                          float(corr.get("center_fraction", 0.5)), sites)
+        # Groove floors and walls count as exposed; the bottom face does not.  Step-edge
+        # cations can be fourfold, step-edge anions twofold.
+        hyd_kwargs = {"exposed_z_min": corrugation["exposed_z_min"], "cation_cn": (4, 5), "anion_cn": (2, 3)}
     doping = dope_sn(slab, sites, float(dop.get("sn_fraction", 0.0)), int(dop.get("seed", 1)))
     pairs = int(round(float(h.get("pairs_per_primitive_cell", 0.0)) * primitive_cells))
-    hydroxyl = hydroxylate(slab, pairs, int(h.get("seed", 1)))
+    hydroxyl = hydroxylate(slab, pairs, int(h.get("seed", 1)), **hyd_kwargs)
+    if corr and corr.get("rotate_groove_along_x", True):
+        # Match the NiO slab: groove along x, profile along y.
+        rotate_quarter(slab)
+        corrugation["profile_axis"] = "y"
+        corrugation["groove_center_y_angstrom"] = round((1.0 - corrugation["center_fraction"]) * slab.lengths[1], 6)
     q = charges(slab, float(ch["scale"]), float(ch.get("hydroxyl_h", 0.425)))
     total = float(q.sum())
     if abs(total) > 1e-6:
@@ -410,6 +519,7 @@ def build_from_model(model_path: Path, output: Path) -> dict:
                         "cation_5c_after_modification": top_in5c},
         "hydroxylation": hydroxyl | {"oh_groups_per_nm2": round(2 * hydroxyl["pairs"] / area_nm2, 4)},
         "doping": doping,
+        "corrugation": corrugation,
         "limitations": [
             "geometric (unrelaxed) hydroxyl and interstitial placement; DFT relaxation not performed",
             "fixed point charges; no free carriers, polarization, or charge transfer",

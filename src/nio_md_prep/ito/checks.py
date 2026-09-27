@@ -177,7 +177,10 @@ def _energy_run(data_path: Path, ff_lines: list[str], kspace: str, n_mol: int, n
 
 def _placements(sc: dict) -> list[dict]:
     rng = np.random.default_rng(int(sc.get("seed", 1)))
-    sites = [(float(rng.uniform()), float(rng.uniform())) for _ in range(int(sc["lateral_positions"]))]
+    if "lateral_sites" in sc:  # explicit fractional (fx, fy) sites, e.g. groove floor / wall / plateau
+        sites = [(float(a), float(b)) for a, b in sc["lateral_sites"]]
+    else:
+        sites = [(float(rng.uniform()), float(rng.uniform())) for _ in range(int(sc["lateral_positions"]))]
     out = []
     for k, (fx, fy) in enumerate(sites):  # one lateral site shared by all tilts of that index
         for tilt in sc["tilts_deg"]:
@@ -215,9 +218,14 @@ def _scan_tag(job: tuple) -> list[dict]:
     tag = f"{sub}__{slug}__{pset.replace('/', '-')}"
     work = Path(output) / tag; work.mkdir(parents=True, exist_ok=True)
     rows: list[dict] = []; e_slab = None; refs: list[float] = []
+    local_ref = sc.get("floor_reference", "top") == "local"
+    if local_ref:
+        from .analysis import _local_surface_height
+        local_height = _local_surface_height(slab_xyz, lengths)
     for pl in _placements(sc):
-        coords = place(frame, (pl["fx"] * lengths[0], pl["fy"] * lengths[1]), top + float(sc.get("floor_gap", 2.5)),
-                       pl["tilt_deg"], pl["azimuth"], pl["spin"])
+        x0, y0 = pl["fx"] * lengths[0], pl["fy"] * lengths[1]
+        base = local_height(x0, y0) if local_ref else top
+        coords = place(frame, (x0, y0), base + float(sc.get("floor_gap", 2.5)), pl["tilt_deg"], pl["azimuth"], pl["spin"])
         system, old_to_new, lines = _system(slab, mol, coords, zhi)
         ff = lines + surface_pair_lines({lab: old_to_new[old] for lab, old in sman["type_ids"].items()}, pset)
         path = work / f"placement-{pl['index']:02d}.data"; write(system, path)
@@ -237,9 +245,14 @@ def _scan_tag(job: tuple) -> list[dict]:
         rows.append({"substrate": sub, "molecule": slug, "parameter_set": pset,
                      "index": pl["index"], "lateral": pl["lateral"], "initial_tilt_deg": pl["tilt_deg"],
                      "initial_xy_fraction": [round(pl["fx"], 4), round(pl["fy"], 4)], "quench_steps": quench,
+                     "placement_floor_reference_z": base,
                      "e_complex_initial": e0, "e_complex_min": e_cx, "e_slab": e_slab, "e_mol_at_complex_geometry": e_mfix,
                      "e_int_kcal_mol": e_cx - e_slab - e_mfix,
                      **_contacts(xyz_min, frame, slab_xyz, slab_labels, lengths, top)})
+        pz = xyz_min[frame["p"]].mean(axis=0)
+        if local_ref:
+            rows[-1]["p_height_above_local_surface_angstrom"] = float(pz[2] - local_height(pz[0], pz[1]))
+            rows[-1]["final_p_xy"] = [float(pz[0] % lengths[0]), float(pz[1] % lengths[1])]
         r = rows[-1]
         print(f"{tag} p{pl['index']:02d} tilt0={pl['tilt_deg']:>3.0f} E_int={r['e_int_kcal_mol']:8.2f} "
               f"tilt={r['tilt_deg']:5.1f} hb={r['anchor_hbonds_lt_2p5']} cat={r['anchor_o_cation_contacts_lt_3p25']}", flush=True)

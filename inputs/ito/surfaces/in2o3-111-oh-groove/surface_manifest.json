@@ -1,0 +1,1469 @@
+{
+  "model_id": "in2o3-111-oh-groove",
+  "description": "Corrugated hydroxylated In2O3(111): ITO analogue of inputs/surfaces/corrugated-nio-110 (one symmetric 45-degree V-groove per cell, 14.6 A deep, running along x)",
+  "model_toml_sha256": "ea589d121b7678997b033a3d8a63902c27cbd47d33b3d917b5bc94961908125d",
+  "surface_lmp_sha256": "5278cfe019727123057abf9e41c8fcf0f88eb3869090f9bf459f8d4eef1e2341",
+  "code_commit": "8c0aef34a2e1e8943f06051d5bc44c9a99f79c60",
+  "lattice": {
+    "a": 10.117,
+    "in_8b": [
+      0.25,
+      0.25,
+      0.25
+    ],
+    "in_24d_x": 0.4663,
+    "o_48e": [
+      0.3912,
+      0.1558,
+      0.3796
+    ],
+    "source": "Marezio, Acta Cryst. 20, 723 (1966), doi:10.1107/S0365110X66001749; coordinates from COD 2310009"
+  },
+  "orientation_vectors_cubic": [
+    [
+      1,
+      -1,
+      0
+    ],
+    [
+      1,
+      1,
+      -2
+    ],
+    [
+      1,
+      1,
+      1
+    ]
+  ],
+  "box_angstrom": {
+    "x": [
+      0.0,
+      123.90743863868707
+    ],
+    "y": [
+      0.0,
+      42.922795831585816
+    ],
+    "z": [
+      -5.0,
+      200.0
+    ]
+  },
+  "area_nm2": 53.184537,
+  "trilayers": 10,
+  "counts": {
+    "In": 3982,
+    "Sn": 0,
+    "O": 5883,
+    "Oh": 180,
+    "Hh": 180
+  },
+  "atom_count": 10225,
+  "type_ids": {
+    "In": 1,
+    "O": 2,
+    "Oh": 3,
+    "Hh": 4
+  },
+  "charges": {
+    "scheme": "clayff-scaled-formal",
+    "scale": 0.525,
+    "hydroxyl_h": 0.425,
+    "per_label": {
+      "In": 1.575,
+      "O": -1.05,
+      "Oh": -0.95,
+      "Hh": 0.425
+    }
+  },
+  "total_charge": 7.744915819785092e-13,
+  "dipole_z_e_per_angstrom": -0.002527142562222502,
+  "z_top_cation_angstrom": 28.138687,
+  "z_top_atom_angstrom": 30.980844,
+  "z_bottom_atom_angstrom": 0.625577,
+  "top_surface": {
+    "bare_in5c": 360,
+    "bare_o3c": 360,
+    "bare_in5c_per_nm2": 6.7689,
+    "cation_5c_after_modification": 223
+  },
+  "hydroxylation": {
+    "pairs": 90,
+    "top_in5c_available": 350,
+    "top_in5c_excluded_clash": [
+      {
+        "in_index": 546,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 3.0588
+      },
+      {
+        "in_index": 589,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 3.0588
+      },
+      {
+        "in_index": 593,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 2.6
+      },
+      {
+        "in_index": 594,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 3.0588
+      },
+      {
+        "in_index": 1235,
+        "terminal_o_to_lattice_o": 2.5986,
+        "terminal_h_to_cation": 1.7351
+      },
+      {
+        "in_index": 1293,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 3.0588
+      },
+      {
+        "in_index": 1336,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 3.0588
+      },
+      {
+        "in_index": 1340,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 2.6
+      },
+      {
+        "in_index": 1341,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 3.0588
+      },
+      {
+        "in_index": 1982,
+        "terminal_o_to_lattice_o": 2.5986,
+        "terminal_h_to_cation": 1.7351
+      },
+      {
+        "in_index": 2040,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 3.0588
+      },
+      {
+        "in_index": 2083,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 3.0588
+      },
+      {
+        "in_index": 2087,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 2.6
+      },
+      {
+        "in_index": 2088,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 3.0588
+      },
+      {
+        "in_index": 2729,
+        "terminal_o_to_lattice_o": 2.5986,
+        "terminal_h_to_cation": 1.7351
+      },
+      {
+        "in_index": 2787,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 3.0588
+      },
+      {
+        "in_index": 2830,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 3.0588
+      },
+      {
+        "in_index": 2834,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 2.6
+      },
+      {
+        "in_index": 2835,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 3.0588
+      },
+      {
+        "in_index": 3476,
+        "terminal_o_to_lattice_o": 2.5986,
+        "terminal_h_to_cation": 1.7351
+      },
+      {
+        "in_index": 3534,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 3.0588
+      },
+      {
+        "in_index": 3577,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 3.0588
+      },
+      {
+        "in_index": 3581,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 2.6
+      },
+      {
+        "in_index": 3582,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 3.0588
+      },
+      {
+        "in_index": 3894,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 1.8305
+      },
+      {
+        "in_index": 3910,
+        "terminal_o_to_lattice_o": 2.5986,
+        "terminal_h_to_cation": 1.7114
+      },
+      {
+        "in_index": 4085,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 1.4186
+      },
+      {
+        "in_index": 4133,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 1.4186
+      },
+      {
+        "in_index": 4148,
+        "terminal_o_to_lattice_o": 2.9166,
+        "terminal_h_to_cation": 1.4814
+      },
+      {
+        "in_index": 4149,
+        "terminal_o_to_lattice_o": 2.4555,
+        "terminal_h_to_cation": 1.198
+      },
+      {
+        "in_index": 4169,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 2.1656
+      },
+      {
+        "in_index": 4170,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 2.1656
+      },
+      {
+        "in_index": 4172,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 2.1656
+      },
+      {
+        "in_index": 4176,
+        "terminal_o_to_lattice_o": 2.3803,
+        "terminal_h_to_cation": 1.156
+      },
+      {
+        "in_index": 4177,
+        "terminal_o_to_lattice_o": 2.5986,
+        "terminal_h_to_cation": 1.7114
+      },
+      {
+        "in_index": 4207,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 2.2389
+      },
+      {
+        "in_index": 4208,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 1.8305
+      },
+      {
+        "in_index": 4394,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 1.8305
+      },
+      {
+        "in_index": 4410,
+        "terminal_o_to_lattice_o": 2.5986,
+        "terminal_h_to_cation": 1.7114
+      },
+      {
+        "in_index": 4585,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 1.4186
+      },
+      {
+        "in_index": 4633,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 1.4186
+      },
+      {
+        "in_index": 4648,
+        "terminal_o_to_lattice_o": 2.9166,
+        "terminal_h_to_cation": 1.4814
+      },
+      {
+        "in_index": 4649,
+        "terminal_o_to_lattice_o": 2.4555,
+        "terminal_h_to_cation": 1.198
+      },
+      {
+        "in_index": 4669,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 2.1656
+      },
+      {
+        "in_index": 4670,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 2.1656
+      },
+      {
+        "in_index": 4672,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 2.1656
+      },
+      {
+        "in_index": 4676,
+        "terminal_o_to_lattice_o": 2.3803,
+        "terminal_h_to_cation": 1.156
+      },
+      {
+        "in_index": 4677,
+        "terminal_o_to_lattice_o": 2.5986,
+        "terminal_h_to_cation": 1.7114
+      },
+      {
+        "in_index": 4707,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 2.2389
+      },
+      {
+        "in_index": 4708,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 1.8305
+      },
+      {
+        "in_index": 4894,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 1.8305
+      },
+      {
+        "in_index": 4910,
+        "terminal_o_to_lattice_o": 2.5986,
+        "terminal_h_to_cation": 1.7114
+      },
+      {
+        "in_index": 5085,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 1.4186
+      },
+      {
+        "in_index": 5133,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 1.4186
+      },
+      {
+        "in_index": 5148,
+        "terminal_o_to_lattice_o": 2.9166,
+        "terminal_h_to_cation": 1.4814
+      },
+      {
+        "in_index": 5149,
+        "terminal_o_to_lattice_o": 2.4555,
+        "terminal_h_to_cation": 1.198
+      },
+      {
+        "in_index": 5169,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 2.1656
+      },
+      {
+        "in_index": 5170,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 2.1656
+      },
+      {
+        "in_index": 5172,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 2.1656
+      },
+      {
+        "in_index": 5176,
+        "terminal_o_to_lattice_o": 2.3803,
+        "terminal_h_to_cation": 1.156
+      },
+      {
+        "in_index": 5177,
+        "terminal_o_to_lattice_o": 2.5986,
+        "terminal_h_to_cation": 1.7114
+      },
+      {
+        "in_index": 5207,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 2.2389
+      },
+      {
+        "in_index": 5208,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 1.8305
+      },
+      {
+        "in_index": 5394,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 1.8305
+      },
+      {
+        "in_index": 5410,
+        "terminal_o_to_lattice_o": 2.5986,
+        "terminal_h_to_cation": 1.7114
+      },
+      {
+        "in_index": 5585,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 1.4186
+      },
+      {
+        "in_index": 5633,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 1.4186
+      },
+      {
+        "in_index": 5648,
+        "terminal_o_to_lattice_o": 2.9166,
+        "terminal_h_to_cation": 1.4814
+      },
+      {
+        "in_index": 5649,
+        "terminal_o_to_lattice_o": 2.4555,
+        "terminal_h_to_cation": 1.198
+      },
+      {
+        "in_index": 5669,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 2.1656
+      },
+      {
+        "in_index": 5670,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 2.1656
+      },
+      {
+        "in_index": 5672,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 2.1656
+      },
+      {
+        "in_index": 5676,
+        "terminal_o_to_lattice_o": 2.3803,
+        "terminal_h_to_cation": 1.156
+      },
+      {
+        "in_index": 5677,
+        "terminal_o_to_lattice_o": 2.5986,
+        "terminal_h_to_cation": 1.7114
+      },
+      {
+        "in_index": 5707,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 2.2389
+      },
+      {
+        "in_index": 5708,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 1.8305
+      },
+      {
+        "in_index": 5894,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 1.8305
+      },
+      {
+        "in_index": 5910,
+        "terminal_o_to_lattice_o": 2.5986,
+        "terminal_h_to_cation": 1.7114
+      },
+      {
+        "in_index": 6085,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 1.4186
+      },
+      {
+        "in_index": 6133,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 1.4186
+      },
+      {
+        "in_index": 6148,
+        "terminal_o_to_lattice_o": 2.9166,
+        "terminal_h_to_cation": 1.4814
+      },
+      {
+        "in_index": 6149,
+        "terminal_o_to_lattice_o": 2.4555,
+        "terminal_h_to_cation": 1.198
+      },
+      {
+        "in_index": 6169,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 2.1656
+      },
+      {
+        "in_index": 6170,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 2.1656
+      },
+      {
+        "in_index": 6172,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 2.1656
+      },
+      {
+        "in_index": 6176,
+        "terminal_o_to_lattice_o": 2.3803,
+        "terminal_h_to_cation": 1.156
+      },
+      {
+        "in_index": 6177,
+        "terminal_o_to_lattice_o": 2.5986,
+        "terminal_h_to_cation": 1.7114
+      },
+      {
+        "in_index": 6207,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 2.2389
+      },
+      {
+        "in_index": 6208,
+        "terminal_o_to_lattice_o": 2.7647,
+        "terminal_h_to_cation": 1.8305
+      },
+      {
+        "in_index": 6726,
+        "terminal_o_to_lattice_o": 2.5986,
+        "terminal_h_to_cation": 1.7351
+      },
+      {
+        "in_index": 6783,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 3.0588
+      },
+      {
+        "in_index": 6823,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 3.0588
+      },
+      {
+        "in_index": 6824,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 3.0588
+      },
+      {
+        "in_index": 7470,
+        "terminal_o_to_lattice_o": 2.5986,
+        "terminal_h_to_cation": 1.7351
+      },
+      {
+        "in_index": 7527,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 3.0588
+      },
+      {
+        "in_index": 7567,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 3.0588
+      },
+      {
+        "in_index": 7568,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 3.0588
+      },
+      {
+        "in_index": 8214,
+        "terminal_o_to_lattice_o": 2.5986,
+        "terminal_h_to_cation": 1.7351
+      },
+      {
+        "in_index": 8271,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 3.0588
+      },
+      {
+        "in_index": 8311,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 1.4186
+      },
+      {
+        "in_index": 8312,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 3.0588
+      },
+      {
+        "in_index": 8959,
+        "terminal_o_to_lattice_o": 2.5986,
+        "terminal_h_to_cation": 1.7351
+      },
+      {
+        "in_index": 9016,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 3.0588
+      },
+      {
+        "in_index": 9056,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 1.4186
+      },
+      {
+        "in_index": 9057,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 3.0588
+      },
+      {
+        "in_index": 9704,
+        "terminal_o_to_lattice_o": 2.5986,
+        "terminal_h_to_cation": 1.7351
+      },
+      {
+        "in_index": 9761,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 3.0588
+      },
+      {
+        "in_index": 9801,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 1.4186
+      },
+      {
+        "in_index": 9802,
+        "terminal_o_to_lattice_o": 2.1808,
+        "terminal_h_to_cation": 3.0588
+      }
+    ],
+    "top_o3c_available": 503,
+    "seed": 20260926,
+    "site_selection": "seeded periodic farthest-point over clash-free top In5c; O3c >= 2.5 A from terminal O; every H >= 1.5 A from all atoms and >= 2.5 A from cations",
+    "min_new_atom_nonbonded_angstrom": 2.2536,
+    "sites": [
+      {
+        "in_index": 8307,
+        "protonated_o_index": 8328,
+        "vacancy_direction_z": 0.9868,
+        "terminal_o_to_protonated_o": 2.7647
+      },
+      {
+        "in_index": 638,
+        "protonated_o_index": 4204,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 2.5986
+      },
+      {
+        "in_index": 7532,
+        "protonated_o_index": 7536,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 5636,
+        "protonated_o_index": 5731,
+        "vacancy_direction_z": 0.2406,
+        "terminal_o_to_protonated_o": 2.7989
+      },
+      {
+        "in_index": 9680,
+        "protonated_o_index": 9721,
+        "vacancy_direction_z": -0.0,
+        "terminal_o_to_protonated_o": 3.013
+      },
+      {
+        "in_index": 4636,
+        "protonated_o_index": 4731,
+        "vacancy_direction_z": 0.2406,
+        "terminal_o_to_protonated_o": 2.7989
+      },
+      {
+        "in_index": 6702,
+        "protonated_o_index": 6743,
+        "vacancy_direction_z": -0.0,
+        "terminal_o_to_protonated_o": 3.013
+      },
+      {
+        "in_index": 9065,
+        "protonated_o_index": 9069,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 5209,
+        "protonated_o_index": 5219,
+        "vacancy_direction_z": 0.5875,
+        "terminal_o_to_protonated_o": 3.0925
+      },
+      {
+        "in_index": 414,
+        "protonated_o_index": 1184,
+        "vacancy_direction_z": 0.5875,
+        "terminal_o_to_protonated_o": 3.2969
+      },
+      {
+        "in_index": 6216,
+        "protonated_o_index": 6224,
+        "vacancy_direction_z": 0.723,
+        "terminal_o_to_protonated_o": 2.8776
+      },
+      {
+        "in_index": 2797,
+        "protonated_o_index": 2807,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 8275,
+        "protonated_o_index": 8291,
+        "vacancy_direction_z": 0.2707,
+        "terminal_o_to_protonated_o": 2.8776
+      },
+      {
+        "in_index": 2035,
+        "protonated_o_index": 2059,
+        "vacancy_direction_z": 0.9868,
+        "terminal_o_to_protonated_o": 2.7647
+      },
+      {
+        "in_index": 3585,
+        "protonated_o_index": 3517,
+        "vacancy_direction_z": 0.5774,
+        "terminal_o_to_protonated_o": 3.5188
+      },
+      {
+        "in_index": 3542,
+        "protonated_o_index": 3547,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 4135,
+        "protonated_o_index": 4221,
+        "vacancy_direction_z": 0.1944,
+        "terminal_o_to_protonated_o": 3.0369
+      },
+      {
+        "in_index": 4134,
+        "protonated_o_index": 4189,
+        "vacancy_direction_z": 0.5175,
+        "terminal_o_to_protonated_o": 2.5986
+      },
+      {
+        "in_index": 1214,
+        "protonated_o_index": 1244,
+        "vacancy_direction_z": -0.0,
+        "terminal_o_to_protonated_o": 2.9342
+      },
+      {
+        "in_index": 6134,
+        "protonated_o_index": 6189,
+        "vacancy_direction_z": 0.5175,
+        "terminal_o_to_protonated_o": 2.5986
+      },
+      {
+        "in_index": 6785,
+        "protonated_o_index": 6795,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 5683,
+        "protonated_o_index": 5703,
+        "vacancy_direction_z": 0.7001,
+        "terminal_o_to_protonated_o": 2.7989
+      },
+      {
+        "in_index": 4679,
+        "protonated_o_index": 4724,
+        "vacancy_direction_z": 0.5774,
+        "terminal_o_to_protonated_o": 3.0063
+      },
+      {
+        "in_index": 596,
+        "protonated_o_index": 603,
+        "vacancy_direction_z": 0.8339,
+        "terminal_o_to_protonated_o": 3.4734
+      },
+      {
+        "in_index": 2091,
+        "protonated_o_index": 2023,
+        "vacancy_direction_z": 0.5774,
+        "terminal_o_to_protonated_o": 3.5188
+      },
+      {
+        "in_index": 8134,
+        "protonated_o_index": 8175,
+        "vacancy_direction_z": 0.6832,
+        "terminal_o_to_protonated_o": 3.4734
+      },
+      {
+        "in_index": 1301,
+        "protonated_o_index": 1306,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 2838,
+        "protonated_o_index": 2770,
+        "vacancy_direction_z": 0.5774,
+        "terminal_o_to_protonated_o": 3.5188
+      },
+      {
+        "in_index": 4216,
+        "protonated_o_index": 4224,
+        "vacancy_direction_z": 0.723,
+        "terminal_o_to_protonated_o": 2.8776
+      },
+      {
+        "in_index": 7563,
+        "protonated_o_index": 7583,
+        "vacancy_direction_z": 0.9868,
+        "terminal_o_to_protonated_o": 2.7647
+      },
+      {
+        "in_index": 6774,
+        "protonated_o_index": 7546,
+        "vacancy_direction_z": 0.8363,
+        "terminal_o_to_protonated_o": 3.013
+      },
+      {
+        "in_index": 2127,
+        "protonated_o_index": 2009,
+        "vacancy_direction_z": 0.3581,
+        "terminal_o_to_protonated_o": 2.9416
+      },
+      {
+        "in_index": 9019,
+        "protonated_o_index": 9037,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 3.101
+      },
+      {
+        "in_index": 3626,
+        "protonated_o_index": 6204,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 2.5986
+      },
+      {
+        "in_index": 9007,
+        "protonated_o_index": 9780,
+        "vacancy_direction_z": 0.8363,
+        "terminal_o_to_protonated_o": 3.013
+      },
+      {
+        "in_index": 1302,
+        "protonated_o_index": 1314,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 3.101
+      },
+      {
+        "in_index": 4635,
+        "protonated_o_index": 4721,
+        "vacancy_direction_z": 0.1944,
+        "terminal_o_to_protonated_o": 3.0369
+      },
+      {
+        "in_index": 6136,
+        "protonated_o_index": 6231,
+        "vacancy_direction_z": 0.2406,
+        "terminal_o_to_protonated_o": 2.7989
+      },
+      {
+        "in_index": 5716,
+        "protonated_o_index": 5724,
+        "vacancy_direction_z": 0.723,
+        "terminal_o_to_protonated_o": 2.8776
+      },
+      {
+        "in_index": 5183,
+        "protonated_o_index": 5203,
+        "vacancy_direction_z": 0.7001,
+        "terminal_o_to_protonated_o": 2.7989
+      },
+      {
+        "in_index": 1905,
+        "protonated_o_index": 2678,
+        "vacancy_direction_z": 0.5875,
+        "terminal_o_to_protonated_o": 3.2969
+      },
+      {
+        "in_index": 3469,
+        "protonated_o_index": 3551,
+        "vacancy_direction_z": 0.5175,
+        "terminal_o_to_protonated_o": 2.5986
+      },
+      {
+        "in_index": 7564,
+        "protonated_o_index": 7586,
+        "vacancy_direction_z": 0.2763,
+        "terminal_o_to_protonated_o": 2.7034
+      },
+      {
+        "in_index": 8308,
+        "protonated_o_index": 8331,
+        "vacancy_direction_z": 0.2763,
+        "terminal_o_to_protonated_o": 2.7034
+      },
+      {
+        "in_index": 8954,
+        "protonated_o_index": 8921,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 2.5986
+      },
+      {
+        "in_index": 553,
+        "protonated_o_index": 557,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.078
+      },
+      {
+        "in_index": 2036,
+        "protonated_o_index": 2060,
+        "vacancy_direction_z": 0.4543,
+        "terminal_o_to_protonated_o": 2.5986
+      },
+      {
+        "in_index": 9699,
+        "protonated_o_index": 9666,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 2.5986
+      },
+      {
+        "in_index": 1385,
+        "protonated_o_index": 4704,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 2.5986
+      },
+      {
+        "in_index": 2080,
+        "protonated_o_index": 8332,
+        "vacancy_direction_z": 0.9868,
+        "terminal_o_to_protonated_o": 2.7647
+      },
+      {
+        "in_index": 8261,
+        "protonated_o_index": 8292,
+        "vacancy_direction_z": 0.9868,
+        "terminal_o_to_protonated_o": 2.7647
+      },
+      {
+        "in_index": 6819,
+        "protonated_o_index": 6839,
+        "vacancy_direction_z": 0.9868,
+        "terminal_o_to_protonated_o": 2.7647
+      },
+      {
+        "in_index": 3541,
+        "protonated_o_index": 3545,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.078
+      },
+      {
+        "in_index": 5710,
+        "protonated_o_index": 5721,
+        "vacancy_direction_z": 0.6832,
+        "terminal_o_to_protonated_o": 2.9416
+      },
+      {
+        "in_index": 6210,
+        "protonated_o_index": 6221,
+        "vacancy_direction_z": 0.6832,
+        "terminal_o_to_protonated_o": 2.9416
+      },
+      {
+        "in_index": 6786,
+        "protonated_o_index": 6804,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 3.101
+      },
+      {
+        "in_index": 9010,
+        "protonated_o_index": 9025,
+        "vacancy_direction_z": 0.5875,
+        "terminal_o_to_protonated_o": 3.0925
+      },
+      {
+        "in_index": 2837,
+        "protonated_o_index": 2844,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 555,
+        "protonated_o_index": 567,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 3.101
+      },
+      {
+        "in_index": 4646,
+        "protonated_o_index": 4717,
+        "vacancy_direction_z": 0.7775,
+        "terminal_o_to_protonated_o": 2.7034
+      },
+      {
+        "in_index": 5211,
+        "protonated_o_index": 5229,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 2.8408
+      },
+      {
+        "in_index": 4183,
+        "protonated_o_index": 4203,
+        "vacancy_direction_z": 0.7001,
+        "terminal_o_to_protonated_o": 2.7989
+      },
+      {
+        "in_index": 6183,
+        "protonated_o_index": 6203,
+        "vacancy_direction_z": 0.7001,
+        "terminal_o_to_protonated_o": 2.7989
+      },
+      {
+        "in_index": 9751,
+        "protonated_o_index": 9782,
+        "vacancy_direction_z": 0.9868,
+        "terminal_o_to_protonated_o": 2.7647
+      },
+      {
+        "in_index": 1333,
+        "protonated_o_index": 7587,
+        "vacancy_direction_z": 0.9868,
+        "terminal_o_to_protonated_o": 2.7647
+      },
+      {
+        "in_index": 9018,
+        "protonated_o_index": 9028,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 9797,
+        "protonated_o_index": 9818,
+        "vacancy_direction_z": 0.9868,
+        "terminal_o_to_protonated_o": 2.7647
+      },
+      {
+        "in_index": 5216,
+        "protonated_o_index": 5224,
+        "vacancy_direction_z": 0.723,
+        "terminal_o_to_protonated_o": 2.8776
+      },
+      {
+        "in_index": 3574,
+        "protonated_o_index": 9822,
+        "vacancy_direction_z": 0.9868,
+        "terminal_o_to_protonated_o": 2.7647
+      },
+      {
+        "in_index": 6777,
+        "protonated_o_index": 6792,
+        "vacancy_direction_z": 0.5875,
+        "terminal_o_to_protonated_o": 3.0925
+      },
+      {
+        "in_index": 4209,
+        "protonated_o_index": 4219,
+        "vacancy_direction_z": 0.5875,
+        "terminal_o_to_protonated_o": 3.0925
+      },
+      {
+        "in_index": 8273,
+        "protonated_o_index": 8283,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 426,
+        "protonated_o_index": 442,
+        "vacancy_direction_z": 0.723,
+        "terminal_o_to_protonated_o": 2.8776
+      },
+      {
+        "in_index": 6721,
+        "protonated_o_index": 6688,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 2.5986
+      },
+      {
+        "in_index": 2093,
+        "protonated_o_index": 8322,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 3587,
+        "protonated_o_index": 9812,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 4634,
+        "protonated_o_index": 4689,
+        "vacancy_direction_z": 0.5175,
+        "terminal_o_to_protonated_o": 2.5986
+      },
+      {
+        "in_index": 2840,
+        "protonated_o_index": 9067,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 1961,
+        "protonated_o_index": 1991,
+        "vacancy_direction_z": -0.0,
+        "terminal_o_to_protonated_o": 2.9342
+      },
+      {
+        "in_index": 2874,
+        "protonated_o_index": 2756,
+        "vacancy_direction_z": 0.3581,
+        "terminal_o_to_protonated_o": 2.9416
+      },
+      {
+        "in_index": 1917,
+        "protonated_o_index": 1933,
+        "vacancy_direction_z": 0.723,
+        "terminal_o_to_protonated_o": 2.8776
+      },
+      {
+        "in_index": 7468,
+        "protonated_o_index": 7651,
+        "vacancy_direction_z": 0.8339,
+        "terminal_o_to_protonated_o": 2.9416
+      },
+      {
+        "in_index": 9612,
+        "protonated_o_index": 9640,
+        "vacancy_direction_z": 0.5884,
+        "terminal_o_to_protonated_o": 2.6205
+      },
+      {
+        "in_index": 5134,
+        "protonated_o_index": 5189,
+        "vacancy_direction_z": 0.5175,
+        "terminal_o_to_protonated_o": 2.5986
+      },
+      {
+        "in_index": 8190,
+        "protonated_o_index": 8231,
+        "vacancy_direction_z": -0.0,
+        "terminal_o_to_protonated_o": 3.013
+      },
+      {
+        "in_index": 469,
+        "protonated_o_index": 499,
+        "vacancy_direction_z": 0.7951,
+        "terminal_o_to_protonated_o": 3.013
+      },
+      {
+        "in_index": 7378,
+        "protonated_o_index": 7406,
+        "vacancy_direction_z": 0.5884,
+        "terminal_o_to_protonated_o": 2.6205
+      },
+      {
+        "in_index": 4211,
+        "protonated_o_index": 4229,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 2.8408
+      },
+      {
+        "in_index": 7531,
+        "protonated_o_index": 7547,
+        "vacancy_direction_z": 0.2707,
+        "terminal_o_to_protonated_o": 2.8776
+      },
+      {
+        "in_index": 5634,
+        "protonated_o_index": 5689,
+        "vacancy_direction_z": 0.5175,
+        "terminal_o_to_protonated_o": 2.5986
+      }
+    ],
+    "oh_groups_per_nm2": 3.3844
+  },
+  "doping": {
+    "clusters": 0,
+    "sn_fraction": 0.0
+  },
+  "corrugation": {
+    "profile_axis_before_rotation": "x",
+    "period_angstrom": 42.922796,
+    "center_fraction": 0.5,
+    "depth_trilayers": 5,
+    "depth_angstrom": 14.602632,
+    "wall_slope": 1.0,
+    "step_height_angstrom": 2.920526,
+    "step_run_angstrom": 2.920526,
+    "slab_trilayers": 10,
+    "trilayers_under_floor": 5,
+    "floor_top_z_nominal": 14.602632,
+    "plateau_top_z_nominal": 29.205263,
+    "opening_width_nominal_angstrom": 29.205263,
+    "atoms_carved": 2020,
+    "rim_removals": [
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          13.9714,
+          4.2285,
+          22.8893
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          14.0544,
+          22.742,
+          22.5833
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          13.9714,
+          29.01,
+          22.8893
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          14.0544,
+          47.5235,
+          22.5833
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          13.9714,
+          53.7915,
+          22.8893
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          14.0544,
+          72.3049,
+          22.5833
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          13.9714,
+          78.573,
+          22.8893
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          14.0544,
+          97.0864,
+          22.5833
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          13.9714,
+          103.3545,
+          22.8893
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          14.0544,
+          121.8679,
+          22.5833
+        ]
+      },
+      {
+        "label": "In",
+        "cn": 3,
+        "reason": "neutralize",
+        "position": [
+          7.3949,
+          6.3346,
+          28.1387
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          6.8176,
+          8.3588,
+          28.7304
+        ]
+      },
+      {
+        "label": "In",
+        "cn": 3,
+        "reason": "neutralize",
+        "position": [
+          7.3949,
+          31.116,
+          28.1387
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          6.8176,
+          33.1403,
+          28.7304
+        ]
+      },
+      {
+        "label": "In",
+        "cn": 3,
+        "reason": "neutralize",
+        "position": [
+          7.3949,
+          55.8975,
+          28.1387
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          6.8176,
+          57.9218,
+          28.7304
+        ]
+      },
+      {
+        "label": "In",
+        "cn": 3,
+        "reason": "neutralize",
+        "position": [
+          7.3949,
+          80.679,
+          28.1387
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          6.8176,
+          82.7033,
+          28.7304
+        ]
+      },
+      {
+        "label": "In",
+        "cn": 3,
+        "reason": "neutralize",
+        "position": [
+          7.3949,
+          105.4605,
+          28.1387
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          6.8176,
+          107.4847,
+          28.7304
+        ]
+      },
+      {
+        "label": "In",
+        "cn": 3,
+        "reason": "neutralize",
+        "position": [
+          35.5279,
+          18.4469,
+          27.745
+        ]
+      },
+      {
+        "label": "In",
+        "cn": 3,
+        "reason": "neutralize",
+        "position": [
+          35.5279,
+          43.2284,
+          27.745
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 2,
+        "reason": "neutralize",
+        "position": [
+          7.0708,
+          14.2874,
+          28.9734
+        ]
+      },
+      {
+        "label": "In",
+        "cn": 3,
+        "reason": "neutralize",
+        "position": [
+          7.1538,
+          12.3907,
+          27.9418
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 2,
+        "reason": "neutralize",
+        "position": [
+          5.5528,
+          11.3706,
+          28.9734
+        ]
+      }
+    ],
+    "exposed_z_min": 5.841053,
+    "profile_axis": "y",
+    "groove_center_y_angstrom": 21.461398
+  },
+  "limitations": [
+    "geometric (unrelaxed) hydroxyl and interstitial placement; DFT relaxation not performed",
+    "fixed point charges; no free carriers, polarization, or charge transfer",
+    "no oxygen vacancies (would require electronic compensation)"
+  ]
+}

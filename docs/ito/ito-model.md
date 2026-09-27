@@ -36,6 +36,38 @@ Not modelled:
 
 Real UV-ozone- or plasma-cleaned ITO has a few-nm RMS roughness, which exceeds anything a 57 × 50 Å slab can represent.
 
+## 3b. Corrugated surface (ITO analogue of the NiO groove)
+
+The NiO campaign uses a corrugated NiO(110) slab (`inputs/surfaces/corrugated-nio-110`):
+- 125.1 × 41.7 Å box
+- one symmetric V-groove per cell, running along x
+- 45° walls built from seven monatomic 2.085 Å steps, 14.6 Å deep in total
+- opening about 27 Å, plateau about 14.6 Å
+- 25 Å of NiO under the floor
+
+The working hypothesis is that SAM molecules accumulate in such geometries. `in2o3-111-oh-groove` reproduces the geometry on In2O3(111):
+
+| | corrugated NiO(110) | `in2o3-111-oh-groove` |
+|---|---|---|
+| Box (x along groove) | 125.1 × 41.7 Å (52.2 nm²) | 123.9 × 42.9 Å (53.2 nm²) |
+| Step | 2.085 Å monatomic | 2.92 Å neutral O–In–O trilayer |
+| Depth | 7 steps = 14.60 Å | 5 steps = 14.60 Å |
+| Wall angle | 45° | 45° (step run = step height) |
+| Opening / plateau | ~27 / ~14.6 Å | ~29 / ~13.7 Å |
+| Under the floor | 25.0 Å | 5 trilayers = 14.6 Å (rigid slab, so thickness only affects the electrostatic and dispersion tail) |
+| Surface chemistry | bare NiO, formal ±2 | 3.38 OH/nm² per projected area, as on the flat pilot slab |
+
+**Construction** (`substrate.carve_groove`, then `rotate_quarter`): the top trilayers are removed on a V profile, with round((depth − |u − u0|)/d) trilayers removed at profile coordinate u. Lateral cuts leave a rim, which is cleaned up in two passes:
+- dangling atoms (O with CN ≤ 1, cations with CN ≤ 2) are removed;
+- exact neutrality is restored by removing the lowest-coordinated exposed rim atoms.
+
+All 25 removals are recorded in the manifest. Hydroxylation then treats groove floors and walls as exposed, including fourfold step-edge In and twofold step-edge O.
+
+**Limits:**
+- The steps are ideal trilayer staircases, not relaxed step structures.
+- Real ITO roughness comes from grains and facets of other orientations.
+- This groove is a controlled geometric test of accumulation, as the NiO one is. It is not a model of a specific ITO morphology.
+
 ## 4. Hydroxylation
 
 Cleaned ITO is hydroxylated. Water dissociates on In2O3(111) into terminal In–OH and surface O–H. The model places dissociated water pairs geometrically:

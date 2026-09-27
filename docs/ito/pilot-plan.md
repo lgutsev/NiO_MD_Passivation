@@ -16,6 +16,9 @@ All systems use the rigid, hydroxylated In2O3(111) slab `in2o3-111-oh`:
 | `pilot-me-4pacz` | 98 Me-4PACz | 3.45 | 8394 | Single component; dose matched to the NiO baseline (180 on 52.17 nm²) for a direct substrate comparison |
 | `pilot-meo-2pacz-me-4pacz-1to1` | 49 + 49 | 3.45 | 8198 | Justified mixture: 1:1 is the most frequent verified ratio (B2-4, B2-5); by mass ≈ by moles (MW within 1%) |
 | `pilot-me-4pacz-monolayer` | 54 Me-4PACz | 1.90 | 6414 | Monolayer-scale dose inside the measured X-2PACz range 1.3–2.3 nm⁻². The 3.45 dose is an excess, like the NiO campaign |
+| `smoke-me-4pacz-groove` | 184 Me-4PACz | 3.45 | ~18.5k | Pipeline smoke on the corrugated slab (70 ps) |
+| `pilot-me-4pacz-groove` | 184 Me-4PACz | 3.45 | ~18.5k | Corrugated counterpart of the NiO baseline: tests groove accumulation |
+| `pilot-meo-2pacz-me-4pacz-1to1-groove` | 92 + 92 | 3.45 | 18137 | Corrugated mixture: per-component groove vs plateau occupancy |
 
 Each study uses three Packmol / velocity seeds (11/111, 12/112, 13/113), so the initial placements are independent.
 
@@ -49,6 +52,7 @@ Total: 0.9 ns. The literature MD for 2PACz/PyCA-3F used 1 ns, and Park et al. us
 | Orientation | tilt of the P→core vector from the normal (surface-resident molecules) vs NEXAFS 61–65° carbazole-plane angle (matrix A3; the angle definitions differ, so compare with care) |
 | Clustering | periodic single-linkage of surface P heads (7 Å) plus the fraction of molecules stranded above the first layer |
 | Mixture | per-component surface-resident and anchored fractions, i.e. the adsorbed composition vs the 1:1 solution |
+| Groove accumulation (corrugated) | surface-resident molecules per projected nm² on groove floor, walls and plateau; groove/plateau density ratio; per-component groove fraction. P height is measured from the local slab surface |
 
 The mean over 3 seeds, and the scatter between them, is the unit of evidence. The NiO campaign reports block SEMs within runs, so seed-to-seed scatter is new information here.
 
@@ -70,7 +74,8 @@ The mean over 3 seeds, and the scatter between them, is the unit of evidence. Th
 | Item | Estimate |
 |---|---|
 | One pilot run | ~0.5–1.5 h |
-| 9 pilot runs (3 studies × 3 seeds) | ~5–14 node-hours |
+| 9 flat pilot runs (3 studies × 3 seeds) | ~5–14 node-hours |
+| 6 corrugated pilot runs (2 studies × 3 seeds, ~2.2× the atoms) | ~7–20 node-hours |
 | Smoke (3 × 70 ps) | < 1 node-hour; it replaces these guesses with a measured `Performance:` line |
 
 If scaling is poor, the fallback is to run 2–4 jobs per node with `-n 16`, using packed sub-node arrays.
