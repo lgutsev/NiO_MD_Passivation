@@ -12,7 +12,8 @@
 - 16/16 tests pass. The `run.sbatch` POTCAR, ZVAL and NELECT logic was dry-run locally against a fake PAW tree
   with `module` and `srun` stubbed. This included a negative ZVAL test, which exits with code 3. **No VASP job
   was run anywhere.**
-- Status: ready for review. Nothing was committed and nothing was submitted.
+- 2026-09-27 (coordinator): hydroxylation filters moved into `substrate.hydroxylate`; all cases regenerated
+  (`--check` 74/74 identical); committed. Still nothing submitted.
 
 ## Purpose
 
@@ -65,16 +66,14 @@ Notes on the table:
   - `substrate.build_slab(1, 1, trilayers)` from the corrected COD 2310009 coordinates
   - In–O 2.13–2.25 A; 24 In5c and 24 O3c on each face
   - the bottom trilayer (In32O48) is `F F F`
-- **Hydroxylation (`vasp.hydroxylate_checked`):**
-  - 3 dissociated H2O per primitive cell, which is 6 pairs per orthorhombic cell
-  - same algorithm and seed (20260926) as `substrate.hydroxylate`, plus two filters
-  - **Why the filters:** `substrate.hydroxylate` places the terminal O of one In5c class (6 of 24 top sites)
-    only 2.18 A from a lattice O. With the earlier coordinates this was 2.07 A, and the added proton sat 1.18 A
-    from the terminal O. Its built-in check compares new atoms only with pre-existing atoms, so it does not catch
-    this.
-  - **Consequence:** the pilot surfaces in `inputs/ito/surfaces/*-oh` still carry this contact
-    (`min_new_atom_to_slab_nonbonded_angstrom` about 2.05). The DFT slab-oh therefore differs from the pilot
-    slab's site pattern. Classical cross-evaluation must use `geometry.extxyz`, not the pilot surface.
+- **Hydroxylation (`substrate.hydroxylate`, also called via `vasp.hydroxylate_checked`):**
+  - 3 dissociated H2O per primitive cell, which is 6 pairs per orthorhombic cell, seed 20260926
+  - clash filters, now in `substrate.hydroxylate` itself (2026-09-27): no terminal O within 2.5 A of a lattice
+    O; every H at least 1.5 A from all atoms and at least 2.5 A from any cation (no acute In–O–H angles)
+  - the first draft lacked these filters and placed one In5c class's terminal O 2.07–2.18 A from a lattice O;
+    that is fixed, and the pilot slabs `inputs/ito/surfaces/*-oh` were rebuilt with the same routine
+  - closest new contact on the pilot slab is 2.25 A (H···H between neighbouring OH), so pilot and DFT slabs now
+    share one algorithm
 - **Sn cluster:**
   - O_i sits on the empty 16c site of the lower trilayer that faces the slab interior (z = 2.39 A in builder
     coordinates)
