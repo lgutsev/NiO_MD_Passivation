@@ -134,7 +134,7 @@ def main(argv=None) -> int:
         top_view(fig.add_subplot(gs[r0 + 1, k % ncols]), lab, xyz, lengths, "top view: height (grey) + hydroxyl O (orange)")
     handles = [Line2D([], [], marker="o", ls="", markerfacecolor=COLORS[L], markeredgecolor="#222222", markersize=8, label=NAMES[L])
                for L in ("In", "Sn", "Ni", "O", "Oh", "Hh") if L in present]
-    fig.legend(handles=handles, loc="lower center", ncol=len(handles), frameon=False, fontsize=9)
+    fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, 0.0), ncol=len(handles), frameon=False, fontsize=9)
     if a.title: fig.suptitle(a.title, fontsize=12)
     fig.savefig(a.out, bbox_inches="tight")
     print(a.out)
