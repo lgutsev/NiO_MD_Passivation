@@ -1,2 +1,4 @@
 inputs/surfaces/corrugated-nio-110/surface.lmp -text
 inputs/surfaces/corrugated-nio-110/surface.xyz -text
+inputs/ito/surfaces/*/surface.lmp -text
+inputs/ito/surfaces/*/surface.xyz -text
