@@ -69,3 +69,12 @@ CLI: `python -m nio_md_prep.ito {build-substrate, build-pilot, adsorption-scan, 
 3. **Not started:**
    - the carboxylic-acid anchor path (PyCA-3F)
    - LigParGen files for 2PACz, I-2PACz, PyCA-3F and PPA derivatives (user-supplied)
+
+### Hydroxylation geometry is PROVISIONAL (2026-09-28)
+
+The user has VASP DFT trajectories showing that OH does not sit on NiO(110) the way the current geometric placement puts it. The placement:
+- puts the terminal O along the missing-bond direction;
+- tilts the H halfway toward +z;
+- puts the proton on a 4–5-coordinated lattice O.
+
+Every hydroxylated slab (`*-oh*`), the pictures made from them, the scans at 25 % OH and above, and the hydroxylated pilots are therefore provisional. The plan is to rebuild the OH motif (site, proton acceptor, Ni–OH distance, O–H orientation, coverage dependence) from the user's DFT frames. ITO follows by analogy, flagged as unvalidated. The same frames are then used to check the hydroxyl charges and H core; that check also covers the dense-OH O···H collapse, where neither ε 0.046 / σ 0.40 nor σ 1.07 fixed it (contacts stayed at 1.37–1.53 Å). Bare (0 %) slabs, the groove geometry and 0 % pilots are unaffected.
