@@ -1,0 +1,139 @@
+{
+  "case": "slab-bare",
+  "kind": "slab",
+  "mode": "smoke",
+  "purpose": "Stoichiometric In2O3(111) reference; surface relaxation scale and dry-surface term for any bare-slab classical check.",
+  "formula": "In64O96",
+  "counts": {
+    "In": 64,
+    "O": 96
+  },
+  "atom_count": 160,
+  "nelect_expected": 1408,
+  "potcar": [
+    {
+      "element": "In",
+      "dataset": "In_d",
+      "zval_expected": 13
+    },
+    {
+      "element": "O",
+      "dataset": "O",
+      "zval_expected": 6
+    }
+  ],
+  "cell_angstrom": [
+    14.307599,
+    24.781488,
+    30.0
+  ],
+  "vacuum_gap_angstrom": 25.0164,
+  "constraints": {
+    "selective_dynamics": true,
+    "fixed_atoms": 80,
+    "free_atoms": 80,
+    "rule": "bottom O-In-O trilayer fixed"
+  },
+  "distances_angstrom": {
+    "min_nonbonded": 2.8036,
+    "min_nonbonded_pair": [
+      "O141",
+      "O153"
+    ],
+    "bonded_range": [
+      2.1332,
+      2.2473
+    ],
+    "bonded_pairs": 336,
+    "min_slab_nonbonded": 2.8036
+  },
+  "estimate": {
+    "label": "ESTIMATE (uncalibrated scaling model; not a measurement)",
+    "nelect": 1408,
+    "nions": 160,
+    "nbands_vasp_default": 848,
+    "plane_waves_gamma": 143000,
+    "cores": 64,
+    "seconds_per_electronic_step": 16.3,
+    "electronic_steps_assumed": 65,
+    "wall_hours": 0.29,
+    "memory_gb_total": 8.8
+  },
+  "resources": {
+    "partition": "workq",
+    "ntasks": 64,
+    "time": "12:00:00"
+  },
+  "settings": {
+    "trilayers": 2,
+    "hydroxyl_pairs_per_primitive_cell": 3,
+    "hydroxyl_seed": 20260926,
+    "phys_height": 3.75,
+    "bidentate_in_o": 2.15,
+    "vacuum_slab": 15.0,
+    "vacuum_molecule": 12.0,
+    "common_cell": true,
+    "encut": 520.0
+  },
+  "construction": {
+    "trilayers": 2,
+    "slab_builder_notes": {
+      "orthorhombic_cell_angstrom": [
+        14.307599,
+        24.781488,
+        17.523158
+      ],
+      "trilayer_spacing_angstrom": 2.920526,
+      "cut_offset_angstrom": 2.723683
+    },
+    "cell_c": 30.0,
+    "vacuum_gap": 25.0164,
+    "dipol_centre_frac": 0.116393,
+    "distances": {
+      "min_nonbonded": 2.8036,
+      "min_nonbonded_pair": [
+        "O141",
+        "O153"
+      ],
+      "bonded_range": [
+        2.1332,
+        2.2473
+      ],
+      "bonded_pairs": 336,
+      "min_slab_nonbonded": 2.8036
+    }
+  },
+  "lattice": {
+    "a": 10.117,
+    "in_8b": [
+      0.25,
+      0.25,
+      0.25
+    ],
+    "in_24d_x": 0.4663,
+    "o_48e": [
+      0.3912,
+      0.1558,
+      0.3796
+    ],
+    "source": "Marezio, Acta Cryst. 20, 723 (1966), doi:10.1107/S0365110X66001749; coordinates from COD 2310009"
+  },
+  "provenance": {
+    "generator": "nio_md_prep.ito.vasp",
+    "source_sha256": {
+      "src/nio_md_prep/ito/vasp.py": "dd735e3c7768e62d642fe532f95e2b83656dae0e7b1d8de318eacc8c96e682f2",
+      "src/nio_md_prep/ito/substrate.py": "2fa541a071fea0a21b5c280993e12e8d6e3db76b5edfbabb618554d41ed4a784"
+    },
+    "interfaceforge_conventions": "4501e34081a63e3735336e693bea1eb40ac35cb1"
+  },
+  "sha256": {
+    "POSCAR": "dbfe6564fd12d74390a2ce3852a6567782fcdd9dd83623b59af098b819d51451",
+    "INCAR": "810826f12aa1c5e2737f44db542791e8c899b247d2221b763613535650531b52",
+    "KPOINTS": "b7c6627d6b83733fa3ebf0f34af4a1f1190af69f2112d7e41cc7151c0410328e",
+    "POTCAR.spec": "608bda8c6728d385094fd4cd97819816d6be8c3f1f790e26c8cbdace696b5e75",
+    "geometry.extxyz": "ebd6a14e9e672e51edacbb381fec66d1957efc66c4529464eab5573d1d7d90ee",
+    "inputs.sha256": "83ab01c00fb6fc088959b2da4094e48d84bb8ed8fb537928087f6fe119d891f3",
+    "run.sbatch": "e3f5401d7457234d6c428cc2a4ee63dd4fcc2669df1a8e809fc85972b2ad05a3"
+  },
+  "file_order_note": "POSCAR and geometry.extxyz share one atom order (species-sorted, stable)"
+}

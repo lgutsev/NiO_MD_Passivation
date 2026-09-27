@@ -60,7 +60,7 @@ def test_hydroxylation_and_doping_stay_neutral_and_deterministic():
         assert abs(q.sum()) < 1e-9
         assert slab.count("Hh") == 12 and slab.count("Oh") == 12
         assert slab.count("Sn") == 2 * doping["clusters"]
-        assert hyd["min_new_atom_to_slab_nonbonded_angstrom"] > 1.5
+        assert hyd["min_new_atom_nonbonded_angstrom"] >= 1.5
         runs.append((list(slab.labels), slab.positions.copy()))
     assert runs[0][0] == runs[1][0] and np.array_equal(runs[0][1], runs[1][1])
 

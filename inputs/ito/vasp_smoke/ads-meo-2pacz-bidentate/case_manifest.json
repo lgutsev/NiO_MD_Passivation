@@ -1,0 +1,382 @@
+{
+  "case": "ads-meo-2pacz-bidentate",
+  "kind": "adsorbate",
+  "mode": "smoke",
+  "purpose": "Bridging-bidentate P-O-In chemisorption with both acidic H moved to surface O3c (same atoms as phys): E(bid)-E(phys) is the chemisorption energy the classical model cannot capture.",
+  "formula": "C16H30In64NO107P",
+  "counts": {
+    "In": 64,
+    "O": 107,
+    "P": 1,
+    "N": 1,
+    "C": 16,
+    "H": 30
+  },
+  "atom_count": 219,
+  "nelect_expected": 1578,
+  "potcar": [
+    {
+      "element": "In",
+      "dataset": "In_d",
+      "zval_expected": 13
+    },
+    {
+      "element": "O",
+      "dataset": "O",
+      "zval_expected": 6
+    },
+    {
+      "element": "P",
+      "dataset": "P",
+      "zval_expected": 5
+    },
+    {
+      "element": "N",
+      "dataset": "N",
+      "zval_expected": 5
+    },
+    {
+      "element": "C",
+      "dataset": "C",
+      "zval_expected": 4
+    },
+    {
+      "element": "H",
+      "dataset": "H",
+      "zval_expected": 1
+    }
+  ],
+  "cell_angstrom": [
+    14.307599,
+    24.781488,
+    30.0
+  ],
+  "vacuum_gap_angstrom": 13.6405,
+  "constraints": {
+    "selective_dynamics": true,
+    "fixed_atoms": 80,
+    "free_atoms": 139,
+    "rule": "bottom O-In-O trilayer fixed"
+  },
+  "distances_angstrom": {
+    "min_nonbonded": 1.753,
+    "min_nonbonded_pair": [
+      "H208",
+      "H209"
+    ],
+    "bonded_range": [
+      0.97,
+      2.2473
+    ],
+    "bonded_pairs": 399,
+    "min_molecule_slab_nonbonded": 1.9417,
+    "min_slab_nonbonded": 2.2536,
+    "min_h_nonbonded": 1.753
+  },
+  "estimate": {
+    "label": "ESTIMATE (uncalibrated scaling model; not a measurement)",
+    "nelect": 1578,
+    "nions": 219,
+    "nbands_vasp_default": 960,
+    "plane_waves_gamma": 143000,
+    "cores": 64,
+    "seconds_per_electronic_step": 20.1,
+    "electronic_steps_assumed": 65,
+    "wall_hours": 0.36,
+    "memory_gb_total": 9.8
+  },
+  "resources": {
+    "partition": "workq",
+    "ntasks": 64,
+    "time": "12:00:00"
+  },
+  "settings": {
+    "trilayers": 2,
+    "hydroxyl_pairs_per_primitive_cell": 3,
+    "hydroxyl_seed": 20260926,
+    "phys_height": 3.75,
+    "bidentate_in_o": 2.15,
+    "vacuum_slab": 15.0,
+    "vacuum_molecule": 12.0,
+    "common_cell": true,
+    "encut": 520.0
+  },
+  "construction": {
+    "trilayers": 2,
+    "slab_builder_notes": {
+      "orthorhombic_cell_angstrom": [
+        14.307599,
+        24.781488,
+        17.523158
+      ],
+      "trilayer_spacing_angstrom": 2.920526,
+      "cut_offset_angstrom": 2.723683
+    },
+    "hydroxylation": {
+      "pairs": 6,
+      "top_in5c_available": 24,
+      "top_in5c_excluded_clash": [
+        {
+          "in_index": 6,
+          "terminal_o_to_lattice_o": 2.1808,
+          "terminal_h_to_cation": 3.0588
+        },
+        {
+          "in_index": 9,
+          "terminal_o_to_lattice_o": 2.1808,
+          "terminal_h_to_cation": 3.0588
+        },
+        {
+          "in_index": 12,
+          "terminal_o_to_lattice_o": 2.1808,
+          "terminal_h_to_cation": 3.0588
+        },
+        {
+          "in_index": 52,
+          "terminal_o_to_lattice_o": 2.1808,
+          "terminal_h_to_cation": 3.0588
+        },
+        {
+          "in_index": 55,
+          "terminal_o_to_lattice_o": 2.1808,
+          "terminal_h_to_cation": 3.0588
+        },
+        {
+          "in_index": 58,
+          "terminal_o_to_lattice_o": 2.1808,
+          "terminal_h_to_cation": 3.0588
+        }
+      ],
+      "top_o3c_available": 24,
+      "seed": 20260926,
+      "site_selection": "seeded periodic farthest-point over clash-free top In5c; O3c >= 2.5 A from terminal O; every H >= 1.5 A from all atoms and >= 2.5 A from cations",
+      "min_new_atom_nonbonded_angstrom": 2.2536,
+      "sites": [
+        {
+          "in_index": 63,
+          "protonated_o_index": 76,
+          "vacancy_direction_z": 0.9258,
+          "terminal_o_to_protonated_o": 3.101
+        },
+        {
+          "in_index": 17,
+          "protonated_o_index": 30,
+          "vacancy_direction_z": 0.9258,
+          "terminal_o_to_protonated_o": 3.101
+        },
+        {
+          "in_index": 16,
+          "protonated_o_index": 23,
+          "vacancy_direction_z": 0.8221,
+          "terminal_o_to_protonated_o": 3.0466
+        },
+        {
+          "in_index": 62,
+          "protonated_o_index": 69,
+          "vacancy_direction_z": 0.8221,
+          "terminal_o_to_protonated_o": 3.0466
+        },
+        {
+          "in_index": 19,
+          "protonated_o_index": 25,
+          "vacancy_direction_z": 0.8221,
+          "terminal_o_to_protonated_o": 3.0466
+        },
+        {
+          "in_index": 65,
+          "protonated_o_index": 71,
+          "vacancy_direction_z": 0.8221,
+          "terminal_o_to_protonated_o": 3.0466
+        }
+      ]
+    },
+    "bidentate": {
+      "score": -1.377295,
+      "in_o_bonds": [
+        {
+          "lig_id": 21,
+          "in_index": 2,
+          "distance": 2.1446
+        },
+        {
+          "lig_id": 20,
+          "in_index": 13,
+          "distance": 2.1108
+        }
+      ],
+      "head_rotation_deg": 115,
+      "p_c_tilt_deg": 32.59,
+      "tail_axis_tilt_deg": 9.29,
+      "torsion_drive": [
+        {
+          "bond_lig_ids": [
+            18,
+            17
+          ],
+          "pass": 1,
+          "rotation_deg": 100
+        },
+        {
+          "bond_lig_ids": [
+            17,
+            16
+          ],
+          "pass": 1,
+          "rotation_deg": 290
+        },
+        {
+          "bond_lig_ids": [
+            16,
+            15
+          ],
+          "pass": 1,
+          "rotation_deg": 190
+        },
+        {
+          "bond_lig_ids": [
+            18,
+            17
+          ],
+          "pass": 2,
+          "rotation_deg": 350
+        },
+        {
+          "bond_lig_ids": [
+            17,
+            16
+          ],
+          "pass": 2,
+          "rotation_deg": 350
+        },
+        {
+          "bond_lig_ids": [
+            16,
+            15
+          ],
+          "pass": 2,
+          "rotation_deg": 340
+        }
+      ],
+      "min_mol_image": 9.398,
+      "method": "P-O(former OH) oxygens on the In5c open octahedral sites, head rotation about the O...O axis, greedy torsion drive of the P-to-ring acyclic bonds; LigParGen bond lengths/angles kept",
+      "proton_transfers": [
+        {
+          "from_lig_h_id": 35,
+          "donor_lig_o_id": 21,
+          "acceptor_o3c_index": 33,
+          "acceptor_to_donor_o_distance": 2.7441,
+          "min_distance_new_h": 2.2536
+        },
+        {
+          "from_lig_h_id": 34,
+          "donor_lig_o_id": 20,
+          "acceptor_o3c_index": 144,
+          "acceptor_to_donor_o_distance": 3.0448,
+          "min_distance_new_h": 2.7505
+        }
+      ],
+      "in_pair": {
+        "in_indices": [
+          2,
+          13
+        ],
+        "in_in_distance": 3.8256,
+        "open_site_separation": 2.3524,
+        "open_sites": [
+          [
+            0.334583,
+            20.553421,
+            6.699186
+          ],
+          [
+            2.673451,
+            20.356556,
+            6.542046
+          ]
+        ],
+        "midpoint_xy": [
+          1.908991,
+          20.720834
+        ],
+        "midpoint_z": 4.676055,
+        "lateral_distance_to_nearest_terminal_oh": 3.0426,
+        "z_top_lattice_o": 5.609162882257807,
+        "in5c_rejected_crowded_open_site": [
+          1,
+          3,
+          6,
+          9,
+          12,
+          47,
+          49,
+          52,
+          55,
+          58
+        ],
+        "selection": "free In5c with open site >= 2.5 A from O and >= 2.0 A from H; pair 3.0-4.0 A; open-site separation closest to 2.5 A"
+      }
+    },
+    "molecule": {
+      "slug": "meo-2pacz",
+      "source": "inputs/molecules/meo-2pacz/ligpargen.lmp",
+      "source_sha256": "441c4f10ba1c7cbc0e08368482c1f65ff9429c2110e43f9944d4aa87a8a1c24e",
+      "orientation": {
+        "axis": "P -> centroid of non-PO3H2 heavy atoms along +z",
+        "in_plane": "principal heavy-atom axis along +y (N-side positive)",
+        "acid_h": "rotated about P-O to minimum z, intramolecular nonbonded >= 1.8 A"
+      },
+      "geometry": "doubly deprotonated; head on In pair, tail torsion drive"
+    },
+    "cell_c": 30.0,
+    "vacuum_gap": 13.6405,
+    "dipol_centre_frac": 0.305992,
+    "distances": {
+      "min_nonbonded": 1.753,
+      "min_nonbonded_pair": [
+        "H208",
+        "H209"
+      ],
+      "bonded_range": [
+        0.97,
+        2.2473
+      ],
+      "bonded_pairs": 399,
+      "min_molecule_slab_nonbonded": 1.9417,
+      "min_slab_nonbonded": 2.2536,
+      "min_h_nonbonded": 1.753
+    }
+  },
+  "lattice": {
+    "a": 10.117,
+    "in_8b": [
+      0.25,
+      0.25,
+      0.25
+    ],
+    "in_24d_x": 0.4663,
+    "o_48e": [
+      0.3912,
+      0.1558,
+      0.3796
+    ],
+    "source": "Marezio, Acta Cryst. 20, 723 (1966), doi:10.1107/S0365110X66001749; coordinates from COD 2310009"
+  },
+  "provenance": {
+    "generator": "nio_md_prep.ito.vasp",
+    "source_sha256": {
+      "src/nio_md_prep/ito/vasp.py": "dd735e3c7768e62d642fe532f95e2b83656dae0e7b1d8de318eacc8c96e682f2",
+      "src/nio_md_prep/ito/substrate.py": "2fa541a071fea0a21b5c280993e12e8d6e3db76b5edfbabb618554d41ed4a784"
+    },
+    "interfaceforge_conventions": "4501e34081a63e3735336e693bea1eb40ac35cb1"
+  },
+  "sha256": {
+    "POSCAR": "4d641af41e521947ea25b5eb0a68bf9735bcc9b7771c14fbd745afa6929dac0a",
+    "INCAR": "c9cc542fbaab39e2f7710d8933464c54ee22beee3c6defea1c453050a7141f19",
+    "KPOINTS": "b7c6627d6b83733fa3ebf0f34af4a1f1190af69f2112d7e41cc7151c0410328e",
+    "POTCAR.spec": "62cd7e3d610298fed0a6c42d1c4d9e21682e53fc63fdddea7f5639ca7a4708cc",
+    "geometry.extxyz": "2a4fa9825434cac89837497b76f70bb2090d35a60b584a6b049b712bd21f71ee",
+    "inputs.sha256": "04952b6904be71fd33c975f92aa023f6b656099b60b6e72fcbb569dac04490a6",
+    "run.sbatch": "2161e0884c9c5a7d645c7afe7e47a7036acd2cfd5442660a21c76fb2df1a9cdf"
+  },
+  "file_order_note": "POSCAR and geometry.extxyz share one atom order (species-sorted, stable)"
+}

@@ -3,7 +3,7 @@
   "description": "Stoichiometric bulk-terminated bixbyite In2O3(111), 6 O-In-O trilayers, no hydroxyls (In2O3 proxy, reference only)",
   "model_toml_sha256": "20794688c1c08d42e9f37a3e10ad21b7bf2a7730f910e9d4c244af43b46ec78b",
   "surface_lmp_sha256": "3cdcaec907ec5612e5c8a0d347008efb078ea7d3d586c08d21b97e78e9dc49c7",
-  "code_commit": "4b832c74bf4b4083b3566f274efdd366ad956174",
+  "code_commit": "24eb037b0103d4845914cdc4d2a60cd83536be9b",
   "lattice": {
     "a": 10.117,
     "in_8b": [

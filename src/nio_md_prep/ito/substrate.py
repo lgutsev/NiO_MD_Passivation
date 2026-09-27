@@ -173,59 +173,98 @@ def _farthest_point(points: np.ndarray, count: int, lengths, rng) -> list[int]:
     return chosen
 
 
+MIN_OO_TERMINAL = 2.5   # terminal-OH O to any lattice O
+MIN_H_CONTACT = 1.5     # new H to any atom other than its own O
+MIN_H_CATION = 2.5      # new H to any In/Sn (rejects acute M-O-H angles)
+
+
 def hydroxylate(slab: Slab, pairs: int, seed: int) -> dict:
-    """Dissociate ``pairs`` waters on the top surface: In5c-OH + O3c-H."""
+    """Dissociate ``pairs`` waters on the top surface: In5c-OH + O3c-H.
+
+    The terminal O goes along the missing-octahedron direction of an In5c.
+    For one of the three top-face In5c classes of the bulk-terminated (111)
+    face that position lies ~2.1-2.2 A from a lattice O, so such In5c are
+    excluded before the seeded farthest-point selection.  The proton goes on
+    the nearest O3c that is >= 2.5 A from the terminal O and whose H is
+    >= 1.5 A from every other atom (new atoms included) and >= 2.5 A from every
+    cation (no acute In-O-H angles).
+    """
     if pairs <= 0:
         return {"pairs": 0}
     rng = np.random.default_rng(seed)
     cn, nbr = coordination(slab)
     pos = slab.positions
+    L = slab.lengths
     z_mid = 0.5 * (pos[:, 2].min() + pos[:, 2].max())
     top_in = [i for i, s in enumerate(slab.labels) if s == "In" and cn[i] == 5 and pos[i, 2] > z_mid]
     top_o = [i for i, s in enumerate(slab.labels) if s == "O" and cn[i] == 3 and pos[i, 2] > z_mid]
-    if pairs > min(len(top_in), len(top_o)):
-        raise ValueError(f"requested {pairs} hydroxyl pairs; only {len(top_in)} In5c / {len(top_o)} O3c on top")
-    chosen = [top_in[k] for k in _farthest_point(pos[top_in], pairs, slab.lengths, rng)]
-    new_labels, new_pos = [], []
-    used_o: set[int] = set()
-    records = []
+    lattice_o = [i for i, s in enumerate(slab.labels) if s == "O"]
     z_hat = np.array([0.0, 0.0, 1.0])
+    terminal, excluded = {}, []
+    cations = pos[[i for i, s in enumerate(slab.labels) if s in ("In", "Sn")]]
+    for i in top_in:
+        bonds = _periodic_delta(pos[nbr[i]] - pos[i], L)
+        vac = -np.sum(bonds / np.linalg.norm(bonds, axis=1)[:, None], axis=0); vac /= np.linalg.norm(vac)
+        o_t = pos[i] + IN_OH_LENGTH * vac
+        h_t = o_t + O_H_LENGTH * (vac + z_hat) / np.linalg.norm(vac + z_hat)
+        doo = float(np.min(np.linalg.norm(_periodic_delta(pos[lattice_o] - o_t, L), axis=1)))
+        dhm = float(np.min(np.linalg.norm(_periodic_delta(cations - h_t, L), axis=1)))
+        if doo < MIN_OO_TERMINAL or dhm < MIN_H_CATION:
+            excluded.append({"in_index": int(i), "terminal_o_to_lattice_o": round(doo, 4), "terminal_h_to_cation": round(dhm, 4)})
+        else:
+            terminal[i] = (o_t, vac)
+    allowed = sorted(terminal)
+    if pairs > min(len(allowed), len(top_o)):
+        raise ValueError(f"requested {pairs} hydroxyl pairs; only {len(allowed)} clash-free In5c / {len(top_o)} O3c on top")
+    chosen = [allowed[k] for k in _farthest_point(pos[allowed], pairs, L, rng)]
+    new_labels, new_pos, records, used = [], [], [], set()
     for i in chosen:
-        bonds = _periodic_delta(pos[nbr[i]] - pos[i], slab.lengths)
-        vacancy = -np.sum(bonds / np.linalg.norm(bonds, axis=1)[:, None], axis=0)
-        vacancy /= np.linalg.norm(vacancy)
-        o_t = pos[i] + IN_OH_LENGTH * vacancy
-        h_dir = vacancy + z_hat; h_dir /= np.linalg.norm(h_dir)
-        new_labels += ["Oh", "Hh"]; new_pos += [o_t, o_t + O_H_LENGTH * h_dir]
-        candidates = [j for j in top_o if j not in used_o]
-        dist = np.linalg.norm(_periodic_delta(pos[candidates] - o_t, slab.lengths), axis=1)
-        j = candidates[int(np.argmin(dist))]
-        used_o.add(j)
-        obonds = _periodic_delta(pos[nbr[j]] - pos[j], slab.lengths)
-        out = -np.sum(obonds / np.linalg.norm(obonds, axis=1)[:, None], axis=0)
-        out = out / np.linalg.norm(out) if np.linalg.norm(out) > 1e-6 else z_hat
-        if out[2] < 0.2:
-            out = out + z_hat; out /= np.linalg.norm(out)
+        o_t, vac = terminal[i]
+        h_dir = vac + z_hat; h_dir /= np.linalg.norm(h_dir)
+        h_t = o_t + O_H_LENGTH * h_dir
+        cands = [j for j in top_o if j not in used]
+        dist = np.linalg.norm(_periodic_delta(pos[cands] - o_t, L), axis=1)
+        placed = None
+        for k in np.argsort(dist, kind="stable"):
+            j = cands[int(k)]
+            if dist[k] < MIN_OO_TERMINAL:
+                continue
+            ob = _periodic_delta(pos[nbr[j]] - pos[j], L)
+            out = -np.sum(ob / np.linalg.norm(ob, axis=1)[:, None], axis=0)
+            out = out / np.linalg.norm(out) if np.linalg.norm(out) > 1e-6 else z_hat
+            if out[2] < 0.2:
+                out = out + z_hat; out /= np.linalg.norm(out)
+            h_j = pos[j] + O_H_LENGTH * out
+            others = np.vstack([np.delete(pos, j, axis=0), np.array(new_pos + [o_t, h_t]).reshape(-1, 3)])
+            if (float(np.min(np.linalg.norm(_periodic_delta(others - h_j, L), axis=1))) >= MIN_H_CONTACT
+                    and float(np.min(np.linalg.norm(_periodic_delta(cations - h_j, L), axis=1))) >= MIN_H_CATION):
+                placed = (j, h_j, float(dist[k]))
+                break
+        if placed is None:
+            raise ValueError(f"no acceptable O3c for the proton of In {i}")
+        j, h_j, d_oo = placed
+        used.add(j)
         slab.labels[j] = "Oh"
-        new_labels.append("Hh"); new_pos.append(pos[j] + O_H_LENGTH * out)
-        records.append({"in_index": int(i), "protonated_o_index": int(j), "vacancy_direction_z": round(float(vacancy[2]), 4)})
+        new_labels += ["Oh", "Hh", "Hh"]; new_pos += [o_t, h_t, h_j]
+        records.append({"in_index": int(i), "protonated_o_index": int(j), "vacancy_direction_z": round(float(vac[2]), 4),
+                        "terminal_o_to_protonated_o": round(d_oo, 4)})
+    n0 = len(pos)
     slab.labels += new_labels
     slab.positions = np.vstack([pos, np.array(new_pos)])
-    added = np.array(new_pos)
-    base = slab.positions[: len(pos)]
-    min_sep = min(
-        float(np.min(np.linalg.norm(_periodic_delta(base - p, slab.lengths), axis=1)[np.linalg.norm(_periodic_delta(base - p, slab.lengths), axis=1) > 1.2]))
-        for p in added
-    )
-    return {
-        "pairs": pairs,
-        "top_in5c_available": len(top_in),
-        "top_o3c_available": len(top_o),
-        "site_selection": "periodic farthest-point sampling over top In5c, seeded",
-        "seed": seed,
-        "min_new_atom_to_slab_nonbonded_angstrom": round(min_sep, 4),
-        "sites": records,
-    }
+    # Closest non-bonded contact of any new atom against all atoms, new ones included.
+    bonded = {(n0 + 3 * k, n0 + 3 * k + 1) for k in range(len(chosen))} | {(r["protonated_o_index"], n0 + 3 * k + 2) for k, r in enumerate(records)}         | {(r["in_index"], n0 + 3 * k) for k, r in enumerate(records)}
+    min_sep = np.inf
+    for a in range(n0, len(slab.labels)):
+        d = np.linalg.norm(_periodic_delta(slab.positions - slab.positions[a], L), axis=1)
+        d[a] = np.inf
+        for b in range(len(d)):
+            if (a, b) in bonded or (b, a) in bonded:
+                d[b] = np.inf
+        min_sep = min(min_sep, float(d.min()))
+    return {"pairs": pairs, "top_in5c_available": len(top_in), "top_in5c_excluded_clash": excluded,
+            "top_o3c_available": len(top_o), "seed": seed,
+            "site_selection": "seeded periodic farthest-point over clash-free top In5c; O3c >= 2.5 A from terminal O; every H >= 1.5 A from all atoms and >= 2.5 A from cations",
+            "min_new_atom_nonbonded_angstrom": round(min_sep, 4), "sites": records}
 
 
 def dope_sn(slab: Slab, sites: np.ndarray, target_fraction: float, seed: int, min_separation: float = 5.0) -> dict:
