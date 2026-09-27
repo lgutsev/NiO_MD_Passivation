@@ -211,6 +211,7 @@ def _scan_tag(job: tuple) -> list[dict]:
     frame = molecule_frame(mol)
     n_mol = mol.count("Atoms"); n_slab = slab.count("Atoms")
     quench = int(sc.get("quench_steps", 0))
+    min_steps = int(sc.get("min_steps", 3000)); ref_steps = int(sc.get("reference_min_steps", 10000))
     tag = f"{sub}__{slug}__{pset.replace('/', '-')}"
     work = Path(output) / tag; work.mkdir(parents=True, exist_ok=True)
     rows: list[dict] = []; e_slab = None; refs: list[float] = []
@@ -222,13 +223,13 @@ def _scan_tag(job: tuple) -> list[dict]:
         path = work / f"placement-{pl['index']:02d}.data"; write(system, path)
         if e_slab is None:
             e_slab, _ = _energy_run(path, ff, kspace, n_mol, n_slab, False, delete="mol")
-            refs.append(_energy_run(path, ff, kspace, n_mol, n_slab, True, delete="slab", min_steps=10000,
+            refs.append(_energy_run(path, ff, kspace, n_mol, n_slab, True, delete="slab", min_steps=ref_steps,
                                     quench_steps=quench, seed=7)[0])
         e0, _ = _energy_run(path, ff, kspace, n_mol, n_slab, False)
-        e_cx, xyz_min = _energy_run(path, ff, kspace, n_mol, n_slab, True, quench_steps=quench, seed=100 + pl["index"])
+        e_cx, xyz_min = _energy_run(path, ff, kspace, n_mol, n_slab, True, min_steps=min_steps, quench_steps=quench, seed=100 + pl["index"])
         fpath = _with_coords(path, work / f"placement-{pl['index']:02d}-min.data", xyz_min)
         e_mfix, _ = _energy_run(fpath, ff, kspace, n_mol, n_slab, False, delete="slab")
-        refs.append(_energy_run(fpath, ff, kspace, n_mol, n_slab, True, delete="slab", min_steps=10000)[0])
+        refs.append(_energy_run(fpath, ff, kspace, n_mol, n_slab, True, delete="slab", min_steps=ref_steps)[0])
         (work / f"placement-{pl['index']:02d}-min.xyz").write_text(
             f"{n_mol}\n{tag} placement {pl['index']} minimized\n"
             + "".join(f"{e} {x:.5f} {y:.5f} {z:.5f}\n" for e, (x, y, z) in zip(frame["elements"], xyz_min)), encoding="utf-8")

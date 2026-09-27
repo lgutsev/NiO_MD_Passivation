@@ -115,3 +115,29 @@ def test_periodic_clusters_merge_across_the_boundary():
     from nio_md_prep.ito.analysis import _periodic_clusters
     xy = np.array([[0.5, 5.0], [9.6, 5.0], [5.0, 5.0]])
     assert _periodic_clusters(xy, (10.0, 10.0), 1.5) == [2, 1]
+
+
+def test_energy_decomposition_vanishes_at_large_separation(tmp_path):
+    """Fixed-mesh PPPM decomposition: E_int -> 0 far from the slab, so slab-slab terms cancel exactly."""
+    pytest.importorskip("lammps")
+    from nio_md_prep.config import molecule_manifest
+    from nio_md_prep.ito import checks
+    from nio_md_prep.lammps import parse, write
+    model = tmp_path / "model.toml"
+    model.write_text('[model]\nid = "t"\n[slab]\nnx = 2\nny = 1\ntrilayers = 2\nzlo = -5.0\nzhi = 80.0\n'
+                     '[charges]\nscale = 0.525\nhydroxyl_h = 0.425\n[hydroxylation]\npairs_per_primitive_cell = 3\nseed = 1\n')
+    man = sub.build_from_model(model, tmp_path)
+    slab = parse(tmp_path / "surface.lmp")
+    folder, mm = molecule_manifest("me-4pacz")
+    mol = parse(folder / mm["files"]["ligpargen"])
+    frame = checks.molecule_frame(mol)
+    ks = checks.KSPACE.format(g=0.30, mx=32, my=24, mz=96)
+    xyz = checks.place(frame, (14.0, 12.0), man["z_top_atom_angstrom"] + 35.0, 0.0, 0.3, 0.2)
+    system, o2n, lines = checks._system(slab, mol, xyz, 80.0)
+    ff = lines + surface_pair_lines({lab: o2n[o] for lab, o in man["type_ids"].items()}, "uff-cation/clayff-anion")
+    path = tmp_path / "far.data"; write(system, path)
+    n, ns = mol.count("Atoms"), slab.count("Atoms")
+    e_cx = checks._energy_run(path, ff, ks, n, ns, False)[0]
+    e_slab = checks._energy_run(path, ff, ks, n, ns, False, delete="mol")[0]
+    e_mol = checks._energy_run(path, ff, ks, n, ns, False, delete="slab")[0]
+    assert abs(e_cx - e_slab - e_mol) < 0.05
