@@ -235,7 +235,7 @@ def _scan_tag(job: tuple) -> list[dict]:
             + "".join(f"{e} {x:.5f} {y:.5f} {z:.5f}\n" for e, (x, y, z) in zip(frame["elements"], xyz_min)), encoding="utf-8")
         fpath.unlink(missing_ok=True)
         rows.append({"substrate": sub, "molecule": slug, "parameter_set": pset,
-                     **{k: pl[k] for k in ("index", "lateral", "tilt_deg")},
+                     "index": pl["index"], "lateral": pl["lateral"], "initial_tilt_deg": pl["tilt_deg"],
                      "initial_xy_fraction": [round(pl["fx"], 4), round(pl["fy"], 4)], "quench_steps": quench,
                      "e_complex_initial": e0, "e_complex_min": e_cx, "e_slab": e_slab, "e_mol_at_complex_geometry": e_mfix,
                      "e_int_kcal_mol": e_cx - e_slab - e_mfix,
