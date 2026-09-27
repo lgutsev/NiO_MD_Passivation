@@ -1,0 +1,40 @@
+# Hydroxylation-series pilot: me-4pacz on corrugated NiO(110), RIGID slab (not the flexible Buckingham production model), hydroxylation 25 % of exposed cations.
+# Surface: inputs/surfaces/corrugated-nio-110-rigid-oh025. Dose matched to the NiO campaign (180 molecules).
+[study]
+name = "Hydroxylation pilot: Me-4PACz on nio-groove 25 % OH"
+protocol = "ito-pilot-deposition"
+
+[substrate]
+path = "inputs/surfaces/corrugated-nio-110-rigid-oh025"
+
+[forcefield]
+surface_parameter_set = "cao-nio-rigid"
+
+[box]
+# Lowered from the slab file default (200 A) to shrink the PPPM grid.
+zhi = 125.0
+
+[packing]
+gap = 8.0
+height = 50.0
+lateral_inset = 1.0
+
+[random]
+packmol_seed = 11
+velocity_seed = 101
+
+[protocol]
+temperature = 300.0
+timestep = 1.0
+shake = true
+deposition_steps = 300000
+hold_steps = 200000
+release_steps = 100000
+relax_steps = 300000
+wall_clearance = 30.0
+release_height = 40.0
+dump_every = 5000
+
+[[molecules]]
+slug = "me-4pacz"
+count = 180

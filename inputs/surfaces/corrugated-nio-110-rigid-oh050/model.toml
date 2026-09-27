@@ -1,0 +1,36 @@
+[model]
+id = "corrugated-nio-110-rigid-oh050"
+description = "Authoritative corrugated NiO(110) (inputs/surfaces/corrugated-nio-110, unchanged coordinates), hydroxylation: 50% of exposed sites. Rigid-slab variant for the nio_md_prep.ito pipeline; NOT the flexible Buckingham production model."
+
+[source]
+lmp = "inputs/surfaces/corrugated-nio-110/surface.lmp"
+host = "Ni"
+exposed_z_min = 5.0
+# Exposed NiO(110) terrace and step-edge sites are 4- and 5-fold (bulk 6).
+cation_cn = [4, 5]
+anion_cn = [4, 5]
+
+[slab]
+zlo = -5.0
+zhi = 200.0
+
+[corrugation_geometry]
+# Measured from the source slab: 7 x 2.085 A steps, 45-degree walls, groove along x.
+profile_axis = "y"
+depth_angstrom = 14.595
+wall_slope = 1.0
+step_height_angstrom = 2.085
+step_run_angstrom = 2.085
+groove_center_y_angstrom = 20.85
+center_fraction = 0.5
+
+[charges]
+# Formal NiO charges as in the NiO campaign; hydroxyl pattern O = -1 - 0.425, H = +0.425.
+scheme = "formal-with-clayff-hydroxyl"
+scale = 1.0
+hydroxyl_h = 0.425
+
+[hydroxylation]
+# Fraction of the exposed Ni inventory (CN 4-5; InterfaceForge coverage convention) carrying a dissociated water (OH on Ni + H on a nearby O).
+site_fraction = 0.5
+seed = 20260926

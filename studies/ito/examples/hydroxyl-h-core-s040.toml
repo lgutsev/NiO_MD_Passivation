@@ -1,0 +1,20 @@
+# EXAMPLE: hydroxyl-H core test (Hh LJ override) on the worst dense-OH case: rigid NiO 100 % OH, groove floor, Me-4PACz.
+# Same seed and site as adsorption-scan-nio-groove-hydroxylation.toml, so the three starts are identical to the collapsed ones.
+# Site: groove floor only (fy 0.5), 3 tilts. Compare anchor O...Hh distance and E_int with the original rows (1.36-1.50 A, about -145 kcal/mol).
+substrates = ["inputs/surfaces/corrugated-nio-110-rigid-oh100"]
+molecules = ["me-4pacz"]
+parameter_sets = ["cao-nio-rigid"]
+
+[scan]
+hydroxyl_h_lj = [0.046, 0.4]
+seed = 20260927
+lateral_sites = [[0.5, 0.5]]
+tilts_deg = [0.0, 45.0, 80.0]
+floor_reference = "local"
+floor_gap = 2.5
+box_height_above_top = 40.0
+gewald = 0.30
+mesh = [104, 36, 144]
+quench_steps = 1000
+min_steps = 1500
+reference_min_steps = 3000

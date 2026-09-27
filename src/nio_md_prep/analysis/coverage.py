@@ -36,6 +36,9 @@ ATOMIC_MASSES = {
     "S": 32.060,
     "Cl": 35.450,
     "Ni": 58.6934,
+    "In": 114.818,
+    "Sn": 118.710,
+    "I": 126.904,
 }
 
 # Bondi-style radii where available, with conventional values for the
@@ -51,6 +54,9 @@ VDW_RADII_ANGSTROM = {
     "S": 1.80,
     "Cl": 1.75,
     "Ni": 1.63,
+    "In": 1.93,
+    "Sn": 2.17,
+    "I": 1.98,
 }
 
 _DATA_SECTIONS = {

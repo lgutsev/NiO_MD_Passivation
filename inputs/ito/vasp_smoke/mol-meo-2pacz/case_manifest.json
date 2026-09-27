@@ -1,0 +1,158 @@
+{
+  "case": "mol-meo-2pacz",
+  "kind": "molecule",
+  "mode": "smoke",
+  "purpose": "Isolated protonated acid in the same cell (rigid copy of the physisorbed start geometry); the E_mol term of every E_ads.",
+  "formula": "C16H18NO5P",
+  "counts": {
+    "O": 5,
+    "P": 1,
+    "N": 1,
+    "C": 16,
+    "H": 18
+  },
+  "atom_count": 41,
+  "nelect_expected": 122,
+  "potcar": [
+    {
+      "element": "O",
+      "dataset": "O",
+      "zval_expected": 6
+    },
+    {
+      "element": "P",
+      "dataset": "P",
+      "zval_expected": 5
+    },
+    {
+      "element": "N",
+      "dataset": "N",
+      "zval_expected": 5
+    },
+    {
+      "element": "C",
+      "dataset": "C",
+      "zval_expected": 4
+    },
+    {
+      "element": "H",
+      "dataset": "H",
+      "zval_expected": 1
+    }
+  ],
+  "cell_angstrom": [
+    14.307599,
+    24.781488,
+    30.0
+  ],
+  "vacuum_gap_angstrom": 19.9427,
+  "constraints": {
+    "selective_dynamics": false,
+    "fixed_atoms": 0,
+    "free_atoms": 41,
+    "rule": "none (isolated molecule)"
+  },
+  "distances_angstrom": {
+    "min_nonbonded": 1.753,
+    "min_nonbonded_pair": [
+      "H30",
+      "H31"
+    ],
+    "bonded_range": [
+      0.9652,
+      1.8141
+    ],
+    "bonded_pairs": 43,
+    "min_h_nonbonded": 1.753
+  },
+  "estimate": {
+    "label": "ESTIMATE (uncalibrated scaling model; not a measurement)",
+    "nelect": 122,
+    "nions": 41,
+    "nbands_vasp_default": 84,
+    "plane_waves_gamma": 143000,
+    "cores": 16,
+    "seconds_per_electronic_step": 2.6,
+    "electronic_steps_assumed": 65,
+    "wall_hours": 0.05,
+    "memory_gb_total": 1.8
+  },
+  "resources": {
+    "partition": "single",
+    "ntasks": 16,
+    "time": "04:00:00"
+  },
+  "settings": {
+    "trilayers": 2,
+    "hydroxyl_pairs_per_primitive_cell": 3,
+    "hydroxyl_seed": 20260926,
+    "phys_height": 3.75,
+    "bidentate_in_o": 2.15,
+    "vacuum_slab": 15.0,
+    "vacuum_molecule": 12.0,
+    "common_cell": true,
+    "encut": 520.0
+  },
+  "construction": {
+    "molecule": {
+      "slug": "meo-2pacz",
+      "source": "inputs/molecules/meo-2pacz/ligpargen.lmp",
+      "source_sha256": "441c4f10ba1c7cbc0e08368482c1f65ff9429c2110e43f9944d4aa87a8a1c24e",
+      "orientation": {
+        "axis": "P -> centroid of non-PO3H2 heavy atoms along +z",
+        "in_plane": "principal heavy-atom axis along +y (N-side positive)",
+        "acid_h": "rotated about P-O to minimum z, intramolecular nonbonded >= 1.8 A"
+      },
+      "geometry": "rigid z-translation of the ads-meo-2pacz-phys molecule"
+    },
+    "cell_c": 30.0,
+    "vacuum_gap": 19.9427,
+    "dipol_centre_frac": 0.5,
+    "distances": {
+      "min_nonbonded": 1.753,
+      "min_nonbonded_pair": [
+        "H30",
+        "H31"
+      ],
+      "bonded_range": [
+        0.9652,
+        1.8141
+      ],
+      "bonded_pairs": 43,
+      "min_h_nonbonded": 1.753
+    }
+  },
+  "lattice": {
+    "a": 10.117,
+    "in_8b": [
+      0.25,
+      0.25,
+      0.25
+    ],
+    "in_24d_x": 0.4663,
+    "o_48e": [
+      0.3912,
+      0.1558,
+      0.3796
+    ],
+    "source": "Marezio, Acta Cryst. 20, 723 (1966), doi:10.1107/S0365110X66001749; coordinates from COD 2310009"
+  },
+  "provenance": {
+    "generator": "nio_md_prep.ito.vasp",
+    "source_sha256": {
+      "src/nio_md_prep/ito/vasp.py": "dd735e3c7768e62d642fe532f95e2b83656dae0e7b1d8de318eacc8c96e682f2",
+      "src/nio_md_prep/ito/substrate.py": "8c61cef9db8164f18849ccdd96dedc80ab60979595f7292292dead5737e4e9d1"
+    },
+    "interfaceforge_conventions": "4501e34081a63e3735336e693bea1eb40ac35cb1"
+  },
+  "sha256": {
+    "POSCAR": "5119e999d94f1113da476742b717cd90f3ac82d9812ad2d7a5bab20da051eab6",
+    "INCAR": "e1d0652db54af60c4ffd66b7c398048a63ee4cfa86641bd8a42837dea5655ff7",
+    "KPOINTS": "b7c6627d6b83733fa3ebf0f34af4a1f1190af69f2112d7e41cc7151c0410328e",
+    "POTCAR.spec": "56abeb8e6d0eebaf24ba25aa59a07d2c11baa6a8a2d9cd00f31977ac9a38e502",
+    "geometry.extxyz": "eabed3dd51b6463a7fbd8b02189a4ffbe92401ca951db7936b99c45ccd584b70",
+    "inputs.sha256": "40ee6d10f9a0677ba61f363b1a71803734991239aa0604a12d648c5d7233b04b",
+    "run.sbatch": "f6115ad3b0036113609a8a61eba22559b7f1cc8ac6dfd503e33597282a943b2b"
+  },
+  "file_order_note": "POSCAR and geometry.extxyz share one atom order (species-sorted, stable)"
+}

@@ -1,0 +1,18 @@
+# Single-molecule placement / energy checks on rigid slabs (classical FF only).
+substrates = ["in2o3-111-bare", "in2o3-111-oh", "ito-111-oh"]
+molecules = ["me-4pacz", "meo-2pacz"]
+parameter_sets = ["uff-cation/clayff-anion", "clayff-cation/clayff-anion"]
+
+[scan]
+seed = 20260926
+lateral_positions = 3
+tilts_deg = [0.0, 45.0, 80.0]
+floor_gap = 2.5
+box_height_above_top = 40.0
+gewald = 0.30
+mesh = [48, 42, 128]
+# 0.5 ps NVT (0.5 fs) of the molecule between two minimizations
+quench_steps = 1000
+# CG iteration caps (ftol 1e-3 is rarely reached; caps bound the cost)
+min_steps = 1500
+reference_min_steps = 3000
