@@ -49,3 +49,22 @@ CLI: `python -m nio_md_prep.ito {build-substrate, build-pilot, adsorption-scan, 
 2. Approve the 9 VASP smoke cases (about 3 node-hours, an estimate). The D3 variant: IVDW=12 was used here; InterfaceForge's NiO data use IVDW=11.
 3. Keep or change the default slab parameter set. The scan shows how strongly this choice matters (`adsorption-scan.md`).
 4. Future molecules need LigParGen files: 2PACz, I-2PACz, PyCA-3F (plus a carboxylic-acid anchor path), and phenylphosphonic acids.
+
+## Checkpoint 2026-09-28 (resume here)
+
+**Done since the first deliverable:**
+- corrugated ITO slab matching the NiO groove (`in2o3-111-oh-groove`)
+- hydroxylation series 0/25/50/75/100 % for corrugated ITO (`in2o3-111-groove-ohXXX`; 75 = 100, saturated at 64 %) and rigid corrugated NiO (`inputs/surfaces/corrugated-nio-110-rigid-ohXXX`)
+- ball-and-stick renderer (`scripts/ito/render_surfaces.py`, figures in `data/`)
+- 18 hydroxylation-series pilot studies (`studies/ito/hydroxylation-series.txt`) plus `scripts/ito/submit_hydroxylation_series.sh`
+- ITO groove-vs-hydroxylation energy scan (`adsorption-scan.md`, last section): hydroxylation kills plateau binding, but the groove floor stays strongly binding
+- the CLAYFF-cation set is invalid at exposed rim cations; a bug that left Ni out of the cation contact sets is fixed
+
+**In flight / next:**
+1. **NiO groove-vs-hydroxylation scan.** It was relaunched locally on 2026-09-28 (output `C:\Users\lguts\nio-wt\ito-runs\scan-nio-groove-oh`, log `scan-nio-groove-oh.log`). If it is not finished, rerun:
+   `cd src && python -m nio_md_prep.ito adsorption-scan ../studies/ito/adsorption-scan-nio-groove-hydroxylation.toml --output <dir> --workers 6`
+   Then add its table to `adsorption-scan.md` next to the ITO one.
+2. **HPC, awaiting user approval:** smoke first, then the pilots and the VASP smokes (see `pilot-plan.md`).
+3. **Not started:**
+   - the carboxylic-acid anchor path (PyCA-3F)
+   - LigParGen files for 2PACz, I-2PACz, PyCA-3F and PPA derivatives (user-supplied)
