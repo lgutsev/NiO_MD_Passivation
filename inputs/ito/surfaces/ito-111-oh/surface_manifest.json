@@ -1,0 +1,360 @@
+{
+  "model_id": "ito-111-oh",
+  "description": "Stoichiometric bulk-terminated bixbyite In2O3(111), 6 O-In-O trilayers, dissociatively hydroxylated top face with explicit Sn (2 Sn_In + O_i clusters, ~9 at.% Sn)",
+  "model_toml_sha256": "f82f6d46a5664fbf00a7c3eec827d6666657a7dcf62d598cc541478748ea8fe7",
+  "surface_lmp_sha256": "1bb7de17333c28a959a3a577ab5f8698f3089a3ac93d8056529e74c6c87801b4",
+  "code_commit": "4c82afa4d3f4b360db3489e824fa82799d4176ed",
+  "lattice": {
+    "a": 10.117,
+    "in_8b": [
+      0.25,
+      0.25,
+      0.25
+    ],
+    "in_24d_x": -0.0335,
+    "o_48e": [
+      0.3905,
+      0.1529,
+      0.3832
+    ],
+    "source": "Marezio, Acta Cryst. 20, 723 (1966), doi:10.1107/S0365110X66001749"
+  },
+  "orientation_vectors_cubic": [
+    [
+      1,
+      -1,
+      0
+    ],
+    [
+      1,
+      1,
+      -2
+    ],
+    [
+      1,
+      1,
+      1
+    ]
+  ],
+  "box_angstrom": {
+    "x": [
+      0.0,
+      57.23039444211442
+    ],
+    "y": [
+      0.0,
+      49.56297545547483
+    ],
+    "z": [
+      -5.0,
+      200.0
+    ]
+  },
+  "area_nm2": 28.365086,
+  "trilayers": 6,
+  "counts": {
+    "In": 1394,
+    "Sn": 142,
+    "O": 2327,
+    "Oh": 96,
+    "Hh": 96
+  },
+  "atom_count": 4055,
+  "type_ids": {
+    "In": 1,
+    "Sn": 2,
+    "O": 3,
+    "Oh": 4,
+    "Hh": 5
+  },
+  "charges": {
+    "scheme": "clayff-scaled-formal",
+    "scale": 0.525,
+    "hydroxyl_h": 0.425,
+    "per_label": {
+      "In": 1.575,
+      "Sn": 2.1,
+      "O": -1.05,
+      "Oh": -0.95,
+      "Hh": 0.425
+    }
+  },
+  "total_charge": 2.8421709430404007e-13,
+  "dipole_z_e_per_angstrom": 0.0043445080804507576,
+  "z_top_cation_angstrom": 16.454245,
+  "z_top_atom_angstrom": 19.332024,
+  "z_bottom_atom_angstrom": 0.624409,
+  "top_surface": {
+    "bare_in5c": 192,
+    "bare_o3c": 192,
+    "bare_in5c_per_nm2": 6.7689,
+    "cation_5c_after_modification": 139
+  },
+  "hydroxylation": {
+    "pairs": 48,
+    "top_in5c_available": 187,
+    "top_o3c_available": 192,
+    "site_selection": "periodic farthest-point sampling over top In5c, seeded",
+    "seed": 20260926,
+    "min_new_atom_to_slab_nonbonded_angstrom": 2.0692,
+    "sites": [
+      {
+        "in_index": 3337,
+        "protonated_o_index": 3299,
+        "vacancy_direction_z": 0.807
+      },
+      {
+        "in_index": 1897,
+        "protonated_o_index": 1859,
+        "vacancy_direction_z": 0.807
+      },
+      {
+        "in_index": 3814,
+        "protonated_o_index": 3832,
+        "vacancy_direction_z": 0.9884
+      },
+      {
+        "in_index": 1414,
+        "protonated_o_index": 1432,
+        "vacancy_direction_z": 0.9884
+      },
+      {
+        "in_index": 2354,
+        "protonated_o_index": 2325,
+        "vacancy_direction_z": 0.807
+      },
+      {
+        "in_index": 914,
+        "protonated_o_index": 885,
+        "vacancy_direction_z": 0.807
+      },
+      {
+        "in_index": 2859,
+        "protonated_o_index": 2804,
+        "vacancy_direction_z": 0.807
+      },
+      {
+        "in_index": 433,
+        "protonated_o_index": 444,
+        "vacancy_direction_z": 0.9273
+      },
+      {
+        "in_index": 427,
+        "protonated_o_index": 3325,
+        "vacancy_direction_z": 0.9884
+      },
+      {
+        "in_index": 431,
+        "protonated_o_index": 442,
+        "vacancy_direction_z": 0.9273
+      },
+      {
+        "in_index": 2864,
+        "protonated_o_index": 2868,
+        "vacancy_direction_z": 0.918
+      },
+      {
+        "in_index": 3796,
+        "protonated_o_index": 3805,
+        "vacancy_direction_z": 0.918
+      },
+      {
+        "in_index": 1396,
+        "protonated_o_index": 1405,
+        "vacancy_direction_z": 0.918
+      },
+      {
+        "in_index": 1873,
+        "protonated_o_index": 1884,
+        "vacancy_direction_z": 0.9273
+      },
+      {
+        "in_index": 934,
+        "protonated_o_index": 952,
+        "vacancy_direction_z": 0.9884
+      },
+      {
+        "in_index": 2377,
+        "protonated_o_index": 2339,
+        "vacancy_direction_z": 0.807
+      },
+      {
+        "in_index": 3310,
+        "protonated_o_index": 3286,
+        "vacancy_direction_z": 0.807
+      },
+      {
+        "in_index": 1866,
+        "protonated_o_index": 1881,
+        "vacancy_direction_z": 0.9884
+      },
+      {
+        "in_index": 1898,
+        "protonated_o_index": 1909,
+        "vacancy_direction_z": 0.9273
+      },
+      {
+        "in_index": 3797,
+        "protonated_o_index": 3801,
+        "vacancy_direction_z": 0.918
+      },
+      {
+        "in_index": 2826,
+        "protonated_o_index": 2846,
+        "vacancy_direction_z": 0.9884
+      },
+      {
+        "in_index": 3335,
+        "protonated_o_index": 3829,
+        "vacancy_direction_z": 0.9884
+      },
+      {
+        "in_index": 455,
+        "protonated_o_index": 470,
+        "vacancy_direction_z": 0.9884
+      },
+      {
+        "in_index": 2381,
+        "protonated_o_index": 1378,
+        "vacancy_direction_z": 0.807
+      },
+      {
+        "in_index": 1901,
+        "protonated_o_index": 898,
+        "vacancy_direction_z": 0.807
+      },
+      {
+        "in_index": 2378,
+        "protonated_o_index": 2389,
+        "vacancy_direction_z": 0.9273
+      },
+      {
+        "in_index": 1419,
+        "protonated_o_index": 1364,
+        "vacancy_direction_z": 0.807
+      },
+      {
+        "in_index": 1386,
+        "protonated_o_index": 1401,
+        "vacancy_direction_z": 0.9884
+      },
+      {
+        "in_index": 3813,
+        "protonated_o_index": 3833,
+        "vacancy_direction_z": 0.9884
+      },
+      {
+        "in_index": 935,
+        "protonated_o_index": 950,
+        "vacancy_direction_z": 0.9884
+      },
+      {
+        "in_index": 3309,
+        "protonated_o_index": 3326,
+        "vacancy_direction_z": 0.9273
+      },
+      {
+        "in_index": 3315,
+        "protonated_o_index": 2363,
+        "vacancy_direction_z": 0.918
+      },
+      {
+        "in_index": 426,
+        "protonated_o_index": 441,
+        "vacancy_direction_z": 0.9884
+      },
+      {
+        "in_index": 1874,
+        "protonated_o_index": 1845,
+        "vacancy_direction_z": 0.807
+      },
+      {
+        "in_index": 453,
+        "protonated_o_index": 468,
+        "vacancy_direction_z": 0.9884
+      },
+      {
+        "in_index": 2353,
+        "protonated_o_index": 2364,
+        "vacancy_direction_z": 0.9273
+      },
+      {
+        "in_index": 2828,
+        "protonated_o_index": 2843,
+        "vacancy_direction_z": 0.9884
+      },
+      {
+        "in_index": 906,
+        "protonated_o_index": 921,
+        "vacancy_direction_z": 0.9884
+      },
+      {
+        "in_index": 2380,
+        "protonated_o_index": 2391,
+        "vacancy_direction_z": 0.9273
+      },
+      {
+        "in_index": 3815,
+        "protonated_o_index": 3830,
+        "vacancy_direction_z": 0.9884
+      },
+      {
+        "in_index": 434,
+        "protonated_o_index": 405,
+        "vacancy_direction_z": 0.807
+      },
+      {
+        "in_index": 3333,
+        "protonated_o_index": 3353,
+        "vacancy_direction_z": 0.9884
+      },
+      {
+        "in_index": 1422,
+        "protonated_o_index": 1430,
+        "vacancy_direction_z": 0.918
+      },
+      {
+        "in_index": 3789,
+        "protonated_o_index": 3806,
+        "vacancy_direction_z": 0.9273
+      },
+      {
+        "in_index": 3792,
+        "protonated_o_index": 3777,
+        "vacancy_direction_z": 0.807
+      },
+      {
+        "in_index": 1421,
+        "protonated_o_index": 418,
+        "vacancy_direction_z": 0.807
+      },
+      {
+        "in_index": 2861,
+        "protonated_o_index": 1858,
+        "vacancy_direction_z": 0.807
+      },
+      {
+        "in_index": 910,
+        "protonated_o_index": 886,
+        "vacancy_direction_z": 0.807
+      }
+    ],
+    "oh_groups_per_nm2": 3.3844
+  },
+  "doping": {
+    "clusters": 71,
+    "compensation": "Frank-Koestlin-type 2 Sn_In + O_i on empty 16c anion sites (unrelaxed)",
+    "sn_fraction": 0.092448,
+    "target_sn_fraction": 0.0928,
+    "seed": 20260927,
+    "sn_to_oi_distance_angstrom": [
+      2.1904,
+      2.4021
+    ]
+  },
+  "limitations": [
+    "geometric (unrelaxed) hydroxyl and interstitial placement; DFT relaxation not performed",
+    "fixed point charges; no free carriers, polarization, or charge transfer",
+    "no oxygen vacancies (would require electronic compensation)"
+  ]
+}

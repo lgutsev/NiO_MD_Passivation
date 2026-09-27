@@ -1,0 +1,100 @@
+{
+  "model_id": "in2o3-111-bare",
+  "description": "Stoichiometric bulk-terminated bixbyite In2O3(111), 6 O-In-O trilayers, no hydroxyls (In2O3 proxy, reference only)",
+  "model_toml_sha256": "20794688c1c08d42e9f37a3e10ad21b7bf2a7730f910e9d4c244af43b46ec78b",
+  "surface_lmp_sha256": "291ece5c3098fa348d08b32af6dc57bc6cc7b5fa90eedfd4163c3ed046eaad75",
+  "code_commit": "4c82afa4d3f4b360db3489e824fa82799d4176ed",
+  "lattice": {
+    "a": 10.117,
+    "in_8b": [
+      0.25,
+      0.25,
+      0.25
+    ],
+    "in_24d_x": -0.0335,
+    "o_48e": [
+      0.3905,
+      0.1529,
+      0.3832
+    ],
+    "source": "Marezio, Acta Cryst. 20, 723 (1966), doi:10.1107/S0365110X66001749"
+  },
+  "orientation_vectors_cubic": [
+    [
+      1,
+      -1,
+      0
+    ],
+    [
+      1,
+      1,
+      -2
+    ],
+    [
+      1,
+      1,
+      1
+    ]
+  ],
+  "box_angstrom": {
+    "x": [
+      0.0,
+      57.23039444211442
+    ],
+    "y": [
+      0.0,
+      49.56297545547483
+    ],
+    "z": [
+      -5.0,
+      200.0
+    ]
+  },
+  "area_nm2": 28.365086,
+  "trilayers": 6,
+  "counts": {
+    "In": 1536,
+    "Sn": 0,
+    "O": 2304,
+    "Oh": 0,
+    "Hh": 0
+  },
+  "atom_count": 3840,
+  "type_ids": {
+    "In": 1,
+    "O": 2
+  },
+  "charges": {
+    "scheme": "clayff-scaled-formal",
+    "scale": 0.525,
+    "hydroxyl_h": 0.425,
+    "per_label": {
+      "In": 1.575,
+      "O": -1.05
+    }
+  },
+  "total_charge": 3.126388037344441e-13,
+  "dipole_z_e_per_angstrom": -1.6031939591813906e-16,
+  "z_top_cation_angstrom": 16.454245,
+  "z_top_atom_angstrom": 17.2901,
+  "z_bottom_atom_angstrom": 0.624409,
+  "top_surface": {
+    "bare_in5c": 192,
+    "bare_o3c": 192,
+    "bare_in5c_per_nm2": 6.7689,
+    "cation_5c_after_modification": 192
+  },
+  "hydroxylation": {
+    "pairs": 0,
+    "oh_groups_per_nm2": 0.0
+  },
+  "doping": {
+    "clusters": 0,
+    "sn_fraction": 0.0
+  },
+  "limitations": [
+    "geometric (unrelaxed) hydroxyl and interstitial placement; DFT relaxation not performed",
+    "fixed point charges; no free carriers, polarization, or charge transfer",
+    "no oxygen vacancies (would require electronic compensation)"
+  ]
+}
