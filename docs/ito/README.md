@@ -78,3 +78,16 @@ The user has VASP DFT trajectories showing that OH does not sit on NiO(110) the 
 - puts the proton on a 4–5-coordinated lattice O.
 
 Every hydroxylated slab (`*-oh*`), the pictures made from them, the scans at 25 % OH and above, and the hydroxylated pilots are therefore provisional. The plan is to rebuild the OH motif (site, proton acceptor, Ni–OH distance, O–H orientation, coverage dependence) from the user's DFT frames. ITO follows by analogy, flagged as unvalidated. The same frames are then used to check the hydroxyl charges and H core; that check also covers the dense-OH O···H collapse, where neither ε 0.046 / σ 0.40 nor σ 1.07 fixed it (contacts stayed at 1.37–1.53 Å). Bare (0 %) slabs, the groove geometry and 0 % pilots are unaffected.
+
+**TODO: fix the hydroxylation (blocked on the user's NiO(110) VASP trajectories).**
+1. Take the motif from the DFT frames:
+   - OH sits atop a single Ni (terminal Ni–OH), per the user; confirm on the frames
+   - proton destination
+   - Ni–OH and O–H distances; O–H tilt and azimuth vs the (110) rows
+   - H-bond pattern; coverage dependence from 25 to 100 %
+2. Rewrite `substrate.hydroxylate`:
+   - terminal OH atop the cation, H along the DFT orientation
+   - proton acceptor chosen per DFT; the charge-balance choice must be explicit if protons are dropped
+3. Refit or check the hydroxyl charges and the `Hh` LJ core against the same frames. This also fixes the dense-OH O···H collapse.
+4. Rebuild both hydroxylation series (`in2o3-111-groove-ohXXX`, `corrugated-nio-110-rigid-ohXXX`) and the pilot groove slab. Then re-render `images/surfaces/`, rerun the OH scans, and mark the old scan data superseded.
+5. Apply the same rules to ITO by analogy, flagged unvalidated until In2O3 DFT exists.
