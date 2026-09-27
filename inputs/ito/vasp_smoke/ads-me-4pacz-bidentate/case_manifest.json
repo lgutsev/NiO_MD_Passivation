@@ -397,7 +397,7 @@
     "generator": "nio_md_prep.ito.vasp",
     "source_sha256": {
       "src/nio_md_prep/ito/vasp.py": "dd735e3c7768e62d642fe532f95e2b83656dae0e7b1d8de318eacc8c96e682f2",
-      "src/nio_md_prep/ito/substrate.py": "2fa541a071fea0a21b5c280993e12e8d6e3db76b5edfbabb618554d41ed4a784"
+      "src/nio_md_prep/ito/substrate.py": "8c61cef9db8164f18849ccdd96dedc80ab60979595f7292292dead5737e4e9d1"
     },
     "interfaceforge_conventions": "4501e34081a63e3735336e693bea1eb40ac35cb1"
   },
