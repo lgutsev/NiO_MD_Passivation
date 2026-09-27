@@ -74,10 +74,21 @@ def bonds(lab, xyz, lengths):
 
 def cross_section(ax, lab, xyz, lengths, slab_thickness, title, zmin):
     import matplotlib.colors as mc
-    sel = np.where((xyz[:, 0] % lengths[0]) < slab_thickness)[0]
+    sel = set(np.where((xyz[:, 0] % lengths[0]) < slab_thickness)[0].tolist())
+    # Draw hydroxyls whole: pull in the O or H partner of any hydroxyl atom inside the slice.
+    oh_idx = np.where(np.isin(lab, ["Oh", "Hh"]))[0]
+    if len(oh_idx):
+        from scipy.spatial import cKDTree
+        p = xyz[oh_idx].copy(); p[:, 0] %= lengths[0]; p[:, 1] %= lengths[1]; p[:, 2] += 1e4
+        tree = cKDTree(p, boxsize=[lengths[0], lengths[1], 1e6])
+        for a, b in tree.query_pairs(1.15):
+            i, j = oh_idx[a], oh_idx[b]
+            if {lab[i], lab[j]} == {"Oh", "Hh"} and (i in sel or j in sel):
+                sel.update((int(i), int(j)))
+    sel = np.array(sorted(sel))
     s = set(sel.tolist())
     order = sel[np.argsort(-xyz[sel, 0])]  # far (large x) first
-    depth = (xyz[:, 0] % lengths[0]) / slab_thickness
+    depth = np.clip((xyz[:, 0] % lengths[0]) / slab_thickness, 0.0, 1.0)
     for i, j, d in bonds(lab[sel], xyz[sel], lengths):
         gi, gj = sel[i], sel[j]
         y0, z0 = xyz[gi, 1], xyz[gi, 2]; y1, z1 = y0 + d[1], z0 + d[2]
