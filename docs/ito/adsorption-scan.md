@@ -109,3 +109,19 @@ Median E_int (kcal/mol) over 3 placements; the two numbers are Me-4PACz / MeO-2P
   - these are classical physisorption energies, not binding energies.
 
   The MD pilots on the same surfaces, with groove/plateau densities, are the real test.
+
+## Rigid corrugated NiO vs hydroxylation (`cao-nio-rigid`, 2026-09-28)
+
+**Setup:** `studies/ito/adsorption-scan-nio-groove-hydroxylation.toml`. Raw rows: `data/adsorption-scan-nio-groove-hydroxylation.json`.
+
+Median E_int (kcal/mol); the two numbers are Me-4PACz / MeO-2PACz:
+
+| Site | 0% OH | 25% OH | 100% (90% achieved) OH |
+|---|---|---|---|
+| Groove floor | −73 / −24 | −61 / −64 | −145 / −131 **(artefact, see below)** |
+| Groove wall | −23 / −29 | −58 / −88 | −8 / −5 |
+| Plateau | −14 / −7 | +1 / −1 | −7 / −1 |
+
+- **The groove is preferred over the plateau on NiO too,** at every level. Plateau binding is weak even on bare NiO in this rigid-slab model.
+- **The 100% floor values are unreliable.** Phosphonate O ends up 1.36 Å from slab hydroxyl H, and the acidic H 1.62 Å from slab O. The slab hydroxyl H (`Hh`) is a bare +0.425 charge with no LJ core, as in CLAYFF `ho`. On a dense OH carpet, ligand O collapses onto it.
+- **Fix before trusting any heavily hydroxylated result,** on NiO or ITO: give `Hh` a small repulsive core, e.g. the Cao-corrected P–O–H hydrogen values (ε 0.046, σ 0.400 Å) or OPLS hydroxyl-H practice, then rerun the 50–100% cases. The 0% and 25% conclusions are unaffected; there the minimum anchor-O···H is at least 2.8 Å on ITO.

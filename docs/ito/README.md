@@ -61,7 +61,7 @@ CLI: `python -m nio_md_prep.ito {build-substrate, build-pilot, adsorption-scan, 
 - the CLAYFF-cation set is invalid at exposed rim cations; a bug that left Ni out of the cation contact sets is fixed
 
 **In flight / next:**
-1. **NiO groove-vs-hydroxylation scan.** It was relaunched locally on 2026-09-28 (output `C:\Users\lguts\nio-wt\ito-runs\scan-nio-groove-oh`, log `scan-nio-groove-oh.log`). If it is not finished, rerun:
+1. **NiO groove-vs-hydroxylation scan: DONE** (results in `adsorption-scan.md`). **Next fix:** give slab hydroxyl H (`Hh`) a small LJ core. Dense-OH cases show an O···H collapse to 1.36 Å, so rerun the 50–100 % scans and treat the high-OH pilots with care until then. Original rerun note: It was relaunched locally on 2026-09-28 (output `C:\Users\lguts\nio-wt\ito-runs\scan-nio-groove-oh`, log `scan-nio-groove-oh.log`). If it is not finished, rerun:
    `cd src && python -m nio_md_prep.ito adsorption-scan ../studies/ito/adsorption-scan-nio-groove-hydroxylation.toml --output <dir> --workers 6`
    Then add its table to `adsorption-scan.md` next to the ITO one.
 2. **HPC, awaiting user approval:** smoke first, then the pilots and the VASP smokes (see `pilot-plan.md`).
