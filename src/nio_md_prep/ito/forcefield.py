@@ -57,8 +57,9 @@ PARAMETER_SETS: dict[str, dict] = {
 }
 
 
-def surface_pair_lines(type_ids: dict[str, int], parameter_set: str) -> list[str]:
-    params = PARAMETER_SETS[parameter_set]
+def surface_pair_lines(type_ids: dict[str, int], parameter_set: str,
+                       overrides: dict[str, tuple[float, float]] | None = None) -> list[str]:
+    params = dict(PARAMETER_SETS[parameter_set]) | (overrides or {})
     lines = []
     for label, tid in sorted(type_ids.items(), key=lambda kv: kv[1]):
         eps, sigma = params[label]

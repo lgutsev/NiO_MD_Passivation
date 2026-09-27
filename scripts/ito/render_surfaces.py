@@ -23,6 +23,26 @@ COLORS = {"In": "#8e6fd1", "Sn": "#2a9d8f", "Ni": "#4c9a62", "O": "#d9453b", "Oh
 RADII = {"In": 0.52, "Sn": 0.50, "Ni": 0.45, "O": 0.36, "Oh": 0.42, "Hh": 0.24}
 NAMES = {"In": "In", "Sn": "Sn", "Ni": "Ni", "O": "O (lattice)", "Oh": "O (hydroxyl)", "Hh": "H"}
 CATIONS = {"In", "Sn", "Ni"}
+MOL_COLORS = {"C": "#5a5a5a", "N": "#3b62c7", "O": "#d9453b", "P": "#f28c28", "H": "#ffffff", "F": "#6cc24a", "I": "#7b3f9e"}
+MOL_RADII = {"C": 0.34, "N": 0.33, "O": 0.33, "P": 0.42, "H": 0.20, "F": 0.30, "I": 0.50}
+
+
+def draw_molecule(ax, path: Path, lengths, slice_center_x: float | None = None):
+    """Overlay a molecule (.xyz) on a y-z cross-section: bonds by distance, atoms depth-sorted."""
+    rows = [l.split() for l in path.read_text(encoding="utf-8").splitlines()[2:] if l.strip()]
+    el = [r[0] for r in rows]; xyz = np.array([[float(v) for v in r[1:4]] for r in rows])
+    ref = xyz[[i for i, e in enumerate(el) if e == "P"][0]] if "P" in el else xyz.mean(axis=0)
+    xyz[:, 1] -= lengths[1] * np.round((xyz[:, 1] - ref[1]) / lengths[1])
+    for i in range(len(el)):
+        for j in range(i + 1, len(el)):
+            r = np.linalg.norm(xyz[i] - xyz[j]); cut = 1.25 if "H" in (el[i], el[j]) else 1.9
+            if r < cut:
+                ax.plot([xyz[i, 1], xyz[j, 1]], [xyz[i, 2], xyz[j, 2]], color="#222222", lw=1.6, zorder=20)
+    import matplotlib.patches as mp
+    for i in np.argsort(-xyz[:, 0]):
+        ax.add_patch(mp.Circle((xyz[i, 1], xyz[i, 2]), MOL_RADII.get(el[i], 0.3), facecolor=MOL_COLORS.get(el[i], "#999999"),
+                               edgecolor="#111111", lw=0.5, zorder=21))
+    return xyz
 
 
 def load(folder: Path):
@@ -115,10 +135,12 @@ def main(argv=None) -> int:
     ap.add_argument("out", type=Path); ap.add_argument("dirs", type=Path, nargs="+")
     ap.add_argument("--labels", nargs="*"); ap.add_argument("--ncols", type=int, default=5)
     ap.add_argument("--perspective", action="store_true"); ap.add_argument("--title", default="")
+    ap.add_argument("--molecules", nargs="*", type=Path, help="one .xyz per DIR to overlay on its cross-section (use - for none)")
+    ap.add_argument("--no-top-view", action="store_true")
     a = ap.parse_args(argv)
-    n = len(a.dirs); ncols = min(a.ncols, n); blocks = int(np.ceil(n / ncols)); rows_per = 2
-    fig = plt.figure(figsize=(4.4 * ncols, 5.6 * blocks), dpi=150)
-    gs = fig.add_gridspec(rows_per * blocks, ncols, height_ratios=[1.35, 0.75] * blocks, hspace=0.5, wspace=0.22)
+    n = len(a.dirs); ncols = min(a.ncols, n); blocks = int(np.ceil(n / ncols)); rows_per = 1 if a.no_top_view else 2
+    fig = plt.figure(figsize=(4.4 * ncols, (3.6 if a.no_top_view else 5.6) * blocks), dpi=150)
+    gs = fig.add_gridspec(rows_per * blocks, ncols, height_ratios=([1.0] if a.no_top_view else [1.35, 0.75]) * blocks, hspace=0.5, wspace=0.22)
     present = set()
     for k, d in enumerate(a.dirs):
         man, lab, xyz, lengths = load(d); present |= set(lab.tolist())
@@ -130,10 +152,23 @@ def main(argv=None) -> int:
         r0 = (k // ncols) * rows_per
         ax = fig.add_subplot(gs[r0, k % ncols])
         zmin = xyz[:, 2].max() - 22.0
-        cross_section(ax, lab, xyz, lengths, thick, sub, zmin)
-        top_view(fig.add_subplot(gs[r0 + 1, k % ncols]), lab, xyz, lengths, "top view: height (grey) + hydroxyl O (orange)")
+        mol = a.molecules[k] if a.molecules and k < len(a.molecules) and str(a.molecules[k]) != "-" else None
+        if mol is not None:
+            mxyz = np.loadtxt(mol, skiprows=2, usecols=(1, 2, 3))
+            thick_center = float(np.mean(mxyz[:, 0]) % lengths[0])
+            shifted = xyz.copy(); shifted[:, 0] = (xyz[:, 0] - (thick_center - thick / 2)) % lengths[0]
+            cross_section(ax, lab, shifted, lengths, thick, sub, zmin)
+            top = draw_molecule(ax, mol, lengths)
+            ax.set_ylim(zmin, max(xyz[:, 2].max(), top[:, 2].max()) + 2.0)
+        else:
+            cross_section(ax, lab, xyz, lengths, thick, sub, zmin)
+        if not a.no_top_view:
+            top_view(fig.add_subplot(gs[r0 + 1, k % ncols]), lab, xyz, lengths, "top view: height (grey) + hydroxyl O (orange)")
     handles = [Line2D([], [], marker="o", ls="", markerfacecolor=COLORS[L], markeredgecolor="#222222", markersize=8, label=NAMES[L])
                for L in ("In", "Sn", "Ni", "O", "Oh", "Hh") if L in present]
+    if a.molecules and any(str(m) != "-" for m in a.molecules):
+        handles += [Line2D([], [], marker="o", ls="", markerfacecolor=MOL_COLORS[e], markeredgecolor="#111111", markersize=7, label=f"{e} (SAM)")
+                    for e in ("C", "N", "P")]
     fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, 0.0), ncol=len(handles), frameon=False, fontsize=9)
     if a.title: fig.suptitle(a.title, fontsize=12)
     fig.savefig(a.out, bbox_inches="tight")

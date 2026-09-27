@@ -228,7 +228,8 @@ def _scan_tag(job: tuple) -> list[dict]:
         base = local_height(x0, y0) if local_ref else top
         coords = place(frame, (x0, y0), base + float(sc.get("floor_gap", 2.5)), pl["tilt_deg"], pl["azimuth"], pl["spin"])
         system, old_to_new, lines = _system(slab, mol, coords, zhi)
-        ff = lines + surface_pair_lines({lab: old_to_new[old] for lab, old in sman["type_ids"].items()}, pset)
+        overrides = {"Hh": tuple(sc["hydroxyl_h_lj"])} if "hydroxyl_h_lj" in sc else None
+        ff = lines + surface_pair_lines({lab: old_to_new[old] for lab, old in sman["type_ids"].items()}, pset, overrides)
         path = work / f"placement-{pl['index']:02d}.data"; write(system, path)
         if e_slab is None:
             e_slab, _ = _energy_run(path, ff, kspace, n_mol, n_slab, False, delete="mol")

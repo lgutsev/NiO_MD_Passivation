@@ -19,6 +19,7 @@ Branch `feat/ito-sam-extension`, from `origin/main` 4c82afa. This is background 
 | Parameter sources | [`parameter-sources.md`](parameter-sources.md) |
 | Pilot plan and compute estimate | [`pilot-plan.md`](pilot-plan.md) |
 | Single-molecule geometry and energy checks | [`adsorption-scan.md`](adsorption-scan.md) (local, classical) |
+| Worked examples (commands, reading outputs, artefact diagnosis) | [`examples.md`](examples.md) |
 | DFT reference inputs (prepared, not run) | [`vasp-smoke.md`](vasp-smoke.md), `inputs/ito/vasp_smoke/` |
 
 ## Code and inputs

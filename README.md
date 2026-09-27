@@ -59,6 +59,12 @@ The original workflow sketch is retained for scientific provenance:
 
 ![Original workflow plan](images/workflow.jpg)
 
+### Surface models
+
+![Corrugated NiO(110) and its In2O3(111) analogue](images/surfaces/nio_ito_groove_comparison.png)
+
+The corrugated NiO(110) slab used by the campaign (left) and the matched corrugated In2O3(111) slab of the ITO extension (right). More pictures, including the hydroxylation series for both substrates and a SAM molecule in the groove, are in [`docs/gallery.md`](docs/gallery.md).
+
 ## Quick start
 
 Python 3.11 or newer and Packmol are required for system construction. LAMMPS is required for simulation and executable validation.
