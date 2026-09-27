@@ -4,3 +4,5 @@ inputs/ito/surfaces/*/surface.lmp -text
 inputs/ito/surfaces/*/surface.xyz -text
 inputs/ito/vasp_smoke/** -text
 scripts/ito/*.sbatch text eol=lf
+inputs/surfaces/corrugated-nio-110-rigid-oh*/surface.lmp -text
+inputs/surfaces/corrugated-nio-110-rigid-oh*/surface.xyz -text

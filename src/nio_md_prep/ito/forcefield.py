@@ -36,7 +36,23 @@ PARAMETER_SETS: dict[str, dict] = {
             "In,Sn": "CLAYFF ao (octahedral Al) used as an electrostatics-dominated cation analogue; Cygan et al. 2004. NOT an In parameterization.",
             "O,Oh,Hh": "CLAYFF ob/oh/ho, Cygan et al. 2004",
         },
-        "note": "Lower bracket: cation dispersion effectively off; adhesion is Coulomb + O dispersion.",
+        "note": ("Lower bracket: cation dispersion effectively off; adhesion is Coulomb + O dispersion. "
+                 "INVALID on slabs with exposed under-coordinated cations (step edges, groove rims): with no "
+                 "cation core repulsion, phosphonate O collapses to ~1.7 A from CN3-4 In (adsorption-scan.md). "
+                 "Use only on flat, O/OH-terminated slabs."),
+    },
+    "cao-nio-rigid": {
+        # NiO campaign pseudo-LJ surface values (build.py cross terms), used here only for
+        # rigid-slab NiO controls; hydroxyl O takes the lattice-O value, hydroxyl H none.
+        "Ni": (0.1, 3.0),
+        "O": (0.21, 3.05),
+        "Oh": (0.21, 3.05),
+        "Hh": (0.0, 0.0),
+        "sources": {
+            "Ni,O": "NiO workflow pseudo-LJ Ni (0.1, 3.0) / O (0.21, 3.05), src/nio_md_prep/build.py cross-term block (Cao-fitted)",
+            "Oh,Hh": "design choice: hydroxyl O = lattice O pseudo-LJ; H bare charge",
+        },
+        "note": "Rigid-slab NiO control; the production NiO campaign uses a flexible Buckingham slab instead.",
     },
 }
 

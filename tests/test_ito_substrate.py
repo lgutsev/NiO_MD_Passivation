@@ -84,10 +84,11 @@ def test_committed_models_match_their_manifests(tmp_path):
 
 
 def test_surface_pair_lines_cover_every_label_and_set():
-    ids = {"In": 10, "Sn": 11, "O": 12, "Oh": 13, "Hh": 14}
-    for name in PARAMETER_SETS:
+    for name, params in PARAMETER_SETS.items():
+        cation = [c for c in ("In", "Sn", "Ni") if c in params]
+        ids = {lab: 10 + k for k, lab in enumerate(cation + ["O", "Oh", "Hh"])}
         lines = surface_pair_lines(ids, name)
-        assert [int(l.split()[1]) for l in lines] == [10, 11, 12, 13, 14]
+        assert [int(l.split()[1]) for l in lines] == sorted(ids.values())
         assert all("lj/cut/coul/long" not in l for l in lines)
 
 

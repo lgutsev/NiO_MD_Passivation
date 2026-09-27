@@ -40,9 +40,12 @@ BIXBYITE = {
     "source": "Marezio, Acta Cryst. 20, 723 (1966), doi:10.1107/S0365110X66001749; coordinates from COD 2310009",
 }
 ORIENTATION = ((1, -1, 0), (1, 1, -2), (1, 1, 1))
-MASSES = {"In": 114.818, "Sn": 118.710, "O": 15.999, "Oh": 15.999, "Hh": 1.008}
-FORMAL = {"In": 3.0, "Sn": 4.0, "O": -2.0}
-TYPE_ORDER = ("In", "Sn", "O", "Oh", "Hh")
+MASSES = {"In": 114.818, "Sn": 118.710, "Ni": 58.6934, "O": 15.999, "Oh": 15.999, "Hh": 1.008}
+FORMAL = {"In": 3.0, "Sn": 4.0, "Ni": 2.0, "O": -2.0}
+TYPE_ORDER = ("In", "Sn", "Ni", "O", "Oh", "Hh")
+CATIONS = ("In", "Sn", "Ni")
+# Cation-OH bond length for the terminal hydroxyl (In-O ~2.1-2.2 A, Ni-O 2.085 A in NiO).
+M_OH_LENGTH = {"In": 2.10, "Ni": 2.05}
 IN_O_BOND_CUTOFF = 2.6
 IN_OH_LENGTH = 2.10
 O_H_LENGTH = 0.97
@@ -152,7 +155,7 @@ def _periodic_delta(delta: np.ndarray, lengths: tuple[float, float]) -> np.ndarr
 def coordination(slab: Slab) -> tuple[np.ndarray, list[list[int]]]:
     """Cation-anion coordination numbers with periodic x/y (cutoff 2.6 A)."""
     pos = slab.positions
-    cation = np.array([x in ("In", "Sn") for x in slab.labels])
+    cation = np.array([x in CATIONS for x in slab.labels])
     anion = np.array([x in ("O", "Oh") for x in slab.labels])
     neighbors: list[list[int]] = [[] for _ in slab.labels]
     ci, ai = np.where(cation)[0], np.where(anion)[0]
@@ -175,11 +178,13 @@ def _farthest_point(points: np.ndarray, count: int, lengths, rng) -> list[int]:
 
 MIN_OO_TERMINAL = 2.5   # terminal-OH O to any lattice O
 MIN_H_CONTACT = 1.5     # new H to any atom other than its own O
-MIN_H_CATION = 2.5      # new H to any In/Sn (rejects acute M-O-H angles)
+MIN_H_CATION = {"In": 2.5, "Ni": 2.2}  # new H to any cation (rejects acute M-O-H angles);
+# for rock-salt NiO an upright H on a terrace O is 2.30 A from its in-plane Ni neighbours.
 
 
 def hydroxylate(slab: Slab, pairs: int, seed: int, exposed_z_min: float | None = None,
-                cation_cn: tuple[int, ...] = (5,), anion_cn: tuple[int, ...] = (3,)) -> dict:
+                cation_cn: tuple[int, ...] = (5,), anion_cn: tuple[int, ...] = (3,),
+                site_fraction: float | None = None, host: str = "In") -> dict:
     """Dissociate ``pairs`` waters on the top surface: In5c-OH + O3c-H.
 
     The terminal O goes along the missing-octahedron direction of an In5c.
@@ -189,7 +194,15 @@ def hydroxylate(slab: Slab, pairs: int, seed: int, exposed_z_min: float | None =
     the nearest O3c that is >= 2.5 A from the terminal O and whose H is
     >= 1.5 A from every other atom (new atoms included) and >= 2.5 A from every
     cation (no acute In-O-H angles).
+
+    ``site_fraction`` (0..1) replaces ``pairs`` by that fraction of the exposed
+    host-cation inventory (``host`` = "In" or "Ni"), the InterfaceForge
+    NiO-hydroxylation coverage convention (dissociated-water motif, scattered
+    arrangement).  Sites whose OH or proton cannot be placed without clashes
+    are skipped; the shortfall and achieved fraction are recorded.
     """
+    if site_fraction is not None:
+        pairs = 1 if site_fraction > 0 else 0
     if pairs <= 0:
         return {"pairs": 0}
     rng = np.random.default_rng(seed)
@@ -199,32 +212,46 @@ def hydroxylate(slab: Slab, pairs: int, seed: int, exposed_z_min: float | None =
     # Flat slabs: the upper half.  Corrugated slabs pass a lower bound that keeps
     # groove floors and step walls while excluding the bottom face.
     z_mid = 0.5 * (pos[:, 2].min() + pos[:, 2].max()) if exposed_z_min is None else exposed_z_min
-    top_in = [i for i, s in enumerate(slab.labels) if s == "In" and cn[i] in cation_cn and pos[i, 2] > z_mid]
+    top_in = [i for i, s in enumerate(slab.labels) if s == host and cn[i] in cation_cn and pos[i, 2] > z_mid]
     top_o = [i for i, s in enumerate(slab.labels) if s == "O" and cn[i] in anion_cn and pos[i, 2] > z_mid]
     lattice_o = [i for i, s in enumerate(slab.labels) if s == "O"]
     z_hat = np.array([0.0, 0.0, 1.0])
     terminal, excluded = {}, []
-    cations = pos[[i for i, s in enumerate(slab.labels) if s in ("In", "Sn")]]
+    cations = pos[[i for i, s in enumerate(slab.labels) if s in CATIONS]]
     for i in top_in:
         bonds = _periodic_delta(pos[nbr[i]] - pos[i], L)
         vac = -np.sum(bonds / np.linalg.norm(bonds, axis=1)[:, None], axis=0); vac /= np.linalg.norm(vac)
-        o_t = pos[i] + IN_OH_LENGTH * vac
+        o_t = pos[i] + M_OH_LENGTH[host] * vac
         h_t = o_t + O_H_LENGTH * (vac + z_hat) / np.linalg.norm(vac + z_hat)
         doo = float(np.min(np.linalg.norm(_periodic_delta(pos[lattice_o] - o_t, L), axis=1)))
         dhm = float(np.min(np.linalg.norm(_periodic_delta(cations - h_t, L), axis=1)))
-        if doo < MIN_OO_TERMINAL or dhm < MIN_H_CATION:
+        if doo < MIN_OO_TERMINAL or dhm < MIN_H_CATION[host]:
             excluded.append({"in_index": int(i), "terminal_o_to_lattice_o": round(doo, 4), "terminal_h_to_cation": round(dhm, 4)})
         else:
             terminal[i] = (o_t, vac)
     allowed = sorted(terminal)
+    shortfall = 0
+    if site_fraction is not None:
+        # InterfaceForge convention: coverage = fraction of the exposed-cation inventory.
+        requested = int(round(site_fraction * len(top_in)))
+        pairs = min(requested, len(allowed), len(top_o))
+        shortfall = requested - pairs
+        if pairs == 0:
+            return {"pairs": 0, "site_fraction": site_fraction, "exposed_sites": len(top_in),
+                    "clash_free_sites": len(allowed), "acceptor_sites": len(top_o)}
     if pairs > min(len(allowed), len(top_o)):
         raise ValueError(f"requested {pairs} hydroxyl pairs; only {len(allowed)} clash-free In5c / {len(top_o)} O3c on top")
     chosen = [allowed[k] for k in _farthest_point(pos[allowed], pairs, L, rng)]
-    new_labels, new_pos, records, used = [], [], [], set()
+    new_labels, new_pos, records, used, skipped = [], [], [], set(), []
     for i in chosen:
         o_t, vac = terminal[i]
         h_dir = vac + z_hat; h_dir /= np.linalg.norm(h_dir)
         h_t = o_t + O_H_LENGTH * h_dir
+        if site_fraction is not None and new_pos:
+            prev = np.array(new_pos)
+            if (np.min(np.linalg.norm(_periodic_delta(prev - o_t, L), axis=1)) < MIN_OO_TERMINAL - 0.3
+                    or np.min(np.linalg.norm(_periodic_delta(prev - h_t, L), axis=1)) < MIN_H_CONTACT):
+                skipped.append({"cation_index": int(i), "reason": "terminal OH clashes with an earlier hydroxyl"}); continue
         cands = [j for j in top_o if j not in used]
         dist = np.linalg.norm(_periodic_delta(pos[cands] - o_t, L), axis=1)
         placed = None
@@ -240,10 +267,12 @@ def hydroxylate(slab: Slab, pairs: int, seed: int, exposed_z_min: float | None =
             h_j = pos[j] + O_H_LENGTH * out
             others = np.vstack([np.delete(pos, j, axis=0), np.array(new_pos + [o_t, h_t]).reshape(-1, 3)])
             if (float(np.min(np.linalg.norm(_periodic_delta(others - h_j, L), axis=1))) >= MIN_H_CONTACT
-                    and float(np.min(np.linalg.norm(_periodic_delta(cations - h_j, L), axis=1))) >= MIN_H_CATION):
+                    and float(np.min(np.linalg.norm(_periodic_delta(cations - h_j, L), axis=1))) >= MIN_H_CATION[host]):
                 placed = (j, h_j, float(dist[k]))
                 break
         if placed is None:
+            if site_fraction is not None:
+                skipped.append({"cation_index": int(i), "reason": "no clash-free proton acceptor"}); continue
             raise ValueError(f"no acceptable O3c for the proton of In {i}")
         j, h_j, d_oo = placed
         used.add(j)
@@ -253,9 +282,9 @@ def hydroxylate(slab: Slab, pairs: int, seed: int, exposed_z_min: float | None =
                         "terminal_o_to_protonated_o": round(d_oo, 4)})
     n0 = len(pos)
     slab.labels += new_labels
-    slab.positions = np.vstack([pos, np.array(new_pos)])
+    slab.positions = np.vstack([pos, np.array(new_pos).reshape(-1, 3)])
     # Closest non-bonded contact of any new atom against all atoms, new ones included.
-    bonded = {(n0 + 3 * k, n0 + 3 * k + 1) for k in range(len(chosen))} | {(r["protonated_o_index"], n0 + 3 * k + 2) for k, r in enumerate(records)}         | {(r["in_index"], n0 + 3 * k) for k, r in enumerate(records)}
+    bonded = {(n0 + 3 * k, n0 + 3 * k + 1) for k in range(len(records))} | {(r["protonated_o_index"], n0 + 3 * k + 2) for k, r in enumerate(records)}         | {(r["in_index"], n0 + 3 * k) for k, r in enumerate(records)}
     min_sep = np.inf
     for a in range(n0, len(slab.labels)):
         d = np.linalg.norm(_periodic_delta(slab.positions - slab.positions[a], L), axis=1)
@@ -264,7 +293,11 @@ def hydroxylate(slab: Slab, pairs: int, seed: int, exposed_z_min: float | None =
             if (a, b) in bonded or (b, a) in bonded:
                 d[b] = np.inf
         min_sep = min(min_sep, float(d.min()))
-    return {"pairs": pairs, "top_in5c_available": len(top_in), "top_in5c_excluded_clash": excluded,
+    return {"pairs": len(records), "requested_pairs": pairs, "site_fraction": site_fraction, "host": host,
+            "skipped_sites": skipped, "clash_free_sites": len(allowed), "exposed_sites": len(top_in),
+            "shortfall_vs_requested_fraction": shortfall + len(skipped),
+            "achieved_fraction_of_exposed": round(len(records) / len(top_in), 4) if top_in else None,
+            "top_in5c_available": len(top_in), "top_in5c_excluded_clash": excluded,
             "top_o3c_available": len(top_o), "seed": seed,
             "site_selection": "seeded periodic farthest-point over clash-free top In5c; O3c >= 2.5 A from terminal O; every H >= 1.5 A from all atoms and >= 2.5 A from cations",
             "min_new_atom_nonbonded_angstrom": round(min_sep, 4), "sites": records}
@@ -447,14 +480,39 @@ def write_lammps(slab: Slab, q: np.ndarray, path: Path, z_bounds: tuple[float, f
     return type_id
 
 
+def slab_from_lmp(path: Path, labels_by_mass: dict[str, str] | None = None) -> Slab:
+    """Load an existing slab (e.g. the authoritative corrugated NiO) as a :class:`Slab`."""
+    from ..lammps import parse
+    data = parse(path)
+    by_type = {}
+    for r in data.sections["Masses"]:
+        mass = float(r.fields[1])
+        hits = [lab for lab, m in MASSES.items() if lab in CATIONS + ("O",) and abs(m - mass) < 0.02]
+        if len(hits) != 1:
+            raise ValueError(f"{path}: cannot map mass {mass} to one slab label")
+        by_type[int(r.fields[0])] = hits[0]
+    labels = [by_type[int(a.fields[2])] for a in data.sections["Atoms"]]
+    pos = np.array([[float(a.fields[4]), float(a.fields[5]), float(a.fields[6])] for a in data.sections["Atoms"]])
+    slab = Slab(labels, pos, (data.bounds["x"][1] - data.bounds["x"][0], data.bounds["y"][1] - data.bounds["y"][0]))
+    slab.notes["source_z_bounds"] = list(data.bounds["z"])
+    return slab
+
+
 def build_from_model(model_path: Path, output: Path) -> dict:
     """Build a slab from ``model.toml`` and write surface.lmp/.xyz + manifest."""
     with model_path.open("rb") as f:
         model = tomllib.load(f)
     s = model["slab"]; h = model.get("hydroxylation", {}); dop = model.get("doping", {}); ch = model["charges"]
-    slab, sites = build_slab(int(s["nx"]), int(s["ny"]), int(s["trilayers"]))
-    # Primitive (111) surface cell = half the orthorhombic cell.
-    primitive_cells = 2 * int(s["nx"]) * int(s["ny"])
+    src = model.get("source")
+    if src:
+        # Existing slab (e.g. the authoritative corrugated NiO); geometry is taken as is.
+        root = Path(__file__).resolve().parents[3]
+        slab = slab_from_lmp(root / src["lmp"]); sites = np.empty((0, 3))
+        primitive_cells = 0
+    else:
+        slab, sites = build_slab(int(s["nx"]), int(s["ny"]), int(s["trilayers"]))
+        # Primitive (111) surface cell = half the orthorhombic cell.
+        primitive_cells = 2 * int(s["nx"]) * int(s["ny"])
     cn0, _ = coordination(slab)
     z0 = slab.positions[:, 2]
     bare_in5c = int(sum(1 for i, x in enumerate(slab.labels) if x == "In" and cn0[i] == 5 and z0[i] > z0.mean()))
@@ -467,9 +525,15 @@ def build_from_model(model_path: Path, output: Path) -> dict:
                                           {"x": 0, "y": 1}[corr.get("profile_axis", "x")],
                                           float(corr.get("center_fraction", 0.5)), sites)
         # Groove floors and walls count as exposed; the bottom face does not.  Step-edge
-        # cations can be fourfold, step-edge anions twofold.
-        hyd_kwargs = {"exposed_z_min": corrugation["exposed_z_min"], "cation_cn": (4, 5), "anion_cn": (2, 3)}
+        # cations can be three- or fourfold (the most reactive sites), step-edge anions twofold.
+        hyd_kwargs = {"exposed_z_min": corrugation["exposed_z_min"], "cation_cn": (3, 4, 5), "anion_cn": (2, 3)}
     doping = dope_sn(slab, sites, float(dop.get("sn_fraction", 0.0)), int(dop.get("seed", 1)))
+    if src:
+        hyd_kwargs = {"exposed_z_min": float(src.get("exposed_z_min", 5.0)), "host": src.get("host", "Ni"),
+                      "cation_cn": tuple(src.get("cation_cn", [3, 4, 5])), "anion_cn": tuple(src.get("anion_cn", [3, 4, 5]))}
+        corrugation = model.get("corrugation_geometry")
+    if "site_fraction" in h:
+        hyd_kwargs["site_fraction"] = float(h["site_fraction"])
     pairs = int(round(float(h.get("pairs_per_primitive_cell", 0.0)) * primitive_cells))
     hydroxyl = hydroxylate(slab, pairs, int(h.get("seed", 1)), **hyd_kwargs)
     if corr and corr.get("rotate_groove_along_x", True):
@@ -483,7 +547,7 @@ def build_from_model(model_path: Path, output: Path) -> dict:
         raise ValueError(f"slab charge {total:.3e} is not neutral")
     cn, _ = coordination(slab)
     z = slab.positions[:, 2]
-    top_cation = float(max(z[i] for i, x in enumerate(slab.labels) if x in ("In", "Sn")))
+    top_cation = float(max(z[i] for i, x in enumerate(slab.labels) if x in CATIONS))
     output.mkdir(parents=True, exist_ok=True)
     zlo, zhi = float(s.get("zlo", -5.0)), float(s.get("zhi", 200.0))
     title = f"ITO extension slab {model['model']['id']} generated by nio_md_prep.ito.substrate"
@@ -493,7 +557,7 @@ def build_from_model(model_path: Path, output: Path) -> dict:
     (output / "surface.xyz").write_text("\n".join(xyz) + "\n", encoding="utf-8")
     root = Path(__file__).resolve().parents[3]
     area_nm2 = slab.lengths[0] * slab.lengths[1] / 100.0
-    top_in5c = sum(1 for i, x in enumerate(slab.labels) if x in ("In", "Sn") and cn[i] == 5 and z[i] > z.mean())
+    top_in5c = sum(1 for i, x in enumerate(slab.labels) if x in CATIONS and cn[i] == 5 and z[i] > z.mean())
     manifest = {
         "model_id": model["model"]["id"],
         "description": model["model"].get("description", ""),
@@ -504,7 +568,8 @@ def build_from_model(model_path: Path, output: Path) -> dict:
         "orientation_vectors_cubic": ORIENTATION,
         "box_angstrom": {"x": [0.0, slab.lengths[0]], "y": [0.0, slab.lengths[1]], "z": [zlo, zhi]},
         "area_nm2": round(area_nm2, 6),
-        "trilayers": int(s["trilayers"]),
+        "trilayers": int(s["trilayers"]) if "trilayers" in s else None,
+        "source_slab": src.get("lmp") if src else None,
         "counts": {t: slab.count(t) for t in TYPE_ORDER},
         "atom_count": len(slab.labels),
         "type_ids": type_id,

@@ -1,0 +1,19 @@
+# Site-resolved single-molecule checks on corrugated slabs vs hydroxylation level (NiO campaign pseudo-LJ cross terms on a RIGID slab;
+# compare against the ITO file of the same name; NOT the flexible Buckingham NiO model).
+# Sites: groove floor (fy 0.5), wall midpoint (|dy| = 7.3 A, fy 0.325), plateau centre (fy 0.0).
+substrates = ["inputs/surfaces/corrugated-nio-110-rigid-oh000", "inputs/surfaces/corrugated-nio-110-rigid-oh025", "inputs/surfaces/corrugated-nio-110-rigid-oh100"]
+molecules = ["me-4pacz", "meo-2pacz"]
+parameter_sets = ["cao-nio-rigid"]
+
+[scan]
+seed = 20260927
+lateral_sites = [[0.5, 0.5], [0.5, 0.325], [0.5, 0.0]]
+tilts_deg = [0.0, 45.0, 80.0]
+floor_reference = "local"
+floor_gap = 2.5
+box_height_above_top = 40.0
+gewald = 0.30
+mesh = [104, 36, 144]
+quench_steps = 1000
+min_steps = 1500
+reference_min_steps = 3000

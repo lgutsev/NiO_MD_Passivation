@@ -1,8 +1,8 @@
 {
-  "model_id": "in2o3-111-oh-groove",
-  "description": "Corrugated hydroxylated In2O3(111): ITO analogue of inputs/surfaces/corrugated-nio-110 (one symmetric 45-degree V-groove per cell, 14.6 A deep, running along x)",
-  "model_toml_sha256": "ea589d121b7678997b033a3d8a63902c27cbd47d33b3d917b5bc94961908125d",
-  "surface_lmp_sha256": "1e90675438f8be18faf7c2a42b14e0aac891ce849c4b20479804a8dd62bf979e",
+  "model_id": "in2o3-111-groove-oh100",
+  "description": "Corrugated In2O3(111), hydroxylation: 100% of exposed sites (clash-limited) \u2014 ITO analogue of inputs/surfaces/corrugated-nio-110 (one symmetric 45-degree V-groove per cell, 14.6 A deep, running along x)",
+  "model_toml_sha256": "f7bb686ee938abdfd788e8961766191d6e2616170ad418c1948e1908074e9a5f",
+  "surface_lmp_sha256": "9b2e7f959f50259c65f421880752e24879d1ad781f88a4530c56a340e59149b0",
   "code_commit": "12cb60b68503be4ec6477a1b059d4fea7d4a1015",
   "lattice": {
     "a": 10.117,
@@ -57,11 +57,11 @@
     "In": 3982,
     "Sn": 0,
     "Ni": 0,
-    "O": 5883,
-    "Oh": 180,
-    "Hh": 180
+    "O": 5713,
+    "Oh": 520,
+    "Hh": 520
   },
-  "atom_count": 10225,
+  "atom_count": 10735,
   "type_ids": {
     "In": 1,
     "O": 2,
@@ -79,8 +79,8 @@
       "Hh": 0.425
     }
   },
-  "total_charge": 7.958078640513122e-13,
-  "dipole_z_e_per_angstrom": -0.0034930173287438457,
+  "total_charge": 7.531752999057062e-13,
+  "dipole_z_e_per_angstrom": -0.005446312636039156,
   "z_top_cation_angstrom": 28.138687,
   "z_top_atom_angstrom": 30.980844,
   "z_bottom_atom_angstrom": 0.625577,
@@ -88,18 +88,135 @@
     "bare_in5c": 360,
     "bare_o3c": 360,
     "bare_in5c_per_nm2": 6.7689,
-    "cation_5c_after_modification": 218
+    "cation_5c_after_modification": 191
   },
   "hydroxylation": {
-    "pairs": 90,
-    "requested_pairs": 90,
-    "site_fraction": null,
+    "pairs": 260,
+    "requested_pairs": 289,
+    "site_fraction": 1.0,
     "host": "In",
-    "skipped_sites": [],
+    "skipped_sites": [
+      {
+        "cation_index": 4679,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 5216,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 4216,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 5716,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 5210,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 5710,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 4209,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 4709,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 6179,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 6210,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 540,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 6639,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 7383,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 8127,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 9617,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 1287,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 6699,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 8187,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 8209,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 8954,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 9699,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 6145,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 2129,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 2876,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 3623,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 635,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 1382,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 6721,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      },
+      {
+        "cation_index": 7564,
+        "reason": "terminal OH clashes with an earlier hydroxyl"
+      }
+    ],
     "clash_free_sites": 289,
     "exposed_sites": 408,
-    "shortfall_vs_requested_fraction": 0,
-    "achieved_fraction_of_exposed": 0.2206,
+    "shortfall_vs_requested_fraction": 148,
+    "achieved_fraction_of_exposed": 0.6373,
     "top_in5c_available": 408,
     "top_in5c_excluded_clash": [
       {
@@ -701,7 +818,7 @@
     "top_o3c_available": 503,
     "seed": 20260926,
     "site_selection": "seeded periodic farthest-point over clash-free top In5c; O3c >= 2.5 A from terminal O; every H >= 1.5 A from all atoms and >= 2.5 A from cations",
-    "min_new_atom_nonbonded_angstrom": 2.2536,
+    "min_new_atom_nonbonded_angstrom": 1.5811,
     "sites": [
       {
         "in_index": 8308,
@@ -1242,9 +1359,1029 @@
         "protonated_o_index": 6662,
         "vacancy_direction_z": 0.5884,
         "terminal_o_to_protonated_o": 2.6205
+      },
+      {
+        "in_index": 8932,
+        "protonated_o_index": 8971,
+        "vacancy_direction_z": 0.5074,
+        "terminal_o_to_protonated_o": 3.7498
+      },
+      {
+        "in_index": 596,
+        "protonated_o_index": 603,
+        "vacancy_direction_z": 0.8339,
+        "terminal_o_to_protonated_o": 3.4734
+      },
+      {
+        "in_index": 9765,
+        "protonated_o_index": 9781,
+        "vacancy_direction_z": 0.2707,
+        "terminal_o_to_protonated_o": 2.8776
+      },
+      {
+        "in_index": 8122,
+        "protonated_o_index": 8150,
+        "vacancy_direction_z": 0.5884,
+        "terminal_o_to_protonated_o": 2.6205
+      },
+      {
+        "in_index": 2707,
+        "protonated_o_index": 2738,
+        "vacancy_direction_z": 0.7951,
+        "terminal_o_to_protonated_o": 3.013
+      },
+      {
+        "in_index": 3454,
+        "protonated_o_index": 3485,
+        "vacancy_direction_z": 0.7951,
+        "terminal_o_to_protonated_o": 3.013
+      },
+      {
+        "in_index": 9053,
+        "protonated_o_index": 9076,
+        "vacancy_direction_z": 0.2763,
+        "terminal_o_to_protonated_o": 2.7034
+      },
+      {
+        "in_index": 1380,
+        "protonated_o_index": 1262,
+        "vacancy_direction_z": 0.3581,
+        "terminal_o_to_protonated_o": 2.9416
+      },
+      {
+        "in_index": 2781,
+        "protonated_o_index": 3557,
+        "vacancy_direction_z": 0.54,
+        "terminal_o_to_protonated_o": 2.6205
+      },
+      {
+        "in_index": 2047,
+        "protonated_o_index": 2051,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.078
+      },
+      {
+        "in_index": 1303,
+        "protonated_o_index": 1313,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 2050,
+        "protonated_o_index": 2060,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 2664,
+        "protonated_o_index": 2680,
+        "vacancy_direction_z": 0.723,
+        "terminal_o_to_protonated_o": 2.8776
+      },
+      {
+        "in_index": 426,
+        "protonated_o_index": 442,
+        "vacancy_direction_z": 0.723,
+        "terminal_o_to_protonated_o": 2.8776
+      },
+      {
+        "in_index": 3585,
+        "protonated_o_index": 3517,
+        "vacancy_direction_z": 0.5774,
+        "terminal_o_to_protonated_o": 3.5188
+      },
+      {
+        "in_index": 4210,
+        "protonated_o_index": 4223,
+        "vacancy_direction_z": 0.6832,
+        "terminal_o_to_protonated_o": 3.413
+      },
+      {
+        "in_index": 4645,
+        "protonated_o_index": 4718,
+        "vacancy_direction_z": 0.4898,
+        "terminal_o_to_protonated_o": 3.5063
+      },
+      {
+        "in_index": 9677,
+        "protonated_o_index": 9716,
+        "vacancy_direction_z": 0.5074,
+        "terminal_o_to_protonated_o": 3.7498
+      },
+      {
+        "in_index": 414,
+        "protonated_o_index": 1184,
+        "vacancy_direction_z": 0.5875,
+        "terminal_o_to_protonated_o": 3.2969
+      },
+      {
+        "in_index": 1158,
+        "protonated_o_index": 1931,
+        "vacancy_direction_z": 0.5875,
+        "terminal_o_to_protonated_o": 3.2969
+      },
+      {
+        "in_index": 5136,
+        "protonated_o_index": 5231,
+        "vacancy_direction_z": 0.2406,
+        "terminal_o_to_protonated_o": 2.7989
+      },
+      {
+        "in_index": 6136,
+        "protonated_o_index": 6231,
+        "vacancy_direction_z": 0.2406,
+        "terminal_o_to_protonated_o": 2.7989
+      },
+      {
+        "in_index": 7443,
+        "protonated_o_index": 7482,
+        "vacancy_direction_z": 0.5074,
+        "terminal_o_to_protonated_o": 3.7498
+      },
+      {
+        "in_index": 633,
+        "protonated_o_index": 515,
+        "vacancy_direction_z": 0.3581,
+        "terminal_o_to_protonated_o": 2.9416
+      },
+      {
+        "in_index": 2034,
+        "protonated_o_index": 2810,
+        "vacancy_direction_z": 0.54,
+        "terminal_o_to_protonated_o": 2.6205
+      },
+      {
+        "in_index": 3528,
+        "protonated_o_index": 569,
+        "vacancy_direction_z": 0.54,
+        "terminal_o_to_protonated_o": 2.6205
+      },
+      {
+        "in_index": 3530,
+        "protonated_o_index": 3554,
+        "vacancy_direction_z": 0.4543,
+        "terminal_o_to_protonated_o": 2.5986
+      },
+      {
+        "in_index": 7521,
+        "protonated_o_index": 7536,
+        "vacancy_direction_z": 0.5875,
+        "terminal_o_to_protonated_o": 3.0925
+      },
+      {
+        "in_index": 5636,
+        "protonated_o_index": 5731,
+        "vacancy_direction_z": 0.2406,
+        "terminal_o_to_protonated_o": 2.7989
+      },
+      {
+        "in_index": 8867,
+        "protonated_o_index": 8895,
+        "vacancy_direction_z": 0.5884,
+        "terminal_o_to_protonated_o": 2.6205
+      },
+      {
+        "in_index": 9020,
+        "protonated_o_index": 9036,
+        "vacancy_direction_z": 0.2707,
+        "terminal_o_to_protonated_o": 2.8776
+      },
+      {
+        "in_index": 4635,
+        "protonated_o_index": 4640,
+        "vacancy_direction_z": 0.1944,
+        "terminal_o_to_protonated_o": 3.2969
+      },
+      {
+        "in_index": 5183,
+        "protonated_o_index": 5203,
+        "vacancy_direction_z": 0.7001,
+        "terminal_o_to_protonated_o": 2.7989
+      },
+      {
+        "in_index": 4134,
+        "protonated_o_index": 4189,
+        "vacancy_direction_z": 0.5175,
+        "terminal_o_to_protonated_o": 2.5986
+      },
+      {
+        "in_index": 4145,
+        "protonated_o_index": 4218,
+        "vacancy_direction_z": 0.4898,
+        "terminal_o_to_protonated_o": 3.5063
+      },
+      {
+        "in_index": 4183,
+        "protonated_o_index": 4203,
+        "vacancy_direction_z": 0.7001,
+        "terminal_o_to_protonated_o": 2.7989
+      },
+      {
+        "in_index": 5134,
+        "protonated_o_index": 5189,
+        "vacancy_direction_z": 0.5175,
+        "terminal_o_to_protonated_o": 2.5986
+      },
+      {
+        "in_index": 5145,
+        "protonated_o_index": 5218,
+        "vacancy_direction_z": 0.4898,
+        "terminal_o_to_protonated_o": 3.5063
+      },
+      {
+        "in_index": 5679,
+        "protonated_o_index": 5724,
+        "vacancy_direction_z": 0.5774,
+        "terminal_o_to_protonated_o": 3.0063
+      },
+      {
+        "in_index": 6146,
+        "protonated_o_index": 6217,
+        "vacancy_direction_z": 0.7775,
+        "terminal_o_to_protonated_o": 2.7034
+      },
+      {
+        "in_index": 2092,
+        "protonated_o_index": 1933,
+        "vacancy_direction_z": 0.4695,
+        "terminal_o_to_protonated_o": 5.2312
+      },
+      {
+        "in_index": 4646,
+        "protonated_o_index": 4717,
+        "vacancy_direction_z": 0.7775,
+        "terminal_o_to_protonated_o": 2.7034
+      },
+      {
+        "in_index": 4680,
+        "protonated_o_index": 4695,
+        "vacancy_direction_z": 0.7321,
+        "terminal_o_to_protonated_o": 4.1464
+      },
+      {
+        "in_index": 5180,
+        "protonated_o_index": 5195,
+        "vacancy_direction_z": 0.7321,
+        "terminal_o_to_protonated_o": 4.1464
+      },
+      {
+        "in_index": 6180,
+        "protonated_o_index": 6195,
+        "vacancy_direction_z": 0.7321,
+        "terminal_o_to_protonated_o": 4.1464
+      },
+      {
+        "in_index": 1344,
+        "protonated_o_index": 1276,
+        "vacancy_direction_z": 0.5774,
+        "terminal_o_to_protonated_o": 3.5188
+      },
+      {
+        "in_index": 9052,
+        "protonated_o_index": 9073,
+        "vacancy_direction_z": 0.9868,
+        "terminal_o_to_protonated_o": 2.7647
+      },
+      {
+        "in_index": 8262,
+        "protonated_o_index": 9035,
+        "vacancy_direction_z": 0.8363,
+        "terminal_o_to_protonated_o": 3.013
+      },
+      {
+        "in_index": 2046,
+        "protonated_o_index": 2057,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 3.101
+      },
+      {
+        "in_index": 9807,
+        "protonated_o_index": 9788,
+        "vacancy_direction_z": 0.7574,
+        "terminal_o_to_protonated_o": 4.5915
+      },
+      {
+        "in_index": 6786,
+        "protonated_o_index": 6804,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 3.101
+      },
+      {
+        "in_index": 7530,
+        "protonated_o_index": 7548,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 3.101
+      },
+      {
+        "in_index": 8317,
+        "protonated_o_index": 8222,
+        "vacancy_direction_z": 0.7574,
+        "terminal_o_to_protonated_o": 4.8473
+      },
+      {
+        "in_index": 9021,
+        "protonated_o_index": 9025,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 9062,
+        "protonated_o_index": 9043,
+        "vacancy_direction_z": 0.7574,
+        "terminal_o_to_protonated_o": 4.5915
+      },
+      {
+        "in_index": 555,
+        "protonated_o_index": 567,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 3.101
+      },
+      {
+        "in_index": 1346,
+        "protonated_o_index": 7577,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 2048,
+        "protonated_o_index": 2053,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 6774,
+        "protonated_o_index": 7546,
+        "vacancy_direction_z": 0.8363,
+        "terminal_o_to_protonated_o": 3.013
+      },
+      {
+        "in_index": 2782,
+        "protonated_o_index": 2806,
+        "vacancy_direction_z": 0.9868,
+        "terminal_o_to_protonated_o": 2.7647
+      },
+      {
+        "in_index": 3529,
+        "protonated_o_index": 3553,
+        "vacancy_direction_z": 0.9868,
+        "terminal_o_to_protonated_o": 2.7647
+      },
+      {
+        "in_index": 4637,
+        "protonated_o_index": 4651,
+        "vacancy_direction_z": 0.3525,
+        "terminal_o_to_protonated_o": 3.4645
+      },
+      {
+        "in_index": 5137,
+        "protonated_o_index": 5151,
+        "vacancy_direction_z": 0.3525,
+        "terminal_o_to_protonated_o": 3.4645
+      },
+      {
+        "in_index": 638,
+        "protonated_o_index": 659,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 3.0644
+      },
+      {
+        "in_index": 1960,
+        "protonated_o_index": 2153,
+        "vacancy_direction_z": 0.7951,
+        "terminal_o_to_protonated_o": 4.3875
+      },
+      {
+        "in_index": 8273,
+        "protonated_o_index": 8283,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 9018,
+        "protonated_o_index": 9028,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 9752,
+        "protonated_o_index": 6802,
+        "vacancy_direction_z": 0.8363,
+        "terminal_o_to_protonated_o": 3.013
+      },
+      {
+        "in_index": 9763,
+        "protonated_o_index": 9773,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 554,
+        "protonated_o_index": 559,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 1301,
+        "protonated_o_index": 1306,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 7529,
+        "protonated_o_index": 7539,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 2093,
+        "protonated_o_index": 8322,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 2879,
+        "protonated_o_index": 2900,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 3.0644
+      },
+      {
+        "in_index": 6137,
+        "protonated_o_index": 6151,
+        "vacancy_direction_z": 0.3525,
+        "terminal_o_to_protonated_o": 3.4645
+      },
+      {
+        "in_index": 8265,
+        "protonated_o_index": 8282,
+        "vacancy_direction_z": 0.5875,
+        "terminal_o_to_protonated_o": 4.0882
+      },
+      {
+        "in_index": 6788,
+        "protonated_o_index": 6739,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.078
+      },
+      {
+        "in_index": 552,
+        "protonated_o_index": 563,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 3.101
+      },
+      {
+        "in_index": 2049,
+        "protonated_o_index": 2061,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 3.101
+      },
+      {
+        "in_index": 2796,
+        "protonated_o_index": 2808,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 3.101
+      },
+      {
+        "in_index": 3543,
+        "protonated_o_index": 3555,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 3.101
+      },
+      {
+        "in_index": 1228,
+        "protonated_o_index": 1310,
+        "vacancy_direction_z": 0.5175,
+        "terminal_o_to_protonated_o": 2.5986
+      },
+      {
+        "in_index": 1975,
+        "protonated_o_index": 2059,
+        "vacancy_direction_z": 0.5175,
+        "terminal_o_to_protonated_o": 3.0009
+      },
+      {
+        "in_index": 2708,
+        "protonated_o_index": 2749,
+        "vacancy_direction_z": -0.0,
+        "terminal_o_to_protonated_o": 3.013
+      },
+      {
+        "in_index": 3455,
+        "protonated_o_index": 3496,
+        "vacancy_direction_z": -0.0,
+        "terminal_o_to_protonated_o": 3.013
+      },
+      {
+        "in_index": 1333,
+        "protonated_o_index": 7579,
+        "vacancy_direction_z": 0.9868,
+        "terminal_o_to_protonated_o": 4.4226
+      },
+      {
+        "in_index": 8321,
+        "protonated_o_index": 8227,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 4.7051
+      },
+      {
+        "in_index": 1299,
+        "protonated_o_index": 1259,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 4.7051
+      },
+      {
+        "in_index": 2035,
+        "protonated_o_index": 8162,
+        "vacancy_direction_z": 0.9868,
+        "terminal_o_to_protonated_o": 5.4082
+      },
+      {
+        "in_index": 2793,
+        "protonated_o_index": 2753,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 4.7051
+      },
+      {
+        "in_index": 3540,
+        "protonated_o_index": 3500,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 4.7051
+      },
+      {
+        "in_index": 7532,
+        "protonated_o_index": 7483,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.078
+      },
+      {
+        "in_index": 9010,
+        "protonated_o_index": 9027,
+        "vacancy_direction_z": 0.5875,
+        "terminal_o_to_protonated_o": 4.0882
+      },
+      {
+        "in_index": 9755,
+        "protonated_o_index": 9770,
+        "vacancy_direction_z": 0.5875,
+        "terminal_o_to_protonated_o": 3.0925
+      },
+      {
+        "in_index": 9766,
+        "protonated_o_index": 9717,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.078
+      },
+      {
+        "in_index": 6773,
+        "protonated_o_index": 6674,
+        "vacancy_direction_z": 0.9868,
+        "terminal_o_to_protonated_o": 5.9408
+      },
+      {
+        "in_index": 7517,
+        "protonated_o_index": 7418,
+        "vacancy_direction_z": 0.9868,
+        "terminal_o_to_protonated_o": 5.9408
+      },
+      {
+        "in_index": 8261,
+        "protonated_o_index": 8226,
+        "vacancy_direction_z": 0.9868,
+        "terminal_o_to_protonated_o": 7.4342
+      },
+      {
+        "in_index": 9019,
+        "protonated_o_index": 8907,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 4.7051
+      },
+      {
+        "in_index": 9764,
+        "protonated_o_index": 9652,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 4.7051
+      },
+      {
+        "in_index": 483,
+        "protonated_o_index": 520,
+        "vacancy_direction_z": 0.8459,
+        "terminal_o_to_protonated_o": 2.8776
+      },
+      {
+        "in_index": 1332,
+        "protonated_o_index": 1357,
+        "vacancy_direction_z": 0.9868,
+        "terminal_o_to_protonated_o": 2.7647
+      },
+      {
+        "in_index": 2091,
+        "protonated_o_index": 2023,
+        "vacancy_direction_z": 0.5774,
+        "terminal_o_to_protonated_o": 3.5188
+      },
+      {
+        "in_index": 2826,
+        "protonated_o_index": 2851,
+        "vacancy_direction_z": 0.9868,
+        "terminal_o_to_protonated_o": 2.7647
+      },
+      {
+        "in_index": 3573,
+        "protonated_o_index": 3598,
+        "vacancy_direction_z": 0.9868,
+        "terminal_o_to_protonated_o": 2.7647
+      },
+      {
+        "in_index": 479,
+        "protonated_o_index": 499,
+        "vacancy_direction_z": 0.8038,
+        "terminal_o_to_protonated_o": 6.2736
+      },
+      {
+        "in_index": 585,
+        "protonated_o_index": 436,
+        "vacancy_direction_z": 0.9868,
+        "terminal_o_to_protonated_o": 5.4082
+      },
+      {
+        "in_index": 556,
+        "protonated_o_index": 558,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.078
+      },
+      {
+        "in_index": 586,
+        "protonated_o_index": 6743,
+        "vacancy_direction_z": 0.9868,
+        "terminal_o_to_protonated_o": 7.8905
+      },
+      {
+        "in_index": 2797,
+        "protonated_o_index": 2799,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.078
+      },
+      {
+        "in_index": 3544,
+        "protonated_o_index": 3546,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.078
+      },
+      {
+        "in_index": 7575,
+        "protonated_o_index": 7507,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.1715
+      },
+      {
+        "in_index": 1343,
+        "protonated_o_index": 1350,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 2090,
+        "protonated_o_index": 2097,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 2837,
+        "protonated_o_index": 2844,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 3584,
+        "protonated_o_index": 3591,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.0466
+      },
+      {
+        "in_index": 6702,
+        "protonated_o_index": 6738,
+        "vacancy_direction_z": -0.0,
+        "terminal_o_to_protonated_o": 4.0142
+      },
+      {
+        "in_index": 1289,
+        "protonated_o_index": 1198,
+        "vacancy_direction_z": 0.4543,
+        "terminal_o_to_protonated_o": 3.101
+      },
+      {
+        "in_index": 2036,
+        "protonated_o_index": 1945,
+        "vacancy_direction_z": 0.4543,
+        "terminal_o_to_protonated_o": 3.101
+      },
+      {
+        "in_index": 9066,
+        "protonated_o_index": 8972,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 4.7051
+      },
+      {
+        "in_index": 9811,
+        "protonated_o_index": 9814,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 5.7064
+      },
+      {
+        "in_index": 6819,
+        "protonated_o_index": 6839,
+        "vacancy_direction_z": 0.9868,
+        "terminal_o_to_protonated_o": 2.7647
+      },
+      {
+        "in_index": 8190,
+        "protonated_o_index": 8231,
+        "vacancy_direction_z": -0.0,
+        "terminal_o_to_protonated_o": 3.013
+      },
+      {
+        "in_index": 8935,
+        "protonated_o_index": 8976,
+        "vacancy_direction_z": -0.0,
+        "terminal_o_to_protonated_o": 3.013
+      },
+      {
+        "in_index": 9810,
+        "protonated_o_index": 9712,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 5.7935
+      },
+      {
+        "in_index": 7574,
+        "protonated_o_index": 7554,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 2.5986
+      },
+      {
+        "in_index": 8307,
+        "protonated_o_index": 8328,
+        "vacancy_direction_z": 0.9868,
+        "terminal_o_to_protonated_o": 2.7647
+      },
+      {
+        "in_index": 9064,
+        "protonated_o_index": 8911,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 4.7051
+      },
+      {
+        "in_index": 9809,
+        "protonated_o_index": 9656,
+        "vacancy_direction_z": 0.9258,
+        "terminal_o_to_protonated_o": 4.7051
+      },
+      {
+        "in_index": 8275,
+        "protonated_o_index": 8291,
+        "vacancy_direction_z": 0.2707,
+        "terminal_o_to_protonated_o": 2.8776
+      },
+      {
+        "in_index": 8885,
+        "protonated_o_index": 9120,
+        "vacancy_direction_z": 0.382,
+        "terminal_o_to_protonated_o": 3.3106
+      },
+      {
+        "in_index": 9630,
+        "protonated_o_index": 9865,
+        "vacancy_direction_z": 0.382,
+        "terminal_o_to_protonated_o": 3.3106
+      },
+      {
+        "in_index": 6787,
+        "protonated_o_index": 6803,
+        "vacancy_direction_z": 0.2707,
+        "terminal_o_to_protonated_o": 2.8776
+      },
+      {
+        "in_index": 7396,
+        "protonated_o_index": 7630,
+        "vacancy_direction_z": 0.382,
+        "terminal_o_to_protonated_o": 3.3106
+      },
+      {
+        "in_index": 469,
+        "protonated_o_index": 557,
+        "vacancy_direction_z": 0.7951,
+        "terminal_o_to_protonated_o": 7.0744
+      },
+      {
+        "in_index": 1213,
+        "protonated_o_index": 1406,
+        "vacancy_direction_z": 0.7951,
+        "terminal_o_to_protonated_o": 4.3875
+      },
+      {
+        "in_index": 2127,
+        "protonated_o_index": 5205,
+        "vacancy_direction_z": 0.3581,
+        "terminal_o_to_protonated_o": 4.6926
+      },
+      {
+        "in_index": 2874,
+        "protonated_o_index": 2756,
+        "vacancy_direction_z": 0.3581,
+        "terminal_o_to_protonated_o": 2.9416
+      },
+      {
+        "in_index": 3621,
+        "protonated_o_index": 3503,
+        "vacancy_direction_z": 0.3581,
+        "terminal_o_to_protonated_o": 2.9416
+      },
+      {
+        "in_index": 485,
+        "protonated_o_index": 4205,
+        "vacancy_direction_z": 0.4439,
+        "terminal_o_to_protonated_o": 4.3915
+      },
+      {
+        "in_index": 1230,
+        "protonated_o_index": 4705,
+        "vacancy_direction_z": 0.4439,
+        "terminal_o_to_protonated_o": 4.3915
+      },
+      {
+        "in_index": 2724,
+        "protonated_o_index": 5705,
+        "vacancy_direction_z": 0.4439,
+        "terminal_o_to_protonated_o": 4.3915
+      },
+      {
+        "in_index": 3471,
+        "protonated_o_index": 6205,
+        "vacancy_direction_z": 0.4439,
+        "terminal_o_to_protonated_o": 4.3915
+      },
+      {
+        "in_index": 5146,
+        "protonated_o_index": 5217,
+        "vacancy_direction_z": 0.7775,
+        "terminal_o_to_protonated_o": 2.7034
+      },
+      {
+        "in_index": 8957,
+        "protonated_o_index": 9141,
+        "vacancy_direction_z": 0.8339,
+        "terminal_o_to_protonated_o": 2.9416
+      },
+      {
+        "in_index": 9702,
+        "protonated_o_index": 9886,
+        "vacancy_direction_z": 0.8339,
+        "terminal_o_to_protonated_o": 2.9416
+      },
+      {
+        "in_index": 5634,
+        "protonated_o_index": 5650,
+        "vacancy_direction_z": 0.5175,
+        "terminal_o_to_protonated_o": 3.5593
+      },
+      {
+        "in_index": 553,
+        "protonated_o_index": 454,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.1715
+      },
+      {
+        "in_index": 1170,
+        "protonated_o_index": 1186,
+        "vacancy_direction_z": 0.723,
+        "terminal_o_to_protonated_o": 2.8776
+      },
+      {
+        "in_index": 1917,
+        "protonated_o_index": 1929,
+        "vacancy_direction_z": 0.723,
+        "terminal_o_to_protonated_o": 4.6576
+      },
+      {
+        "in_index": 2794,
+        "protonated_o_index": 2798,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.078
+      },
+      {
+        "in_index": 2839,
+        "protonated_o_index": 2850,
+        "vacancy_direction_z": 0.4695,
+        "terminal_o_to_protonated_o": 3.3106
+      },
+      {
+        "in_index": 3411,
+        "protonated_o_index": 3423,
+        "vacancy_direction_z": 0.723,
+        "terminal_o_to_protonated_o": 4.6576
+      },
+      {
+        "in_index": 3541,
+        "protonated_o_index": 3545,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 3.078
+      },
+      {
+        "in_index": 401,
+        "protonated_o_index": 609,
+        "vacancy_direction_z": 0.5763,
+        "terminal_o_to_protonated_o": 4.319
+      },
+      {
+        "in_index": 6646,
+        "protonated_o_index": 6687,
+        "vacancy_direction_z": 0.6832,
+        "terminal_o_to_protonated_o": 3.4734
+      },
+      {
+        "in_index": 7378,
+        "protonated_o_index": 7406,
+        "vacancy_direction_z": 0.5884,
+        "terminal_o_to_protonated_o": 2.6205
+      },
+      {
+        "in_index": 7468,
+        "protonated_o_index": 7651,
+        "vacancy_direction_z": 0.8339,
+        "terminal_o_to_protonated_o": 2.9416
+      },
+      {
+        "in_index": 8134,
+        "protonated_o_index": 8175,
+        "vacancy_direction_z": 0.6832,
+        "terminal_o_to_protonated_o": 3.4734
+      },
+      {
+        "in_index": 8879,
+        "protonated_o_index": 8920,
+        "vacancy_direction_z": 0.6832,
+        "terminal_o_to_protonated_o": 3.4734
+      },
+      {
+        "in_index": 9624,
+        "protonated_o_index": 9665,
+        "vacancy_direction_z": 0.6832,
+        "terminal_o_to_protonated_o": 3.4734
+      },
+      {
+        "in_index": 598,
+        "protonated_o_index": 438,
+        "vacancy_direction_z": 0.4695,
+        "terminal_o_to_protonated_o": 7.9166
+      },
+      {
+        "in_index": 1145,
+        "protonated_o_index": 1323,
+        "vacancy_direction_z": 0.5763,
+        "terminal_o_to_protonated_o": 5.1835
+      },
+      {
+        "in_index": 1905,
+        "protonated_o_index": 2678,
+        "vacancy_direction_z": 0.5875,
+        "terminal_o_to_protonated_o": 3.2969
+      },
+      {
+        "in_index": 2639,
+        "protonated_o_index": 3439,
+        "vacancy_direction_z": 0.5763,
+        "terminal_o_to_protonated_o": 4.6663
+      },
+      {
+        "in_index": 3399,
+        "protonated_o_index": 440,
+        "vacancy_direction_z": 0.5875,
+        "terminal_o_to_protonated_o": 3.2969
+      },
+      {
+        "in_index": 5211,
+        "protonated_o_index": 5229,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 2.8408
+      },
+      {
+        "in_index": 5711,
+        "protonated_o_index": 5729,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 2.8408
+      },
+      {
+        "in_index": 4211,
+        "protonated_o_index": 4229,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 2.8408
+      },
+      {
+        "in_index": 4711,
+        "protonated_o_index": 4729,
+        "vacancy_direction_z": 0.8221,
+        "terminal_o_to_protonated_o": 2.8408
       }
     ],
-    "oh_groups_per_nm2": 3.3844
+    "oh_groups_per_nm2": 9.7773
   },
   "doping": {
     "clusters": 0,

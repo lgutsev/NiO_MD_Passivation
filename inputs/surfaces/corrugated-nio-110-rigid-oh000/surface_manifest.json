@@ -1,0 +1,111 @@
+{
+  "model_id": "corrugated-nio-110-rigid-oh000",
+  "description": "Authoritative corrugated NiO(110) (inputs/surfaces/corrugated-nio-110, unchanged coordinates), hydroxylation: no hydroxylation. Rigid-slab variant for the nio_md_prep.ito pipeline; NOT the flexible Buckingham production model.",
+  "model_toml_sha256": "efb935d66e7e23048c1cbdadd9280ee8a2a634bb2bbad2b8f317982aaf57292f",
+  "surface_lmp_sha256": "4c2b55ac29f4c438ef27ddccd3338575b859949bb118d2a25693a3d4c8568e62",
+  "code_commit": "12cb60b68503be4ec6477a1b059d4fea7d4a1015",
+  "lattice": {
+    "a": 10.117,
+    "in_8b": [
+      0.25,
+      0.25,
+      0.25
+    ],
+    "in_24d_x": 0.4663,
+    "o_48e": [
+      0.3912,
+      0.1558,
+      0.3796
+    ],
+    "source": "Marezio, Acta Cryst. 20, 723 (1966), doi:10.1107/S0365110X66001749; coordinates from COD 2310009"
+  },
+  "orientation_vectors_cubic": [
+    [
+      1,
+      -1,
+      0
+    ],
+    [
+      1,
+      1,
+      -2
+    ],
+    [
+      1,
+      1,
+      1
+    ]
+  ],
+  "box_angstrom": {
+    "x": [
+      0.0,
+      125.1
+    ],
+    "y": [
+      0.0,
+      41.7
+    ],
+    "z": [
+      -5.0,
+      200.0
+    ]
+  },
+  "area_nm2": 52.1667,
+  "trilayers": null,
+  "source_slab": "inputs/surfaces/corrugated-nio-110/surface.lmp",
+  "counts": {
+    "In": 0,
+    "Sn": 0,
+    "Ni": 10530,
+    "O": 10530,
+    "Oh": 0,
+    "Hh": 0
+  },
+  "atom_count": 21060,
+  "type_ids": {
+    "Ni": 1,
+    "O": 2
+  },
+  "charges": {
+    "scheme": "formal-with-clayff-hydroxyl",
+    "scale": 1.0,
+    "hydroxyl_h": 0.425,
+    "per_label": {
+      "Ni": 2.0,
+      "O": -2.0
+    }
+  },
+  "total_charge": 0.0,
+  "dipole_z_e_per_angstrom": -1.7434392088687386e-16,
+  "z_top_cation_angstrom": 39.615,
+  "z_top_atom_angstrom": 39.615,
+  "z_bottom_atom_angstrom": 0.0,
+  "top_surface": {
+    "bare_in5c": 0,
+    "bare_o3c": 0,
+    "bare_in5c_per_nm2": 0.0,
+    "cation_5c_after_modification": 180
+  },
+  "hydroxylation": {
+    "pairs": 0,
+    "oh_groups_per_nm2": 0.0
+  },
+  "doping": {
+    "clusters": 0,
+    "sn_fraction": 0.0
+  },
+  "corrugation": {
+    "profile_axis": "y",
+    "depth_angstrom": 14.595,
+    "wall_slope": 1.0,
+    "step_height_angstrom": 2.085,
+    "step_run_angstrom": 2.085,
+    "groove_center_y_angstrom": 20.85,
+    "center_fraction": 0.5
+  },
+  "limitations": [
+    "geometric (unrelaxed) hydroxyl and interstitial placement; DFT relaxation not performed",
+    "fixed point charges; no free carriers, polarization, or charge transfer",
+    "no oxygen vacancies (would require electronic compensation)"
+  ]
+}

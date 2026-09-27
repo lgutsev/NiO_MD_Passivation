@@ -1,0 +1,28 @@
+[model]
+id = "in2o3-111-groove-oh000"
+description = "Corrugated In2O3(111), hydroxylation: no hydroxylation — ITO analogue of inputs/surfaces/corrugated-nio-110 (one symmetric 45-degree V-groove per cell, 14.6 A deep, running along x)"
+
+[slab]
+# 3 x 5 orthorhombic cells = 42.92 x 123.91 A before the quarter turn -> 123.91 x 42.92 A,
+# matching the NiO slab (125.1 x 41.7 A, groove along x).
+nx = 3
+ny = 5
+# 10 trilayers = 29.2 A; 5 remain under the groove floor (14.6 A, NiO keeps 25 A).
+trilayers = 10
+zlo = -5.0
+zhi = 200.0
+
+[corrugation]
+# NiO: 7 monatomic steps x 2.085 A = 14.595 A deep, 45-degree walls.
+# In2O3(111): 5 neutral trilayer steps x 2.9205 A = 14.603 A deep, 45-degree walls.
+depth_trilayers = 5
+wall_slope = 1.0
+profile_axis = "x"
+center_fraction = 0.5
+rotate_groove_along_x = true
+
+[charges]
+scheme = "clayff-scaled-formal"
+scale = 0.525
+hydroxyl_h = 0.425
+

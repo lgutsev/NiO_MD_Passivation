@@ -199,7 +199,8 @@ def _with_coords(path: Path, out: Path, xyz: np.ndarray) -> Path:
 
 def _scan_tag(job: tuple) -> list[dict]:
     sc, sub, slug, pset, output = job
-    sdir = ROOT / "inputs" / "ito" / "surfaces" / sub
+    # A bare name means inputs/ito/surfaces/<name>; anything with a slash is a repo-relative path.
+    sdir = ROOT / sub if "/" in sub else ROOT / "inputs" / "ito" / "surfaces" / sub
     sman = json.loads((sdir / "surface_manifest.json").read_text(encoding="utf-8"))
     slab = parse(sdir / "surface.lmp")
     lengths = (slab.bounds["x"][1], slab.bounds["y"][1])
@@ -215,7 +216,7 @@ def _scan_tag(job: tuple) -> list[dict]:
     n_mol = mol.count("Atoms"); n_slab = slab.count("Atoms")
     quench = int(sc.get("quench_steps", 0))
     min_steps = int(sc.get("min_steps", 3000)); ref_steps = int(sc.get("reference_min_steps", 10000))
-    tag = f"{sub}__{slug}__{pset.replace('/', '-')}"
+    tag = f"{Path(sub).name}__{slug}__{pset.replace('/', '-')}"
     work = Path(output) / tag; work.mkdir(parents=True, exist_ok=True)
     rows: list[dict] = []; e_slab = None; refs: list[float] = []
     local_ref = sc.get("floor_reference", "top") == "local"
