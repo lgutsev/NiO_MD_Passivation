@@ -70,3 +70,20 @@ Pooled over both parameter sets and both molecules, E_int by initial tilt:
   - `ads-*-bidentate` gives the chemisorption energy that the protonated force field cannot represent at all.
   If DFT physisorption is much stronger than the force field's, the slab LJ or charges need refitting before any coverage claim.
 - **E_ads caveat:** E_ads should not be used until the minimization caps are raised. That costs roughly 3–5× the CPU.
+
+## Corrugated slab, site-resolved (first pass, 2026-09-27)
+
+**Setup:** `studies/ito/adsorption-scan-groove.toml` on `in2o3-111-oh-groove`, the first build, in which CN 3 step-edge In were not yet eligible for hydroxylation. Sites are groove floor, wall midpoint and plateau centre, with 3 tilts each.
+
+| Molecule | Set | Floor E_int (median) | Wall | Plateau |
+|---|---|---|---|---|
+| Me-4PACz | UFF-cation | −103 | −113 | −6.8 |
+| MeO-2PACz | UFF-cation | −44 | −50 | −2.3 |
+| Me-4PACz | CLAYFF-cation | −63 | −101 (min −216) | −3.8 |
+| MeO-2PACz | CLAYFF-cation | −32 | −202 | −1.1 |
+
+- **The CLAYFF-cation set is not usable on corrugated slabs.** In the strongest placements, phosphonate O sits 1.71–1.84 Å from CN 3–4 rim In, far below any real In–O bond (about 2.1–2.2 Å). The CLAYFF "ao" cation has essentially no core repulsion (ε ≈ 1e-6 kcal/mol), and on flat O/OH-terminated slabs the anion layer hides this. The set is now flagged in `forcefield.py`.
+- **The UFF-cation set keeps all molecule–slab contacts ≥ 2.4 Å.** It still binds groove sites 15–50× more strongly than the plateau. Exposed low-CN step-edge In provides both Coulomb attraction and multi-sided dispersion.
+- **The groove preference therefore depends on how the rim is terminated.** The follow-up scans on the hydroxylation series answer this; CN 3 In are now hydroxylatable:
+  - `adsorption-scan-groove-hydroxylation.toml` (ITO 0/25/100%)
+  - `adsorption-scan-nio-groove-hydroxylation.toml` (rigid NiO 0/25/100%)

@@ -68,6 +68,35 @@ All 25 removals are recorded in the manifest. Hydroxylation then treats groove f
 - Real ITO roughness comes from grains and facets of other orientations.
 - This groove is a controlled geometric test of accumulation, as the NiO one is. It is not a model of a specific ITO morphology.
 
+## 3c. Hydroxylation series on the corrugated slabs (ITO and NiO)
+
+Both corrugated substrates come at five coverages. The levels follow the InterfaceForge NiO-MLIP convention:
+- coverage is the fraction of the exposed-cation inventory, meaning exposed cations with CN below bulk;
+- the motif is dissociated water (OH on the cation plus H on a nearby lattice O);
+- the arrangement is scattered, by seeded farthest-point selection.
+
+Placements that would clash are skipped, and each manifest records the shortfall.
+
+| Requested | ITO groove: `in2o3-111-groove-ohXXX` | NiO groove: `corrugated-nio-110-rigid-ohXXX` |
+|---|---|---|
+| 0% | 0 OH/nm² | 0 OH/nm² |
+| 25% | 25% achieved, 3.8 OH/nm² | 25% achieved, 5.8 OH/nm² |
+| 50% | 48%, 7.3 OH/nm² | 49%, 11.3 OH/nm² |
+| 75% | 64%, 9.8 OH/nm², **saturated** | 70%, 16.1 OH/nm² |
+| 100% | 64%, identical geometry to 75% | 90%, 20.7 OH/nm² |
+
+Densities are OH groups (terminal plus protonated lattice O) per projected nm². Figures: `data/ito_hydroxylation_series.png` and `data/nio_hydroxylation_series.png`, drawn with `scripts/ito/render_surfaces.py`.
+
+**What experiments suggest:**
+- Cleaved NiO(100) single crystals show no OH on regular terrace sites; OH forms only at defects and steps.
+- Polar NiO(111) dissociates water but saturates at about 0.25 ML (Zhao et al., ACS Catal. 2016, 10.1021/acscatal.6b01997).
+- Device NiOx does carry OH/NiOOH in XPS, more on ALD or solution-processed films than on sputtered ones.
+- In2O3(111) saturates at 3 dissociated H2O per 1×1 cell under UHV, i.e. 3.38 OH/nm² on the flat slab. That is close to the 25% level here.
+
+Realistic surfaces are therefore expected at the **low end: 0–25% for NiO, about 25% for ITO**. The upper levels bracket heavily hydroxylated, plasma- or UV-ozone-treated surfaces.
+
+**NiO variants.** The coordinates are the authoritative campaign slab (`inputs/surfaces/corrugated-nio-110`), which is not modified. The variants use formal ±2 charges, CLAYFF-style hydroxyls, and the campaign's Ni/O pseudo-LJ values on a rigid slab (`cao-nio-rigid`). They are **not** the flexible Buckingham production model. The 0% variant is the rigid-slab control needed to separate the rigid-slab effect from the hydroxylation effect.
+
 ## 4. Hydroxylation
 
 Cleaned ITO is hydroxylated. Water dissociates on In2O3(111) into terminal In–OH and surface O–H. The model places dissociated water pairs geometrically:
