@@ -1,12 +1,14 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "nio-md-prep"
-version = "0.1.0"
+version = "1.0.0"
 description = "Reproducible preparation of NiO/passivant LAMMPS systems"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "openpyxl>=3.1",
