@@ -1,5 +1,7 @@
 # NiO MD Passivation
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23350928.svg)](https://doi.org/10.5281/zenodo.23350928)
+
 Reproducible molecular-dynamics workflows for phosphonate self-assembled layers on corrugated NiO surfaces.
 
 This repository provides a configuration-driven framework for constructing, running, validating, and analyzing classical molecular-dynamics models of phosphonate passivation on NiO. It supports pure SAMs, mixed CoSAMs, matched sequential-deposition systems, and gap-seeded accessibility controls designed to separate molecular access from spontaneous gap-finding. The same code base also includes phosphonate-agglomeration workflows for xTB sampling and VASP training-data preparation for future MLIP development.
@@ -123,7 +125,7 @@ The repository is provided as-is so that the published calculations can be repro
 
 ## Citation
 
-If you use this code, please cite the software release (see [`CITATION.cff`](CITATION.cff); GitHub's **Cite this repository** button exports BibTeX and APA) together with the article it was developed for:
+If you use this code, please cite the software via its Zenodo DOI, [10.5281/zenodo.23350928](https://doi.org/10.5281/zenodo.23350928), which always resolves to the latest release (see [`CITATION.cff`](CITATION.cff); GitHub's **Cite this repository** button exports BibTeX and APA) together with the article it was developed for:
 
 > S. Cao, S. Luo, T. Zheng, *et al.*, L. G. Gutsev, *et al.*, X. Xu, "Hybrid Self-Assembled Molecular Interlayers for Efficient and Stable Inverted Perovskite Solar Cells," *Advanced Energy Materials* **15**, 2405367 (2025). [doi:10.1002/aenm.202405367](https://doi.org/10.1002/aenm.202405367)
 
