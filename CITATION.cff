@@ -18,6 +18,14 @@ authors:
 version: 1.0.0
 date-released: 2026-10-13
 license: MIT
+doi: 10.5281/zenodo.23350928
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.23350928
+    description: Concept DOI for all versions of this software (resolves to the latest release)
+  - type: doi
+    value: 10.5281/zenodo.23350929
+    description: DOI for version 1.0.0
 repository-code: "https://github.com/lgutsev/NiO_MD_Passivation"
 keywords:
   - molecular dynamics
