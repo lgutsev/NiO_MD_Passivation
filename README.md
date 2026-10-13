@@ -121,6 +121,16 @@ The historical spreadsheet/notebook workflow remains in the repository as proven
 
 The repository is provided as-is so that the published calculations can be reproduced and the surface, passivants, loading, or deposition protocol can be adapted to new tasks.
 
+## Citation
+
+If you use this code, please cite the software release (see [`CITATION.cff`](CITATION.cff); GitHub's **Cite this repository** button exports BibTeX and APA) together with the article it was developed for:
+
+> S. Cao, S. Luo, T. Zheng, *et al.*, L. G. Gutsev, *et al.*, X. Xu, "Hybrid Self-Assembled Molecular Interlayers for Efficient and Stable Inverted Perovskite Solar Cells," *Advanced Energy Materials* **15**, 2405367 (2025). [doi:10.1002/aenm.202405367](https://doi.org/10.1002/aenm.202405367)
+
+## License
+
+Released under the [MIT License](LICENSE).
+
 ## Contact
 
 Problems, corrections, and useful extensions are welcome at <lgutsev@outlook.com>.

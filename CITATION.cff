@@ -1,0 +1,112 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below, together with the article it was developed for."
+type: software
+title: "NiO MD Passivation: reproducible molecular-dynamics workflows for phosphonate self-assembled layers on NiO"
+abstract: >-
+  A configuration-driven framework for constructing, running, validating, and
+  analyzing classical LAMMPS molecular-dynamics models of phosphonate
+  self-assembled monolayer passivation on corrugated NiO surfaces. It supports
+  pure SAMs, mixed CoSAMs, two-stage sequential deposition, gap-seeded
+  accessibility controls, coverage and interfacial-structure analysis, and
+  phosphonate-agglomeration workflows for xTB sampling and VASP training-data
+  preparation.
+authors:
+  - family-names: Gutsev
+    given-names: Lavrenty G.
+    email: lgutsev@outlook.com
+    affiliation: Louisiana Tech University
+version: 1.0.0
+date-released: 2026-10-13
+license: MIT
+repository-code: "https://github.com/lgutsev/NiO_MD_Passivation"
+keywords:
+  - molecular dynamics
+  - LAMMPS
+  - NiO
+  - self-assembled monolayer
+  - phosphonate
+  - perovskite solar cells
+  - passivation
+preferred-citation:
+  type: article
+  title: "Hybrid Self-Assembled Molecular Interlayers for Efficient and Stable Inverted Perovskite Solar Cells"
+  journal: Advanced Energy Materials
+  volume: 15
+  issue: 23
+  start: 2405367
+  year: 2025
+  doi: 10.1002/aenm.202405367
+  authors:
+    - family-names: Cao
+      given-names: Shuguang
+    - family-names: Luo
+      given-names: Shizi
+    - family-names: Zheng
+      given-names: Tongjun
+    - family-names: Bi
+      given-names: Zhuoneng
+    - family-names: Mo
+      given-names: Jiamei
+    - family-names: Gutsev
+      given-names: Lavrenty G.
+    - family-names: Emelianov
+      given-names: Nikita A.
+    - family-names: Ozerova
+      given-names: Victoria V.
+    - family-names: Slesarenko
+      given-names: Nikita A.
+    - family-names: Gutsev
+      given-names: Gennady L.
+    - family-names: Aldoshin
+      given-names: Sergey M.
+    - family-names: Sun
+      given-names: Fangyuan
+    - family-names: Tian
+      given-names: Yanqing
+    - family-names: Ramachandran
+      given-names: Bala R.
+    - family-names: Troshin
+      given-names: Pavel A.
+    - family-names: Xu
+      given-names: Xueqing
+references:
+  - type: article
+    title: "Multiphosphorylated molecules for buried interface regulation of inverted perovskite solar cells in a two-step process"
+    journal: Energy & Environmental Science
+    volume: 19
+    issue: 6
+    start: 2069
+    end: 2083
+    year: 2026
+    doi: 10.1039/D6EE00231E
+    authors:
+      - family-names: Luo
+        given-names: Shizi
+      - family-names: Bi
+        given-names: Zhuoneng
+      - family-names: Xiong
+        given-names: Liyao
+      - family-names: Zheng
+        given-names: Tongjun
+      - family-names: Wei
+        given-names: Xiaochun
+      - family-names: Nie
+        given-names: Youliang
+      - family-names: Taye
+        given-names: Biniyam Zemene
+      - family-names: Zhou
+        given-names: Jing
+      - family-names: Tauqeer
+        given-names: Haider Ali
+      - family-names: Gutsev
+        given-names: Lavrenty
+      - family-names: Vasenko
+        given-names: Andrey
+      - family-names: Gutsev
+        given-names: Gennady
+      - family-names: Prezhdo
+        given-names: Oleg
+      - family-names: Yu
+        given-names: Huangzhong
+      - family-names: Xu
+        given-names: Xueqing
