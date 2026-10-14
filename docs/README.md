@@ -25,6 +25,7 @@ The implementation retains historical internal identifiers such as `lego`, `lego
 ## MLIP training-data construction
 
 - [`agglomeration-training.md`](agglomeration-training.md) — reproducible phosphonate agglomerates, mixed agglomerates, xTB optimization/MD/quench sampling, VASP training-set preparation, validation, campaign regeneration, and audit/status tools.
+- [`dataset-export.md`](dataset-export.md) — audited VASP → MLIP dataset export (`nio-md-prep dataset scan|export|split|audit`): label rules, SCF and magnetic-state policy, reference-settings pools, lineage-safe splits, and the LONI validation job.
 
 ## Suggested reading paths
 

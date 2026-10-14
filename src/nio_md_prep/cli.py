@@ -195,6 +195,7 @@ def main(argv=None)->int:
     i.add_argument("roots",nargs="+",type=Path,help="prepared/work roots to archive")
     i.add_argument("--output",type=Path,required=True)
     i.add_argument("--force",action="store_true",help="replace an existing archive")
+    from .dataset.cli import add_parser as add_dataset_parser; add_dataset_parser(sub)
     i=sub.add_parser("prepare-sequential-stage2"); i.add_argument("config",type=Path); i.add_argument("--primary-final",type=Path,required=True); i.add_argument("--output",type=Path,required=True); i.add_argument("--packed-xyz",type=Path); i.add_argument("--packmol-seed",type=int); i.add_argument("--velocity-seed",type=int)
     i=sub.add_parser("prepare-lego-stage2")
     i.add_argument("config",type=Path)
@@ -383,6 +384,9 @@ def main(argv=None)->int:
             result=create_run_archive(a.roots,a.output,force=a.force)
             size_mib=result.uncompressed_bytes/(1024*1024)
             print(f"Rerun archive written to {result.path} ({result.file_count} files, {size_mib:.1f} MiB uncompressed)")
+        elif a.command=="dataset":
+            from .dataset.cli import run as run_dataset
+            return run_dataset(a,argv=argv)
         elif a.command=="analyze-coverage":
             from .analysis.coverage import analyze_coverage
             summary=analyze_coverage(
