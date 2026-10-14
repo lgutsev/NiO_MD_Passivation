@@ -15,7 +15,6 @@ from typing import Any, Iterator
 import csv
 import json
 import math
-import re
 
 from ..config import ROOT
 from ..lammps import DataFile, parse
