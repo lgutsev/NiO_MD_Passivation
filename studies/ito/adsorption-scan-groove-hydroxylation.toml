@@ -1,0 +1,19 @@
+# Site-resolved single-molecule checks on corrugated slabs vs hydroxylation level (UFF-cation set only:
+# the CLAYFF-cation bracket collapses onto under-coordinated rim In, see docs/ito/adsorption-scan.md).
+# Sites: groove floor (fy 0.5), wall midpoint (|dy| = 7.3 A, fy 0.33), plateau centre (fy 0.0).
+substrates = ["in2o3-111-groove-oh000", "in2o3-111-groove-oh025", "in2o3-111-groove-oh100"]
+molecules = ["me-4pacz", "meo-2pacz"]
+parameter_sets = ["uff-cation/clayff-anion"]
+
+[scan]
+seed = 20260927
+lateral_sites = [[0.5, 0.5], [0.5, 0.33], [0.5, 0.0]]
+tilts_deg = [0.0, 45.0, 80.0]
+floor_reference = "local"
+floor_gap = 2.5
+box_height_above_top = 40.0
+gewald = 0.30
+mesh = [104, 36, 128]
+quench_steps = 1000
+min_steps = 1500
+reference_min_steps = 3000

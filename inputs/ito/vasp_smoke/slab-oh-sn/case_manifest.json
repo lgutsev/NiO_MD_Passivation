@@ -1,0 +1,252 @@
+{
+  "case": "slab-oh-sn",
+  "kind": "slab",
+  "mode": "smoke",
+  "purpose": "slab-oh with one neutral 2Sn_In + O_i cluster; Sn effect on the surface (compare with slab-oh, and later with Sn-doped adsorption).",
+  "formula": "H12In62O103Sn2",
+  "counts": {
+    "In": 62,
+    "Sn": 2,
+    "O": 103,
+    "H": 12
+  },
+  "atom_count": 179,
+  "nelect_expected": 1464,
+  "potcar": [
+    {
+      "element": "In",
+      "dataset": "In_d",
+      "zval_expected": 13
+    },
+    {
+      "element": "Sn",
+      "dataset": "Sn_d",
+      "zval_expected": 14
+    },
+    {
+      "element": "O",
+      "dataset": "O",
+      "zval_expected": 6
+    },
+    {
+      "element": "H",
+      "dataset": "H",
+      "zval_expected": 1
+    }
+  ],
+  "cell_angstrom": [
+    14.307599,
+    24.781488,
+    30.0
+  ],
+  "vacuum_gap_angstrom": 23.1988,
+  "constraints": {
+    "selective_dynamics": true,
+    "fixed_atoms": 70,
+    "free_atoms": 109,
+    "rule": "bottom O-In-O trilayer fixed; Sn cluster shell freed"
+  },
+  "distances_angstrom": {
+    "min_nonbonded": 2.2242,
+    "min_nonbonded_pair": [
+      "O114",
+      "O179"
+    ],
+    "bonded_range": [
+      0.97,
+      2.4034
+    ],
+    "bonded_pairs": 358,
+    "min_slab_nonbonded": 2.2242,
+    "min_h_nonbonded": 2.2536
+  },
+  "estimate": {
+    "label": "ESTIMATE (uncalibrated scaling model; not a measurement)",
+    "nelect": 1464,
+    "nions": 179,
+    "nbands_vasp_default": 880,
+    "plane_waves_gamma": 143000,
+    "cores": 64,
+    "seconds_per_electronic_step": 17.3,
+    "electronic_steps_assumed": 65,
+    "wall_hours": 0.31,
+    "memory_gb_total": 9.1
+  },
+  "resources": {
+    "partition": "workq",
+    "ntasks": 64,
+    "time": "12:00:00"
+  },
+  "settings": {
+    "trilayers": 2,
+    "hydroxyl_pairs_per_primitive_cell": 3,
+    "hydroxyl_seed": 20260926,
+    "phys_height": 3.75,
+    "bidentate_in_o": 2.15,
+    "vacuum_slab": 15.0,
+    "vacuum_molecule": 12.0,
+    "common_cell": true,
+    "encut": 520.0
+  },
+  "construction": {
+    "trilayers": 2,
+    "slab_builder_notes": {
+      "orthorhombic_cell_angstrom": [
+        14.307599,
+        24.781488,
+        17.523158
+      ],
+      "trilayer_spacing_angstrom": 2.920526,
+      "cut_offset_angstrom": 2.723683
+    },
+    "hydroxylation": {
+      "pairs": 6,
+      "top_in5c_available": 24,
+      "top_in5c_excluded_clash": [
+        {
+          "in_index": 6,
+          "terminal_o_to_lattice_o": 2.1808,
+          "terminal_h_to_cation": 3.0588
+        },
+        {
+          "in_index": 9,
+          "terminal_o_to_lattice_o": 2.1808,
+          "terminal_h_to_cation": 3.0588
+        },
+        {
+          "in_index": 12,
+          "terminal_o_to_lattice_o": 2.1808,
+          "terminal_h_to_cation": 3.0588
+        },
+        {
+          "in_index": 52,
+          "terminal_o_to_lattice_o": 2.1808,
+          "terminal_h_to_cation": 3.0588
+        },
+        {
+          "in_index": 55,
+          "terminal_o_to_lattice_o": 2.1808,
+          "terminal_h_to_cation": 3.0588
+        },
+        {
+          "in_index": 58,
+          "terminal_o_to_lattice_o": 2.1808,
+          "terminal_h_to_cation": 3.0588
+        }
+      ],
+      "top_o3c_available": 24,
+      "seed": 20260926,
+      "site_selection": "seeded periodic farthest-point over clash-free top In5c; O3c >= 2.5 A from terminal O; every H >= 1.5 A from all atoms and >= 2.5 A from cations",
+      "min_new_atom_nonbonded_angstrom": 2.2536,
+      "sites": [
+        {
+          "in_index": 63,
+          "protonated_o_index": 76,
+          "vacancy_direction_z": 0.9258,
+          "terminal_o_to_protonated_o": 3.101
+        },
+        {
+          "in_index": 17,
+          "protonated_o_index": 30,
+          "vacancy_direction_z": 0.9258,
+          "terminal_o_to_protonated_o": 3.101
+        },
+        {
+          "in_index": 16,
+          "protonated_o_index": 23,
+          "vacancy_direction_z": 0.8221,
+          "terminal_o_to_protonated_o": 3.0466
+        },
+        {
+          "in_index": 62,
+          "protonated_o_index": 69,
+          "vacancy_direction_z": 0.8221,
+          "terminal_o_to_protonated_o": 3.0466
+        },
+        {
+          "in_index": 19,
+          "protonated_o_index": 25,
+          "vacancy_direction_z": 0.8221,
+          "terminal_o_to_protonated_o": 3.0466
+        },
+        {
+          "in_index": 65,
+          "protonated_o_index": 71,
+          "vacancy_direction_z": 0.8221,
+          "terminal_o_to_protonated_o": 3.0466
+        }
+      ]
+    },
+    "sn_cluster": {
+      "trilayer": 0,
+      "o_i_site_angstrom": [
+        0.0,
+        8.260496,
+        2.387238
+      ],
+      "o_i_index_in_builder": 178,
+      "sn_indices_in_builder": [
+        100,
+        99
+      ],
+      "sn_to_oi_angstrom": [
+        2.4034,
+        2.4034
+      ],
+      "oi_to_nearest_o_angstrom": 2.2242,
+      "compensation": "neutral Frank-Koestlin-type 2 Sn_In + O_i on an empty 16c anion site (unrelaxed)",
+      "freed_from_selective_dynamics": 11,
+      "freed_rule": "O_i, both Sn, and their first coordination shell are relaxed although they sit in the fixed trilayer"
+    },
+    "cell_c": 30.0,
+    "vacuum_gap": 23.1988,
+    "dipol_centre_frac": 0.146687,
+    "distances": {
+      "min_nonbonded": 2.2242,
+      "min_nonbonded_pair": [
+        "O114",
+        "O179"
+      ],
+      "bonded_range": [
+        0.97,
+        2.4034
+      ],
+      "bonded_pairs": 358,
+      "min_slab_nonbonded": 2.2242,
+      "min_h_nonbonded": 2.2536
+    }
+  },
+  "lattice": {
+    "a": 10.117,
+    "in_8b": [
+      0.25,
+      0.25,
+      0.25
+    ],
+    "in_24d_x": 0.4663,
+    "o_48e": [
+      0.3912,
+      0.1558,
+      0.3796
+    ],
+    "source": "Marezio, Acta Cryst. 20, 723 (1966), doi:10.1107/S0365110X66001749; coordinates from COD 2310009"
+  },
+  "provenance": {
+    "generator": "nio_md_prep.ito.vasp",
+    "source_sha256": {
+      "src/nio_md_prep/ito/vasp.py": "dd735e3c7768e62d642fe532f95e2b83656dae0e7b1d8de318eacc8c96e682f2",
+      "src/nio_md_prep/ito/substrate.py": "8c61cef9db8164f18849ccdd96dedc80ab60979595f7292292dead5737e4e9d1"
+    },
+    "interfaceforge_conventions": "4501e34081a63e3735336e693bea1eb40ac35cb1"
+  },
+  "sha256": {
+    "POSCAR": "e747be0560d8cf9f82b57849435e45a62782f6cd7813fdfd99ce0ad5b1465056",
+    "INCAR": "b2248b544023ad9be79bc8c78b6146d065348fb27dd1d913c8bfe7d7bdfc957b",
+    "KPOINTS": "b7c6627d6b83733fa3ebf0f34af4a1f1190af69f2112d7e41cc7151c0410328e",
+    "POTCAR.spec": "3defe29fdf181e5018b1ae2b53da816b2bab0f67d85fc160cfcfe7656cfc0ff8",
+    "geometry.extxyz": "d20e1450dfe902d5ebafc0a048238603323b4894aba2a997fe32d31b57faeaef",
+    "inputs.sha256": "1748856174f606fc460d1ca61abf90fc1787a3671a04947cde165700de2152df",
+    "run.sbatch": "3e373065e7a87a541458368910e6884c22d1f99a9deaaa094d8b62fd86f1af52"
+  },
+  "file_order_note": "POSCAR and geometry.extxyz share one atom order (species-sorted, stable)"
+}

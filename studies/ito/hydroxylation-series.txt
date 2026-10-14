@@ -1,0 +1,19 @@
+# Hydroxylation-series pilot studies (use: STUDIES="$(grep -v ^# studies/ito/hydroxylation-series.txt)")
+pilot-me-4pacz-ito-groove-oh000
+pilot-meo-2pacz-me-4pacz-1to1-ito-groove-oh000
+pilot-me-4pacz-ito-groove-oh025
+pilot-meo-2pacz-me-4pacz-1to1-ito-groove-oh025
+pilot-me-4pacz-ito-groove-oh050
+pilot-meo-2pacz-me-4pacz-1to1-ito-groove-oh050
+pilot-me-4pacz-ito-groove-oh075
+pilot-meo-2pacz-me-4pacz-1to1-ito-groove-oh075
+pilot-me-4pacz-nio-groove-oh000
+pilot-meo-2pacz-me-4pacz-1to1-nio-groove-oh000
+pilot-me-4pacz-nio-groove-oh025
+pilot-meo-2pacz-me-4pacz-1to1-nio-groove-oh025
+pilot-me-4pacz-nio-groove-oh050
+pilot-meo-2pacz-me-4pacz-1to1-nio-groove-oh050
+pilot-me-4pacz-nio-groove-oh075
+pilot-meo-2pacz-me-4pacz-1to1-nio-groove-oh075
+pilot-me-4pacz-nio-groove-oh100
+pilot-meo-2pacz-me-4pacz-1to1-nio-groove-oh100

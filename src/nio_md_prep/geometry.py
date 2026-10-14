@@ -2,7 +2,7 @@ from __future__ import annotations
 from pathlib import Path
 from .lammps import DataFile, atom_coordinates
 
-ELEMENTS = {1.008:"H", 12.011:"C", 14.007:"N", 15.999:"O", 18.998:"F", 28.085:"Si", 30.974:"P", 32.060:"S", 35.450:"Cl", 58.6934:"Ni"}
+ELEMENTS = {1.008:"H", 12.011:"C", 14.007:"N", 15.999:"O", 18.998:"F", 28.085:"Si", 30.974:"P", 32.060:"S", 35.450:"Cl", 58.6934:"Ni", 114.818:"In", 118.710:"Sn", 126.904:"I"}
 
 def elements(data: DataFile) -> list[str]:
     masses = {int(r.fields[0]): float(r.fields[1]) for r in data.sections["Masses"]}

@@ -1,0 +1,373 @@
+{
+  "model_id": "in2o3-111-groove-oh000",
+  "description": "Corrugated In2O3(111), hydroxylation: no hydroxylation \u2014 ITO analogue of inputs/surfaces/corrugated-nio-110 (one symmetric 45-degree V-groove per cell, 14.6 A deep, running along x)",
+  "model_toml_sha256": "831c4b1f95fec8b66467d42e4c2543b289af77903fd8756ffca401bdbde3d71d",
+  "surface_lmp_sha256": "8dfb468110276d335580d6ed2ad1f2c4ecc2126458cc7f0f2dd927ba7c18a4af",
+  "code_commit": "12cb60b68503be4ec6477a1b059d4fea7d4a1015",
+  "lattice": {
+    "a": 10.117,
+    "in_8b": [
+      0.25,
+      0.25,
+      0.25
+    ],
+    "in_24d_x": 0.4663,
+    "o_48e": [
+      0.3912,
+      0.1558,
+      0.3796
+    ],
+    "source": "Marezio, Acta Cryst. 20, 723 (1966), doi:10.1107/S0365110X66001749; coordinates from COD 2310009"
+  },
+  "orientation_vectors_cubic": [
+    [
+      1,
+      -1,
+      0
+    ],
+    [
+      1,
+      1,
+      -2
+    ],
+    [
+      1,
+      1,
+      1
+    ]
+  ],
+  "box_angstrom": {
+    "x": [
+      0.0,
+      123.90743863868707
+    ],
+    "y": [
+      0.0,
+      42.922795831585816
+    ],
+    "z": [
+      -5.0,
+      200.0
+    ]
+  },
+  "area_nm2": 53.184537,
+  "trilayers": 10,
+  "source_slab": null,
+  "counts": {
+    "In": 3982,
+    "Sn": 0,
+    "Ni": 0,
+    "O": 5973,
+    "Oh": 0,
+    "Hh": 0
+  },
+  "atom_count": 9955,
+  "type_ids": {
+    "In": 1,
+    "O": 2
+  },
+  "charges": {
+    "scheme": "clayff-scaled-formal",
+    "scale": 0.525,
+    "hydroxyl_h": 0.425,
+    "per_label": {
+      "In": 1.575,
+      "O": -1.05
+    }
+  },
+  "total_charge": 7.460698725481052e-13,
+  "dipole_z_e_per_angstrom": -0.003500403611083095,
+  "z_top_cation_angstrom": 28.138687,
+  "z_top_atom_angstrom": 28.973374,
+  "z_bottom_atom_angstrom": 0.625577,
+  "top_surface": {
+    "bare_in5c": 360,
+    "bare_o3c": 360,
+    "bare_in5c_per_nm2": 6.7689,
+    "cation_5c_after_modification": 219
+  },
+  "hydroxylation": {
+    "pairs": 0,
+    "oh_groups_per_nm2": 0.0
+  },
+  "doping": {
+    "clusters": 0,
+    "sn_fraction": 0.0
+  },
+  "corrugation": {
+    "profile_axis_before_rotation": "x",
+    "period_angstrom": 42.922796,
+    "center_fraction": 0.5,
+    "depth_trilayers": 5,
+    "depth_angstrom": 14.602632,
+    "wall_slope": 1.0,
+    "step_height_angstrom": 2.920526,
+    "step_run_angstrom": 2.920526,
+    "slab_trilayers": 10,
+    "trilayers_under_floor": 5,
+    "floor_top_z_nominal": 14.602632,
+    "plateau_top_z_nominal": 29.205263,
+    "opening_width_nominal_angstrom": 29.205263,
+    "atoms_carved": 2020,
+    "rim_removals": [
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          13.9714,
+          4.2285,
+          22.8893
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          14.0544,
+          22.742,
+          22.5833
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          13.9714,
+          29.01,
+          22.8893
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          14.0544,
+          47.5235,
+          22.5833
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          13.9714,
+          53.7915,
+          22.8893
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          14.0544,
+          72.3049,
+          22.5833
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          13.9714,
+          78.573,
+          22.8893
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          14.0544,
+          97.0864,
+          22.5833
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          13.9714,
+          103.3545,
+          22.8893
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          14.0544,
+          121.8679,
+          22.5833
+        ]
+      },
+      {
+        "label": "In",
+        "cn": 3,
+        "reason": "neutralize",
+        "position": [
+          7.3949,
+          6.3346,
+          28.1387
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          6.8176,
+          8.3588,
+          28.7304
+        ]
+      },
+      {
+        "label": "In",
+        "cn": 3,
+        "reason": "neutralize",
+        "position": [
+          7.3949,
+          31.116,
+          28.1387
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          6.8176,
+          33.1403,
+          28.7304
+        ]
+      },
+      {
+        "label": "In",
+        "cn": 3,
+        "reason": "neutralize",
+        "position": [
+          7.3949,
+          55.8975,
+          28.1387
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          6.8176,
+          57.9218,
+          28.7304
+        ]
+      },
+      {
+        "label": "In",
+        "cn": 3,
+        "reason": "neutralize",
+        "position": [
+          7.3949,
+          80.679,
+          28.1387
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          6.8176,
+          82.7033,
+          28.7304
+        ]
+      },
+      {
+        "label": "In",
+        "cn": 3,
+        "reason": "neutralize",
+        "position": [
+          7.3949,
+          105.4605,
+          28.1387
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 1,
+        "reason": "dangling",
+        "position": [
+          6.8176,
+          107.4847,
+          28.7304
+        ]
+      },
+      {
+        "label": "In",
+        "cn": 3,
+        "reason": "neutralize",
+        "position": [
+          35.5279,
+          18.4469,
+          27.745
+        ]
+      },
+      {
+        "label": "In",
+        "cn": 3,
+        "reason": "neutralize",
+        "position": [
+          35.5279,
+          43.2284,
+          27.745
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 2,
+        "reason": "neutralize",
+        "position": [
+          7.0708,
+          14.2874,
+          28.9734
+        ]
+      },
+      {
+        "label": "In",
+        "cn": 3,
+        "reason": "neutralize",
+        "position": [
+          7.1538,
+          12.3907,
+          27.9418
+        ]
+      },
+      {
+        "label": "O",
+        "cn": 2,
+        "reason": "neutralize",
+        "position": [
+          5.5528,
+          11.3706,
+          28.9734
+        ]
+      }
+    ],
+    "exposed_z_min": 5.841053,
+    "profile_axis": "y",
+    "groove_center_y_angstrom": 21.461398
+  },
+  "limitations": [
+    "geometric (unrelaxed) hydroxyl and interstitial placement; DFT relaxation not performed",
+    "fixed point charges; no free carriers, polarization, or charge transfer",
+    "no oxygen vacancies (would require electronic compensation)"
+  ]
+}

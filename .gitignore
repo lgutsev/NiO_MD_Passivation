@@ -20,3 +20,11 @@ __pycache__/
 # should never be committed to this repository.
 /experimental/
 *jv_results*.csv
+
+# VASP licensed/large outputs (ITO smokes)
+POTCAR
+WAVECAR
+CHGCAR
+CHG
+vasprun.xml
+prepared/ito/

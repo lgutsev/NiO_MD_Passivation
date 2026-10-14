@@ -8,6 +8,11 @@ The root [`README.md`](../README.md) provides the project overview. This directo
 - [`classical-md-workflow.md`](classical-md-workflow.md) — installation, primary/CoSAM construction, sequential deposition, temperature branches, wall retraction, and production controls.
 - [`operations.md`](operations.md) — validation, safe input refresh, campaign inventory, archiving, adding passivants, and provenance.
 
+## Pictures and the ITO extension
+
+- [`gallery.md`](gallery.md) — rendered NiO and ITO surface models: corrugations, hydroxylation series, flat ITO models, a SAM molecule in the groove.
+- [`ito/README.md`](ito/README.md) — ITO/SAM extension (literature matrix, model, pilots, VASP references, worked examples).
+
 ## Analysis
 
 - [`coverage-analysis.md`](coverage-analysis.md) — coordinate-based projected coverage, uncertainty, periodic void topology, and consolidated workbooks.

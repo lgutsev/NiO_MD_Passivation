@@ -1,0 +1,25 @@
+[model]
+id = "ito-111-oh"
+description = "Stoichiometric bulk-terminated bixbyite In2O3(111), 6 O-In-O trilayers, dissociatively hydroxylated top face with explicit Sn (2 Sn_In + O_i clusters, ~9 at.% Sn)"
+
+[slab]
+nx = 4
+ny = 2
+trilayers = 6
+zlo = -5.0
+zhi = 200.0
+
+[charges]
+scheme = "clayff-scaled-formal"
+scale = 0.525
+hydroxyl_h = 0.425
+
+[hydroxylation]
+# Dissociated H2O per primitive (111) surface cell (1.77 nm2); see docs/ito/ito-model.md.
+pairs_per_primitive_cell = 3
+seed = 20260926
+
+[doping]
+# 90:10 wt% In2O3:SnO2 target -> Sn/(In+Sn) = 0.0928
+sn_fraction = 0.0928
+seed = 20260927
