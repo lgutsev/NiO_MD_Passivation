@@ -1,0 +1,40 @@
+# A LAMMPS-native MLIP. The pair style is the datum; nothing in this subsystem
+# treats "LAMMPS MLIP" as a synonym for one framework. Swapping `pair_style`
+# for `pace ...`, `mliap unified ...` or a MACE pair style needs no code change.
+#
+# `type_map` is mandatory: it is what lets element coverage be validated
+# before a job runs, and what maps an ASE Atoms object onto LAMMPS types when
+# this same potential is driven through the ASE bridge (engine.kind = "ase").
+
+[potential]
+kind = "lammps"
+framework = "deepmd"
+pair_style = "deepmd nio_phosphonate.pb"
+pair_coeff = ["* *"]
+units = "metal"
+atom_style = "atomic"
+required_packages = ["USER-DEEPMD / DEEPMD"]
+model_files = ["nio_phosphonate.pb"]
+energy_convention = "total"
+
+[potential.type_map]
+1 = "Ni"
+2 = "O"
+3 = "P"
+4 = "C"
+5 = "H"
+
+[potential.model_hashes]
+"nio_phosphonate.pb" = "0000000000000000000000000000000000000000000000000000000000000000"
+
+[engine]
+kind = "lammps"
+
+[simulation]
+task = "md"
+ensemble = "nvt"
+temperature_K = 400
+timestep_fs = 0.5
+steps = 10000
+seed = 12345
+region = "all"

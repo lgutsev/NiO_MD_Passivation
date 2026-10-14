@@ -1,0 +1,41 @@
+# MACE driven by ASE: the reference route.
+#
+#   nio-md-prep mlip validate examples/mlip/mace-ase-nvt.toml --structure <file>
+#
+# `elements` is required rather than discovered, because element coverage is
+# validated before anything runs and reading it from the model file would mean
+# importing torch just to parse a configuration.
+
+[potential]
+kind = "mace"
+model = "/path/to/nio_phosphonate.model"
+sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+elements = ["Ni", "O", "P", "C", "H"]
+device = "cuda"
+precision = "float32"
+energy_convention = "total"
+
+# Isolated-atom reference energies (E0), in eV. Optional for an ASE-only job,
+# but required to compare this model's energies against OpenMM-ML's default
+# interaction energy -- the difference between the two conventions is exactly
+# this sum over the structure.
+[potential.atomic_reference_energies]
+Ni = -5.7801
+O = -4.9467
+P = -5.4133
+C = -8.0195
+H = -1.1173
+
+[engine]
+kind = "ase"
+
+[simulation]
+task = "md"
+ensemble = "nvt"
+temperature_K = 400
+timestep_fs = 0.5
+steps = 10000
+seed = 12345
+thermostat = "langevin"
+thermostat_damping_fs = 100.0
+region = "all"
