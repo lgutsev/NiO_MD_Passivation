@@ -1,0 +1,12 @@
+[molecule]
+display_name = "MP-HSAM"
+slug = "haider-mp-hsam"
+role = "secondary"
+expected_net_charge = 0.0
+phosphonic_acid_anchors = 1
+anchor_atom_ids = []
+
+[files]
+ligpargen = "ligpargen.lmp"
+geometry = ""
+override = ""
