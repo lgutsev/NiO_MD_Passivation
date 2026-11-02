@@ -278,6 +278,24 @@ def main(argv=None)->int:
     i.add_argument("prepared_root",type=Path)
     i.add_argument("--output",type=Path,required=True)
     i.add_argument("--experimental",type=Path,help="CSV of experimental device Voc/Jsc/FF/PCE results to correlate against MD metrics")
+    i=sub.add_parser("analyze-accessibility",help="probe-accessible area, gap persistence, layer structure and anchoring persistence")
+    i.add_argument("build_directory",type=Path)
+    i.add_argument("--trajectory",type=Path)
+    i.add_argument("--output",type=Path)
+    i.add_argument("--grid-spacing",type=float,default=0.25)
+    i.add_argument("--probe-radii",type=float,nargs="+",default=[0.0,1.4,2.0,3.0])
+    i.add_argument("--height-windows",type=float,nargs="+",default=[5.0,8.0,12.0],help="finite blocking-slab heights (A); the unrestricted canopy is always included")
+    i.add_argument("--reference-radius",type=float,default=2.5)
+    i.add_argument("--contact-cutoffs",type=float,nargs="+",default=[3.0,3.25,3.5])
+    i.add_argument("--primary-contact-cutoff",type=float,default=3.25)
+    i.add_argument("--last-frames",type=int,default=100,help="analyze the final N frames; use 0 for all frames")
+    i.add_argument("--stride",type=int,default=1)
+    i.add_argument("--timestep-fs",type=float)
+    i.add_argument("--analysis-profile",default="classical-ff")
+    i=sub.add_parser("compare-routes",help="replica-level CoSAM vs sequential vs gap-seeded comparison")
+    i.add_argument("--workbooks",type=Path,help="directory holding prepared*/coverage_summary.xlsx and interface_structure_summary.xlsx")
+    i.add_argument("--accessibility-manifest",type=Path,help="CSV: prepared_root,system,stage,summary_json")
+    i.add_argument("--output",type=Path,required=True)
     a=p.parse_args(argv)
     try:
         if a.command=="init-molecule":
@@ -449,6 +467,35 @@ def main(argv=None)->int:
             from .analysis.publication_report import create_publication_workbook
             workbook=create_publication_workbook(a.prepared_root,a.output,experimental_csv=a.experimental)
             print(f"Publication workbook written to {workbook}")
+        elif a.command=="analyze-accessibility":
+            from .analysis.accessibility import analyze_accessibility
+            windows=(None,*a.height_windows)
+            persistence=tuple(s for s in ((None,1.4),(8.0,1.4)) if s[0] in windows and s[1] in a.probe_radii) or ((None,a.probe_radii[0]),)
+            summary=analyze_accessibility(
+                a.build_directory,
+                trajectory=a.trajectory,
+                output=a.output,
+                grid_spacing=a.grid_spacing,
+                probe_radii=tuple(a.probe_radii),
+                height_windows=windows,
+                persistence_settings=persistence,
+                reference_radius=a.reference_radius,
+                contact_cutoffs=tuple(a.contact_cutoffs),
+                primary_contact_cutoff=a.primary_contact_cutoff,
+                last_frames=None if a.last_frames==0 else a.last_frames,
+                stride=a.stride,
+                timestep_fs=a.timestep_fs,
+                analysis_profile=a.analysis_profile,
+            )
+            print(f"Accessibility summary written to {summary}")
+        elif a.command=="compare-routes":
+            from .analysis.route_comparison import ACCESSIBILITY_METRICS, load_accessibility_records, load_workbook_records
+            from .analysis.route_report import write_route_report
+            records=[]
+            if a.workbooks: records+=load_workbook_records(a.workbooks)
+            if a.accessibility_manifest: records+=load_accessibility_records(a.accessibility_manifest,ACCESSIBILITY_METRICS)
+            if not records: raise ValueError("provide --workbooks and/or --accessibility-manifest")
+            print(f"Route comparison written to {write_route_report(records,a.output)}")
         elif a.command=="prepare-lego-stage2":
             from .lego import prepare_lego_stage2
             prepare_lego_stage2(

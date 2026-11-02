@@ -278,3 +278,36 @@ def test_gap_seeded_runs_are_contextualized_not_pooled():
     assert context[0]["inside_sequential_range"] is False
     assert context[0]["same_stage1_sequential_cohort1"] == 80.0
     assert math.isfinite(context[0]["sequential_max"])
+
+
+def test_route_report_writes_tables_and_figures(tmp_path):
+    from nio_md_prep.analysis.route_report import write_route_report
+
+    records = []
+    for row in _records():
+        records.append({**row, "metric": "projected_coverage_percent", "within_run_block_sem": 0.05})
+    write_route_report(records, tmp_path / "report")
+    for name in ("replica_statistics.csv", "paired_sequential_minus_cosam.csv",
+                 "gap_seeded_context.csv", "fig_route_levels_300K_relaxed.png",
+                 "fig_paired_differences.png", "fig_uncertainty_budget.png"):
+        assert (tmp_path / "report" / name).is_file(), name
+
+
+def test_accessibility_manifest_records_use_pipe_paths(tmp_path):
+    from nio_md_prep.analysis.route_comparison import ACCESSIBILITY_METRICS, load_accessibility_records
+
+    summary = tmp_path / "s.json"
+    summary.write_text(json.dumps({
+        "frames_analyzed": 500,
+        "accessibility": {"canopy_probe1.4A": {"accessible_percent": {"mean": 7.5}}},
+    }), encoding="utf-8")
+    manifest = tmp_path / "m.csv"
+    manifest.write_text(
+        "prepared_root,system,stage,summary_json\n"
+        f"prepared-rerun,me-4pacz-then-dcz-4p,relax-300K,{summary}\n",
+        encoding="utf-8",
+    )
+    records = load_accessibility_records(manifest, ACCESSIBILITY_METRICS)
+    assert len(records) == 1
+    assert records[0]["metric"] == "accessible_canopy_probe1.4_percent"
+    assert records[0]["value"] == 7.5 and records[0]["cohort"] == 2

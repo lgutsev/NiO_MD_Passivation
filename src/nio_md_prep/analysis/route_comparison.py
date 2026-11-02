@@ -59,6 +59,23 @@ INTERFACE_METRICS = {
     "Secondary Core Height (Å)": "secondary_core_height_angstrom",
 }
 SEM_COLUMN = "Block SEM (%)"
+# "|"-separated paths into accessibility_summary.json
+ACCESSIBILITY_METRICS = {
+    "accessible_canopy_probe0_percent": "accessibility|canopy_probe0A|accessible_percent|mean",
+    "accessible_canopy_probe1.4_percent": "accessibility|canopy_probe1.4A|accessible_percent|mean",
+    "accessible_canopy_probe3_percent": "accessibility|canopy_probe3A|accessible_percent|mean",
+    "accessible_h5_probe1.4_percent": "accessibility|h5A_probe1.4A|accessible_percent|mean",
+    "accessible_h8_probe1.4_percent": "accessibility|h8A_probe1.4A|accessible_percent|mean",
+    "accessible_h12_probe1.4_percent": "accessibility|h12A_probe1.4A|accessible_percent|mean",
+    "gap_density_canopy_probe1.4_per_nm2": "accessibility|canopy_probe1.4A|gap_count_per_nm2|mean",
+    "largest_gap_canopy_probe1.4_percent": "accessibility|canopy_probe1.4A|largest_gap_percent|mean",
+    "persistent_exposed_canopy_probe1.4": "persistence|canopy_probe1.4A|persistently_exposed_fraction",
+    "persistent_exposed_h8_probe1.4": "persistence|h8A_probe1.4A|persistently_exposed_fraction",
+    "first_last_jaccard_canopy_probe1.4": "persistence|canopy_probe1.4A|first_last_jaccard",
+    "thickness_mean_angstrom": "time_series|thickness_mean_angstrom|mean",
+    "thickness_ge_10A_percent": "time_series|thickness_ge_10A_percent|mean",
+    "bound_molecules_per_nm2": "time_series|bound_molecules_per_nm2|mean",
+}
 
 
 def classify_system(root: str, system: str) -> dict[str, Any]:
@@ -117,6 +134,8 @@ def load_workbook_records(lammps_directory: Path) -> list[dict[str, Any]]:
         for path, metrics in ((coverage_path, COVERAGE_METRICS), (interface_path, INTERFACE_METRICS)):
             frame = pd.read_excel(path, sheet_name="Results")
             for _, row in frame.iterrows():
+                if not re.fullmatch(r"(hold|relax)-\d+K", str(row["Stage"])):
+                    continue  # deposition rows describe assembly, not the held film
                 info = classify_system(root, str(row["System"]))
                 state, temperature = _stage_fields(row["Stage"])
                 base = {
@@ -126,6 +145,9 @@ def load_workbook_records(lammps_directory: Path) -> list[dict[str, Any]]:
                     "film_state": state,
                     "temperature_K": temperature,
                     "frames": int(row["Frames Analyzed"]),
+                    "trajectory": str(row.get("Trajectory", "")),
+                    "packmol_seed": row.get("Packmol Seed"),
+                    "velocity_seed": row.get("Velocity Seed"),
                     "source": str(path.name),
                     **info,
                 }
@@ -290,6 +312,31 @@ def paired_route_differences(records, treatment: str = "sequential", control: st
             **{f"cohort_{c}": by_cohort[c] for c in sorted(by_cohort)},
             **stats, "positive": positive, "negative": negative, "verdict": verdict,
         })
+    return rows
+
+
+def paired_vs_reference(records, reference: str = "reference") -> list[dict[str, Any]]:
+    """Route-minus-Me-4PACz-reference differences within each cohort.
+
+    In every cohort the sequential runs start from that cohort's reference
+    film, so this contrast shows whether a CoSAM-vs-sequential gap comes
+    from sequential gaining or from CoSAM losing relative to the primary film.
+    """
+    base: dict[tuple, float] = {}
+    for record in records:
+        if record["route"] == reference and record["independent_replicate"]:
+            base[(record["metric"], record["temperature_K"], record["film_state"], record["cohort"])] = record["value"]
+    shifted = []
+    for record in records:
+        if record["route"] in {"cosam", "sequential"} and record["independent_replicate"]:
+            key = (record["metric"], record["temperature_K"], record["film_state"], record["cohort"])
+            if key in base:
+                shifted.append({**record, "value": record["value"] - base[key]})
+    rows = []
+    for stat in replica_statistics(shifted):
+        stat = dict(stat)
+        stat["contrast"] = f"{stat['route']} - {reference}"
+        rows.append(stat)
     return rows
 
 
