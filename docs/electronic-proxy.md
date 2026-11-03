@@ -117,6 +117,7 @@ Overrides:
 | `INCLUDE_ME4PACZ_ALONE` | include the Me-4PACz-alone runs |
 | `OUTPUT_ROOT` | output directory |
 | `RUN_OUTPUT_ROOT` | per-run output directory (default `OUTPUT_ROOT/runs`) |
+| `RUNS_BASE` | directory holding the `prepared*` trees, read only (default: submission directory) |
 
 Before acting on the gate, resolve the comparability checks in the feasibility report: protocol equivalence across `prepared*` roots, stage-1 independence of the sequential runs, and side-view inspection of lifted DCZ-4P.
 

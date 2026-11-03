@@ -50,6 +50,9 @@ output_root="${OUTPUT_ROOT:-${SLURM_SUBMIT_DIR}/electronic-tier0/${secondary}}"
 # Per-run outputs go under OUTPUT_ROOT so nothing is written into the
 # calculation trees, which are only read.
 run_output_root="${RUN_OUTPUT_ROOT:-${output_root}/runs}"
+# Directory holding the prepared* trees (read only); defaults to the
+# submission directory.
+runs_base="${RUNS_BASE:-${SLURM_SUBMIT_DIR}}"
 roots=(${CONVENTIONAL_ROOTS:-prepared prepared-rerun prepared-rerun2})
 
 extra_args=()
@@ -82,6 +85,7 @@ echo "EXPORT_CONFORMERS: ${export_conformers}"
 echo "REFERENCE_DIPOLES: ${REFERENCE_DIPOLES:-<none; charge dipoles only>}"
 echo "OUTPUT_ROOT: ${output_root}"
 echo "RUN_OUTPUT_ROOT: ${run_output_root}"
+echo "RUNS_BASE: ${runs_base}"
 
 mkdir -p "${output_root}"
 summaries=()
@@ -91,7 +95,7 @@ failed=0
 for entry in "${runs[@]}"; do
     label="${entry%%|*}"
     relative_run="${entry#*|}"
-    run_directory="${SLURM_SUBMIT_DIR}/${relative_run}"
+    run_directory="${runs_base}/${relative_run}"
     trajectory="${run_directory}/${stage}.lammpstrj"
     output_directory="${run_output_root}/${relative_run}/electronic-proxy-${stage}"
     echo
