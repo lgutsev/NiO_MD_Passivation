@@ -47,6 +47,9 @@ last_frames="${LAST_FRAMES:-100}"
 export_conformers="${EXPORT_CONFORMERS:-50}"
 include_reference="${INCLUDE_ME4PACZ_ALONE:-1}"
 output_root="${OUTPUT_ROOT:-${SLURM_SUBMIT_DIR}/electronic-tier0/${secondary}}"
+# Per-run outputs go under OUTPUT_ROOT so nothing is written into the
+# calculation trees, which are only read.
+run_output_root="${RUN_OUTPUT_ROOT:-${output_root}/runs}"
 roots=(${CONVENTIONAL_ROOTS:-prepared prepared-rerun prepared-rerun2})
 
 extra_args=()
@@ -78,6 +81,7 @@ echo "LAST_FRAMES: ${last_frames}"
 echo "EXPORT_CONFORMERS: ${export_conformers}"
 echo "REFERENCE_DIPOLES: ${REFERENCE_DIPOLES:-<none; charge dipoles only>}"
 echo "OUTPUT_ROOT: ${output_root}"
+echo "RUN_OUTPUT_ROOT: ${run_output_root}"
 
 mkdir -p "${output_root}"
 summaries=()
@@ -86,9 +90,10 @@ missing=0
 failed=0
 for entry in "${runs[@]}"; do
     label="${entry%%|*}"
-    run_directory="${SLURM_SUBMIT_DIR}/${entry#*|}"
+    relative_run="${entry#*|}"
+    run_directory="${SLURM_SUBMIT_DIR}/${relative_run}"
     trajectory="${run_directory}/${stage}.lammpstrj"
-    output_directory="${run_directory}/electronic-proxy-${stage}"
+    output_directory="${run_output_root}/${relative_run}/electronic-proxy-${stage}"
     echo
     echo "RUN: ${label} ${run_directory}"
     if [[ ! -s "${trajectory}" ]]; then
@@ -98,7 +103,7 @@ for entry in "${runs[@]}"; do
     fi
     SECONDS=0
     if nio-md-prep analyze-electronic-proxy "${run_directory}" \
-        --trajectory "${stage}.lammpstrj" \
+        --trajectory "${trajectory}" \
         --output "${output_directory}" \
         --last-frames "${last_frames}" \
         --component-alias stage1_primary=me-4pacz \

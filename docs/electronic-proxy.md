@@ -103,7 +103,7 @@ Missing trajectories are reported and skipped. It then runs:
 - `summarize-electronic-proxy`, writing `electronic_gate.json`, `electronic_gate.csv` and `electronic_gate_runs.csv`;
 - `select-patch-slots`, writing `patch_slots.csv`.
 
-Both write to `electronic-tier0/dcz-4p/`.
+Both write to `electronic-tier0/dcz-4p/`. Per-run results go to `electronic-tier0/dcz-4p/runs/<root>/<system>/electronic-proxy-<stage>/` (`RUN_OUTPUT_ROOT`); the calculation trees are only read.
 
 Overrides:
 
@@ -116,6 +116,7 @@ Overrides:
 | `CONVENTIONAL_ROOTS` | conventional run roots |
 | `INCLUDE_ME4PACZ_ALONE` | include the Me-4PACz-alone runs |
 | `OUTPUT_ROOT` | output directory |
+| `RUN_OUTPUT_ROOT` | per-run output directory (default `OUTPUT_ROOT/runs`) |
 
 Before acting on the gate, resolve the comparability checks in the feasibility report: protocol equivalence across `prepared*` roots, stage-1 independence of the sequential runs, and side-view inspection of lifted DCZ-4P.
 
