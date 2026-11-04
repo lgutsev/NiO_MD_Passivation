@@ -12,6 +12,7 @@ The root [`README.md`](../README.md) provides the project overview. This directo
 
 - [`coverage-analysis.md`](coverage-analysis.md) — coordinate-based projected coverage, uncertainty, periodic void topology, and consolidated workbooks.
 - [`interfacial-analysis.md`](interfacial-analysis.md) — Ni-site ownership, anchoring, orientations, RDFs, kinetics policy, dipole-proxy limits, and structure-property summaries.
+- [`electronic-proxy.md`](electronic-proxy.md) — Tier-0 electronic decision gate: {110} facet patches, molecular-dipole layer proxy, run-level gate, and DFT patch-slot selection (internal; not a work-function prediction).
 
 ## Gap-seeded accessibility controls
 

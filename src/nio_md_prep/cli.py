@@ -274,6 +274,39 @@ def main(argv=None)->int:
     i=sub.add_parser("summarize-interface")
     i.add_argument("prepared_root",type=Path)
     i.add_argument("--output",type=Path,required=True)
+    i=sub.add_parser("analyze-electronic-proxy",help="Tier-0 facet-patch descriptors and molecular-dipole layer proxy (internal decision gate, not a work-function prediction)")
+    i.add_argument("build_directory",type=Path)
+    i.add_argument("--trajectory",type=Path)
+    i.add_argument("--output",type=Path)
+    i.add_argument("--last-frames",type=int,default=100,help="analyze the final N frames; use 0 for all frames")
+    i.add_argument("--stride",type=int,default=1)
+    i.add_argument("--blocks",type=int,default=5)
+    i.add_argument("--contact-cutoff",type=float,default=3.25,help="Ni-phosphonate-O anchoring cutoff (A)")
+    i.add_argument("--shield-cutoff",type=float,default=4.0,help="a window Ni site is exposed when no ligand heavy atom lies within this distance (A)")
+    i.add_argument("--surface-coordination-cutoff",type=float,default=2.8)
+    i.add_argument("--window-rows",type=int,default=5,help="facet rows per patch (5 matches the 200-atom NiO(110) DFT slab)")
+    i.add_argument("--window-columns",type=int,default=4,help="Ni per row per patch (4 matches the 200-atom NiO(110) DFT slab)")
+    i.add_argument("--window-column-stride",type=int,default=2)
+    i.add_argument("--height-below",type=float,default=2.0,help="P-centroid tolerance below the facet plane (A)")
+    i.add_argument("--height-above",type=float,default=30.0,help="maximum P-centroid height above the facet plane assigned to a patch (A)")
+    i.add_argument("--lift-height",type=float,default=6.0,help="unanchored molecules with P above this height count as lifted (A)")
+    i.add_argument("--epsilon-eff",type=float,default=1.0,help="scalar depolarization factor dividing the dipole-layer proxy")
+    i.add_argument("--reference-dipoles",type=Path,help="JSON of per-species reference dipoles to rotate onto each conformer")
+    i.add_argument("--component-alias",action="append",default=[],help="rename a manifest component, e.g. stage1_primary=me-4pacz (repeatable)")
+    i.add_argument("--export-conformers",type=int,default=0,help="write N sampled conformers per component as extxyz for xTB/DFT dipole validation")
+    i.add_argument("--seed",type=int,default=20261102)
+    i=sub.add_parser("summarize-electronic-proxy",help="run-level Tier-0 gate between two labelled groups")
+    i.add_argument("runs",nargs="+",help="LABEL=SUMMARY_JSON_OR_DIRECTORY")
+    i.add_argument("--compare",required=True,help="A,B group labels; differences are B - A")
+    i.add_argument("--threshold-sd",type=float,default=2.0)
+    i.add_argument("--output",type=Path,required=True)
+    i=sub.add_parser("select-patch-slots",help="choose Tier-1/2 patch slots from Tier-0 candidates")
+    i.add_argument("runs",nargs="+",help="LABEL=SUMMARY_JSON_OR_DIRECTORY")
+    i.add_argument("--compare",required=True,help="A,B group labels used for matched-density pairs")
+    i.add_argument("--matched-pairs",type=int,default=2)
+    i.add_argument("--matched-tolerance",type=float,default=0.10)
+    i.add_argument("--reference-slots",type=int,choices=(1,2),default=2,help="slots per run for groups outside --compare")
+    i.add_argument("--output",type=Path,required=True)
     i=sub.add_parser("summarize-publication")
     i.add_argument("prepared_root",type=Path)
     i.add_argument("--output",type=Path,required=True)
@@ -404,6 +437,45 @@ def main(argv=None)->int:
             from .analysis.report import create_coverage_workbook
             workbook=create_coverage_workbook(a.prepared_root,a.output)
             print(f"Coverage workbook written to {workbook}")
+        elif a.command=="analyze-electronic-proxy":
+            from .analysis.electronic_proxy import analyze_electronic_proxy, parse_aliases
+            summary=analyze_electronic_proxy(
+                a.build_directory,
+                trajectory=a.trajectory,
+                output=a.output,
+                last_frames=None if a.last_frames==0 else a.last_frames,
+                stride=a.stride,
+                blocks=a.blocks,
+                contact_cutoff=a.contact_cutoff,
+                shield_cutoff=a.shield_cutoff,
+                surface_coordination_cutoff=a.surface_coordination_cutoff,
+                window_rows=a.window_rows,
+                window_columns=a.window_columns,
+                window_column_stride=a.window_column_stride,
+                height_below=a.height_below,
+                height_above=a.height_above,
+                lift_height=a.lift_height,
+                epsilon_eff=a.epsilon_eff,
+                reference_dipoles=a.reference_dipoles,
+                component_aliases=parse_aliases(a.component_alias),
+                export_conformers=a.export_conformers,
+                seed=a.seed,
+            )
+            print(f"Electronic proxy analysis written to {summary.parent}")
+        elif a.command in {"summarize-electronic-proxy","select-patch-slots"}:
+            from .analysis.electronic_proxy import parse_labelled, select_patch_slots, summarize_electronic_gate
+            compare=tuple(part.strip() for part in a.compare.split(","))
+            if len(compare)!=2 or not all(compare):
+                raise ValueError("--compare must name exactly two labels: A,B")
+            runs=parse_labelled(a.runs)
+            if a.command=="summarize-electronic-proxy":
+                path=summarize_electronic_gate(runs,a.output,compare=compare,threshold_sd=a.threshold_sd)
+                decision=json.loads(path.read_text(encoding="utf-8"))["decision"]
+                print(f"Tier-0 gate written to {path}")
+                print(f"proceed_to_tier1: {decision['proceed_to_tier1']} (passing: {', '.join(decision['passing_primary_metrics']) or 'none'})")
+            else:
+                path=select_patch_slots(runs,a.output,compare=compare,matched_pairs=a.matched_pairs,matched_tolerance=a.matched_tolerance,reference_slots=a.reference_slots)
+                print(f"Patch slots written to {path}")
         elif a.command=="analyze-interface":
             from .analysis.interfacial import analyze_interfacial_structure
             if str(a.contact_cutoff).lower()=="auto":
