@@ -362,6 +362,15 @@ def _canonical_exposed_ni_sites(
             ),
             "topology_fallback_for_noncanonical_surface",
         )
+    # LAMMPS write_data may reorder rows while retaining atom IDs.
+    reference_surface_rows.sort(key=lambda row: int(row.fields[0]))
+    assembled_surface_rows.sort(key=lambda row: int(row.fields[0]))
+    id_offsets = {
+        int(assembled.fields[0]) - int(reference.fields[0])
+        for reference, assembled in zip(reference_surface_rows, assembled_surface_rows)
+    }
+    if len(id_offsets) != 1:
+        raise ValueError("canonical surface mapping requires a constant atom-ID offset")
     selected = []
     for reference_row, assembled_row in zip(
         reference_surface_rows, assembled_surface_rows

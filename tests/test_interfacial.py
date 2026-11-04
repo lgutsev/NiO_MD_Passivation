@@ -167,6 +167,55 @@ def test_canonical_surface_sites_do_not_change_with_thermal_coordinates():
     assert distorted_ids == reference_ids
     assert distorted_source == source
 
+
+def _stage2_like_surface(offset: int):
+    """Canonical surface with every atom ID shifted, as in a stage-2 build."""
+    root = Path(__file__).parents[1]
+    path = root / "inputs/surfaces/corrugated-nio-110/surface.lmp"
+    data = parse(path)
+    type_elements = load_type_elements(path)
+    for row in data.sections["Atoms"]:
+        row.fields[0] = str(int(row.fields[0]) + offset)
+    atom_elements = {
+        int(row.fields[0]): type_elements[int(row.fields[2])]
+        for row in data.sections["Atoms"]
+    }
+    atom_molecules = {
+        int(row.fields[0]): int(row.fields[1])
+        for row in data.sections["Atoms"]
+    }
+    return data, atom_elements, atom_molecules
+
+
+def test_canonical_surface_sites_survive_write_data_row_reordering():
+    data, atom_elements, atom_molecules = _stage2_like_surface(500)
+    ordered_ids, source = _canonical_exposed_ni_sites(
+        data, atom_elements, atom_molecules, 2.8
+    )
+    assert len(ordered_ids) == 600
+    assert min(ordered_ids) > 500
+
+    # LAMMPS write_data keeps atom IDs but may emit rows in another order.
+    rows = data.sections["Atoms"]
+    data.sections["Atoms"] = rows[1::2] + rows[::2][::-1]
+    permuted_ids, permuted_source = _canonical_exposed_ni_sites(
+        data, atom_elements, atom_molecules, 2.8
+    )
+    assert sorted(permuted_ids) == sorted(ordered_ids)
+    assert permuted_source == source
+
+
+def test_canonical_surface_mapping_rejects_non_constant_id_offset():
+    data, atom_elements, atom_molecules = _stage2_like_surface(500)
+    last = max(data.sections["Atoms"], key=lambda row: int(row.fields[0]))
+    old_id = int(last.fields[0])
+    new_id = old_id + 7
+    last.fields[0] = str(new_id)
+    atom_elements[new_id] = atom_elements.pop(old_id)
+    atom_molecules[new_id] = atom_molecules.pop(old_id)
+    with pytest.raises(ValueError, match="constant atom-ID offset"):
+        _canonical_exposed_ni_sites(data, atom_elements, atom_molecules, 2.8)
+
 BONDS = [
     (1, 1, 1, 2),
     (2, 1, 1, 3),
