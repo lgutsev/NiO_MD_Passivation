@@ -50,6 +50,32 @@ def _coeff_lines(data: DataFile) -> list[str]:
             out.append(f"{command} {' '.join(payload)}" + (f" # {r.comment}" if r.comment else ""))
     return out
 
+def surface_force_field_lines(result: DataFile, surface_types: set[int], overrides: list[str]) -> str:
+    """Buckingham NiO self terms and geometric-mixed ligand/surface LJ cross terms.
+
+    Shared by build() and classical_from_structure so both write identical
+    surface force fields.  `overrides` are the phosphonate correction lines,
+    whose corrected self parameters must also enter the cross terms.
+    """
+    ff=""
+    ni,o=_identify_ni_o_types(result,surface_types)
+    ff += f"pair_coeff {ni} {ni} buck/coul/long 0.000000e+00 1.000000e+00 0.000000e+00\n"
+    ff += f"pair_coeff {ni} {o} buck/coul/long 17397.5 0.35 0.000000e+00\n"
+    ff += f"pair_coeff {o} {o} buck/coul/long 524948.8 0.1490 643.23\n"
+    # Validated pseudo-LJ surface values are used only to form ligand/surface
+    # cross interactions; Ni/O self interactions remain Buckingham.
+    ligand_pairs={int(r.fields[0]):(float(r.fields[1]),float(r.fields[2])) for r in result.sections.get("Pair Coeffs",[]) if int(r.fields[0]) not in (ni,o)}
+    # Cross terms must use the corrected phosphonate self parameters too.
+    for line in overrides:
+        fields=line.split()
+        if fields[:1]==["pair_coeff"] and fields[1]==fields[2]:
+            ligand_pairs[int(fields[1])]=(float(fields[4]),float(fields[5]))
+    for surface_type,(seps,ssig),label in ((ni,(0.1,3.0),"Ni"),(o,(0.21,3.05),"O")):
+        for ligand_type,(eps,sig) in sorted(ligand_pairs.items()):
+            ff += f"pair_coeff {surface_type} {ligand_type} lj/cut/coul/long {math.sqrt(seps*eps):.3f} {math.sqrt(ssig*sig):.3f} # {label}-{ligand_type}\n"
+    return ff
+
+
 def _expected_symbols(templates: list[dict]) -> list[str]:
     expected=[]
     for item in templates:
@@ -397,21 +423,7 @@ def build(
         if previous_force_field.exists():
             previous_coeffs=[line for line in previous_force_field.read_text(encoding="utf-8").splitlines() if line.strip().startswith(("pair_coeff","bond_coeff","angle_coeff","dihedral_coeff","improper_coeff"))]
     ff=HEADER+"\n"+"\n".join(previous_coeffs+_coeff_lines(result)+overrides)+"\n"
-    ni,o=_identify_ni_o_types(result,set(new_types))
-    ff += f"pair_coeff {ni} {ni} buck/coul/long 0.000000e+00 1.000000e+00 0.000000e+00\n"
-    ff += f"pair_coeff {ni} {o} buck/coul/long 17397.5 0.35 0.000000e+00\n"
-    ff += f"pair_coeff {o} {o} buck/coul/long 524948.8 0.1490 643.23\n"
-    # Validated pseudo-LJ surface values are used only to form ligand/surface
-    # cross interactions; Ni/O self interactions remain Buckingham.
-    ligand_pairs={int(r.fields[0]):(float(r.fields[1]),float(r.fields[2])) for r in result.sections.get("Pair Coeffs",[]) if int(r.fields[0]) not in (ni,o)}
-    # Cross terms must use the corrected phosphonate self parameters too.
-    for line in overrides:
-        fields=line.split()
-        if fields[:1]==["pair_coeff"] and fields[1]==fields[2]:
-            ligand_pairs[int(fields[1])]=(float(fields[4]),float(fields[5]))
-    for surface_type,(seps,ssig),label in ((ni,(0.1,3.0),"Ni"),(o,(0.21,3.05),"O")):
-        for ligand_type,(eps,sig) in sorted(ligand_pairs.items()):
-            ff += f"pair_coeff {surface_type} {ligand_type} lj/cut/coul/long {math.sqrt(seps*eps):.3f} {math.sqrt(ssig*sig):.3f} # {label}-{ligand_type}\n"
+    ff += surface_force_field_lines(result,set(new_types),overrides)
     (output/"force_field_settings.lmp").write_text(ff,encoding="utf-8")
     (output/"force_field_settings_lammps_with_header.lmp").write_text(ff,encoding="utf-8")
     _write_input(output,cfg,result)
