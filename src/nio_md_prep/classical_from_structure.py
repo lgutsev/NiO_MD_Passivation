@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import math
 from collections import Counter
+from copy import deepcopy
 from pathlib import Path
 
 from .agglomeration import (
@@ -193,7 +194,12 @@ def build_from_structure(slug: str, symbols: list[str], coords: list[tuple[float
     surface_types = {types["atom"] + 1, types["atom"] + 2}
     zs = [float(r.fields[6]) for r in result.sections["Atoms"]]
     result.bounds = {"x": (0.0, cell[0]), "y": (0.0, cell[1]), "z": (min(zs) - 1.0, max(min(zs) - 1.0 + cell[2], max(zs) + 1.0))}
-    write(result, output / "structure.data")
+    # Coefficients go to force_field.lmp only: LAMMPS refuses Pair Coeffs in a data file read before pair_style
+    # (build() strips them from topology_output.lmp the same way).
+    topology = deepcopy(result)
+    for section in ("Pair Coeffs", "Bond Coeffs", "Angle Coeffs", "Dihedral Coeffs", "Improper Coeffs"):
+        topology.sections.pop(section, None)
+    write(topology, output / "structure.data")
     ff = HEADER + "\n" + "\n".join(_coeff_lines(result) + lines) + "\n"
     ff += surface_force_field_lines(result, surface_types, lines)
     (output / "force_field.lmp").write_text(ff, encoding="utf-8")

@@ -42,6 +42,10 @@ def test_protonated_molecule_on_slab(tmp_path):
     assert report["phosphonate_anchors"] == 1
     ff = (tmp_path / "out" / "force_field.lmp").read_text()
     assert "buck/coul/long 17397.5 0.35" in ff and "# Ni-" in ff
+    data = (tmp_path / "out" / "structure.data").read_text()
+    for section in ("Pair Coeffs", "Bond Coeffs", "Angle Coeffs", "Dihedral Coeffs", "Improper Coeffs"):
+        assert section not in data  # LAMMPS reads the data file before pair_style is defined
+    assert "Masses" in data and "Bonds" in data and "Dihedrals" in data
 
 
 def test_reprotonation_and_hydroxyl_refusal(tmp_path):
